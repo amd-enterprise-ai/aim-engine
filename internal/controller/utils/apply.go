@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -332,17 +333,62 @@ func setOwnerReference(owner, obj client.Object, _ *runtime.Scheme) error {
 	return nil
 }
 
-// canonicalOwnerGVK names AIMService, AIMModel and AIMClusterModel owners at
-// v1alpha2, the only version the API server serves for those kinds.
+// canonicalOwnerGVK rewrites a v1alpha1 owner reference to v1alpha2 for
+// AIMService, AIMModel, AIMClusterModel, AIMArtifact, AIMRuntimeConfig,
+// AIMClusterRuntimeConfig and AIMClusterModelSource. Other kinds and groups
+// are left unchanged.
 func canonicalOwnerGVK(ownerGVK schema.GroupVersionKind) schema.GroupVersionKind {
 	if ownerGVK.Group != "aim.eai.amd.com" || ownerGVK.Version != "v1alpha1" {
 		return ownerGVK
 	}
 	switch ownerGVK.Kind {
-	case "AIMService", "AIMModel", "AIMClusterModel":
+	case "AIMService", "AIMModel", "AIMClusterModel",
+		"AIMArtifact", "AIMRuntimeConfig", "AIMClusterRuntimeConfig", "AIMClusterModelSource":
 		ownerGVK.Version = "v1alpha2"
 	}
 	return ownerGVK
+}
+
+// RewriteV1alpha1OwnerReference patches the owner reference on child whose UID
+// is ownerUID, when that reference is aim.eai.amd.com/v1alpha1 and its kind is
+// one canonicalOwnerGVK rewrites. The reference's APIVersion becomes the
+// version canonicalOwnerGVK returns. Controller, blockOwnerDeletion, and every
+// other reference are left unchanged. It does not call the API when nothing
+// needs rewriting.
+//
+// Remove this in the release that deletes the v1alpha1 entries.
+func RewriteV1alpha1OwnerReference(ctx context.Context, c client.Client, child client.Object, ownerUID types.UID) error {
+	current := child.GetOwnerReferences()
+	rewritten := append([]metav1.OwnerReference(nil), current...)
+	changed := false
+	for i := range rewritten {
+		if rewritten[i].UID != ownerUID {
+			continue
+		}
+		gv, err := schema.ParseGroupVersion(rewritten[i].APIVersion)
+		if err != nil {
+			continue
+		}
+		canonical := canonicalOwnerGVK(gv.WithKind(rewritten[i].Kind))
+		apiVersion := canonical.GroupVersion().String()
+		if apiVersion == rewritten[i].APIVersion {
+			continue
+		}
+		rewritten[i].APIVersion = apiVersion
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+
+	base := child.DeepCopyObject().(client.Object)
+	child.SetOwnerReferences(rewritten)
+	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+	if err := c.Patch(ctx, child, patch); err != nil {
+		child.SetOwnerReferences(current)
+		return fmt.Errorf("rewrite v1alpha1 owner reference on %s: %w", client.ObjectKeyFromObject(child), err)
+	}
+	return nil
 }
 
 // sortObjects returns objects sorted by GVK, namespace, name for determinism

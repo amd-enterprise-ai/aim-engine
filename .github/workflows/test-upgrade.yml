@@ -631,8 +631,21 @@ jobs:
         run: |
           set -euo pipefail
           hack/ci/upgrade/record-v0.2.7-identities.sh "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
-          diff -u "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv" \
-            "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
+          # Removed in the release that deletes the v1alpha1 entries.
+          kept='AIMArtifact|AIMRuntimeConfig|AIMClusterRuntimeConfig|AIMClusterModelSource'
+          normalize() { sed -E "s#aim\.eai\.amd\.com/v1alpha1 (${kept}) #aim.eai.amd.com/v1alpha2 \1 #g" "$1"; }
+          diff -u <(normalize "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv") \
+            <(normalize "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv")
+          if grep -E $'^(PersistentVolumeClaim|AIMArtifact)\t' "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv" \
+              | grep -q 'aim.eai.amd.com/v1alpha1 AIMArtifact '; then
+            echo "artifact owner reference still names v1alpha1" >&2
+            exit 1
+          fi
+          if grep -E $'^AIMClusterModel\t' "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv" \
+              | grep -q 'aim.eai.amd.com/v1alpha1 AIMClusterModelSource '; then
+            echo "discovered model owner reference still names v1alpha1" >&2
+            exit 1
+          fi
 
       - name: Garbage collection follows the rewritten owner reference
         if: matrix.scenario == 'v0.2.7'

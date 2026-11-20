@@ -84,10 +84,20 @@ record_named aimclusterruntimeconfigs - default
 
 record_named aimclusterprofiles - upgrade-cluster-source
 record_named aimclustermodels - upgrade-cluster-model
+# Registry-discovered model owned by upgrade-model-source. Its UID must not change.
+record_selected aimclustermodels - 'aim.eai.amd.com/model-source=upgrade-model-source'
 record_selected aimclusterprofilesets - \
     'aim.eai.amd.com/source-model=upgrade-cluster-model,aim.eai.amd.com/source-model-scope=cluster'
 record_selected aimclusterprofiles - \
     'aim.eai.amd.com/source-model=upgrade-cluster-model,aim.eai.amd.com/profile-origin=derived'
+
+# Profile-cache PVCs plus the model artifact's cache and adapter-disk PVCs.
+for pvc in $(kubectl get pvc -n "${namespace}" -o jsonpath='{.items[*].metadata.name}'); do
+    record_named persistentvolumeclaims "${namespace}" "${pvc}"
+done
+
+# Adapter owned by upgrade-model-artifact. Its UID must not change.
+record_named aimartifacts "${namespace}" upgrade-adapter-artifact
 
 echo "Baseline object identity snapshot:"
 cat "${output}"

@@ -10,6 +10,9 @@
 # spec.artifactCache is set. The artifact is a logical adapter, so it becomes
 # Ready without a download. The model source declares one model and does not
 # query a registry.
+#
+# A model artifact creates a cache PVC and a download Job. Those children, and
+# the declared models, name their owner at v1alpha2 and are deleted with it.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -327,3 +330,91 @@ spec:
               metadata:
                 name: served-kept-source-empty
               spec: {}
+
+    - name: Create a model artifact that downloads into a cache PVC
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: served-kept-weights
+              spec:
+                type: model
+                sourceUri: hf://served-kinds/kept-weights
+                size: 10Mi
+                env:
+                  - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+                    value: "true"
+                  - name: AIM_DEBUG_SIMULATE_HF_DURATION
+                    value: "1"
+
+    - name: New PVCs, Jobs and declared models name their owner at v1alpha2
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              owner_is_v1alpha2() {
+                kind="$1"
+                name="$2"
+                jq -e --arg kind "$kind" --arg name "$name" '
+                  (.items | length) == 1 and
+                  (.items[0].metadata.ownerReferences | length) == 1 and
+                  .items[0].metadata.ownerReferences[0].apiVersion == "aim.eai.amd.com/v1alpha2" and
+                  .items[0].metadata.ownerReferences[0].kind == $kind and
+                  .items[0].metadata.ownerReferences[0].name == $name and
+                  .items[0].metadata.ownerReferences[0].controller == true and
+                  .items[0].metadata.ownerReferences[0].blockOwnerDeletion == true
+                ' >/dev/null
+              }
+              for _ in $(seq 1 40); do
+                pvc=$(kubectl get pvc -n "$NAMESPACE" -l aim.eai.amd.com/cache.name=served-kept-weights -o json)
+                job=$(kubectl get jobs -n "$NAMESPACE" -l aim.eai.amd.com/cache.name=served-kept-weights,aim.eai.amd.com/component=download -o json)
+                model=$(kubectl get aimclustermodels.aim.eai.amd.com -l aim.eai.amd.com/model-source=served-kept-model-source -o json)
+                model_v1=$(kubectl get aimclustermodels.aim.eai.amd.com -l aim.eai.amd.com/model-source=served-kept-model-source-v1 -o json)
+                if printf '%s' "$pvc" | owner_is_v1alpha2 AIMArtifact served-kept-weights &&
+                  printf '%s' "$job" | owner_is_v1alpha2 AIMArtifact served-kept-weights &&
+                  printf '%s' "$model" | owner_is_v1alpha2 AIMClusterModelSource served-kept-model-source &&
+                  printf '%s' "$model_v1" | owner_is_v1alpha2 AIMClusterModelSource served-kept-model-source-v1; then
+                  exit 0
+                fi
+                sleep 3
+              done
+              echo "ERROR: a child does not name its owner at v1alpha2"
+              echo "PVC: $pvc"
+              echo "Job: $job"
+              echo "model: $model"
+              echo "model v1: $model_v1"
+              exit 1
+
+    - name: Deleting an artifact or a model source deletes its children
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kept_model=$(kubectl get aimclustermodels.aim.eai.amd.com -l aim.eai.amd.com/model-source=served-kept-model-source -o jsonpath='{.items[0].metadata.uid}')
+              [ -n "$kept_model" ]
+              kubectl delete aimartifact.aim.eai.amd.com -n "$NAMESPACE" served-kept-weights
+              kubectl delete aimclustermodelsource.aim.eai.amd.com served-kept-model-source
+              for _ in $(seq 1 40); do
+                pvcs=$(kubectl get pvc -n "$NAMESPACE" -l aim.eai.amd.com/cache.name=served-kept-weights -o name)
+                jobs=$(kubectl get jobs -n "$NAMESPACE" -l aim.eai.amd.com/cache.name=served-kept-weights -o name)
+                gone=$(kubectl get aimclustermodels.aim.eai.amd.com -l aim.eai.amd.com/model-source=served-kept-model-source -o name)
+                still=$(kubectl get aimclustermodels.aim.eai.amd.com -l aim.eai.amd.com/model-source=served-kept-model-source-v1 -o jsonpath='{.items[0].metadata.uid}')
+                if [ -z "$pvcs" ] && [ -z "$jobs" ] && [ -z "$gone" ] && [ "$still" != "" ]; then
+                  exit 0
+                fi
+                sleep 3
+              done
+              echo "ERROR: children were not deleted with their owner"
+              kubectl get pvc,jobs -n "$NAMESPACE" -l aim.eai.amd.com/cache.name=served-kept-weights || true
+              kubectl get aimclustermodels.aim.eai.amd.com -l 'aim.eai.amd.com/model-source in (served-kept-model-source,served-kept-model-source-v1)' || true
+              exit 1
