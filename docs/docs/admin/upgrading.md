@@ -398,6 +398,12 @@ failure reported only by the inactive compatibility path is non-blocking. A
 failure in the active path remains visible and blocking. This bridge rule does
 not qualify model serving or replace cluster observation.
 
+While the native path is not yet ready, a network failure of the compatibility
+path's image inspection is also non-blocking. That inspection runs in the
+operator Pod, but the native discovery Job pulls the image on a node, which can
+have a different route to the registry. The `ImageMetadataReady` condition shows
+the failure until the discovery Job has read the image metadata.
+
 ### Inline auto-custom compatibility
 
 A supported v1alpha1 `AIMService.spec.model.custom` can create or reuse a

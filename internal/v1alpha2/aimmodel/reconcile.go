@@ -1002,7 +1002,34 @@ func applyModelServingPathPolicy(
 			componentImageMetadata: {},
 			templateComponent:      {},
 		})
+	case legacyApplicable && nativeApplicable && !nativeReady:
+		markUnreachableImageMetadataNonBlocking(health)
 	}
+}
+
+// markUnreachableImageMetadataNonBlocking lets the native path start when the
+// legacy image inspection fails only with infrastructure errors. The legacy
+// path reads image labels from the controller Pod, while the native discovery
+// Job pulls the image on a node, which can have a different route to the
+// registry. If these errors blocked apply, the discovery Job would never be
+// created. Only infrastructure errors are excused, because only they describe
+// the network route of the controller Pod and not the image or its credentials.
+func markUnreachableImageMetadataNonBlocking(health []controllerutils.ComponentHealth) {
+	for i := range health {
+		if health[i].Component == componentImageMetadata && allInfrastructureErrors(health[i].Errors) {
+			health[i].NonBlocking = true
+		}
+	}
+}
+
+func allInfrastructureErrors(errs []error) bool {
+	for _, err := range errs {
+		categorized := controllerutils.CategorizeError(err)
+		if categorized == nil || categorized.Category() != controllerutils.ErrorCategoryInfrastructure {
+			return false
+		}
+	}
+	return len(errs) > 0
 }
 
 func componentsReady(health []controllerutils.ComponentHealth, components ...string) bool {
