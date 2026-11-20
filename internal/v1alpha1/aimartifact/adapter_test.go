@@ -478,4 +478,7 @@ func TestBuildAdapterReaperJobMountsPVCAndKeepList(t *testing.T) {
 		job.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "adapter-pvc" {
 		t.Errorf("reaper must mount the adapter PVC, got %v", job.Spec.Template.Spec.Volumes)
 	}
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 60*60 {
+		t.Errorf("ActiveDeadlineSeconds = %v, want 3600 so a stuck reaper is replaced", job.Spec.ActiveDeadlineSeconds)
+	}
 }
