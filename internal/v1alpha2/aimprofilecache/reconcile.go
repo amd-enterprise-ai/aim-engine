@@ -515,10 +515,11 @@ func (r *ProfileCacheReconciler) PlanResources(
 
 		// A replacement inherits the adapter disk of the artifact it replaces, so the
 		// disk already exists when the cache switches to it instead of being added
-		// by the adapter-enabled AIMServices afterwards. Size and class are left
-		// empty for the AIMArtifact reconciler to resolve from AIMRuntimeConfig.Storage.
+		// by the adapter-enabled AIMServices afterwards. A size or class set on the
+		// served disk carries over. The cache must not re-apply an artifact after
+		// creating it: an apply without adapterDisk would remove the disk set here.
 		if replacement, replacing := obs.Replacements[model.ModelID]; replacing && replacement.serving.Spec.AdapterDisk != nil {
-			artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+			artifact.Spec.AdapterDisk = replacement.serving.Spec.AdapterDisk.DeepCopy()
 		}
 
 		if pc.Spec.Mode == aimv1alpha2.ProfileCacheModeDedicated {

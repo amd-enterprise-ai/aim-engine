@@ -1616,7 +1616,7 @@ func TestReplacement_InheritsServedAdapterDisk(t *testing.T) {
 			f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
 			f.pc.Spec.RequiresAdapterDisk = tt.requiresAdapterDisk
 			if tt.servedHasDisk {
-				f.served.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+				f.served.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{StorageClassName: "rwx-class"}
 			}
 			obs, _, _ := f.reconcile(t, f.served)
 			if _, ok := obs.Replacements["org/model-a"]; !ok {
@@ -1634,6 +1634,9 @@ func TestReplacement_InheritsServedAdapterDisk(t *testing.T) {
 			}
 			if hasDisk := created.Spec.AdapterDisk != nil; hasDisk != tt.wantDisk {
 				t.Fatalf("replacement adapterDisk set = %v, want %v", hasDisk, tt.wantDisk)
+			}
+			if tt.wantDisk && created.Spec.AdapterDisk.StorageClassName != "rwx-class" {
+				t.Fatalf("replacement adapterDisk = %+v, want the served disk's storage class", created.Spec.AdapterDisk)
 			}
 		})
 	}

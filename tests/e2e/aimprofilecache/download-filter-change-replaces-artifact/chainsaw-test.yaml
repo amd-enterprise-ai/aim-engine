@@ -27,12 +27,12 @@ spec:
     Two profiles share one artifact that carries an adapter disk. Adding a download filter to one profile keeps that profile's cache serving
     the shared artifact while a replacement with the new filter and an adapter disk is
     created, switches once the replacement is Ready, and keeps the previous artifact.
-    Adding the same filter to the second profile moves its adapter-serving cache onto
+    Adding the same filter to the second profile moves filter-change-lora-cache onto
     the same replacement instead of creating another.
   timeouts:
     assert: 3m
   steps:
-    - name: Create the runtime config, two profiles sharing weights and an adapter-serving cache
+    - name: Create the runtime config, two profiles sharing weights and a hand-made Shared cache
       try:
         - apply:
             file: runtime.yaml
@@ -302,12 +302,12 @@ spec:
                 exit 1
               fi
               if ! kubectl -n "$NAMESPACE" get aimartifact "$SHARED" >/dev/null; then
-                echo "the previous artifact $SHARED was deleted, but the adapter-serving cache still uses it"
+                echo "the previous artifact $SHARED was deleted, but filter-change-lora-cache still uses it"
                 exit 1
               fi
               echo "filter-change-base serves $BASE; filter-change-lora-cache still serves $SHARED"
 
-    - name: Add the same filter to the adapter-serving profile
+    - name: Add the same filter to filter-change-lora
       try:
         - patch:
             resource:
@@ -324,7 +324,7 @@ spec:
                       exclude:
                         - "*.bin"
 
-    - name: Assert the adapter-serving cache follows onto the same replacement
+    - name: Assert filter-change-lora-cache follows onto the same replacement
       try:
         - assert:
             resource:
