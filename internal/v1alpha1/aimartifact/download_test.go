@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
 )
 
 func TestResolveDownloadFilter(t *testing.T) {
@@ -581,6 +582,39 @@ func assertSliceEqual(t *testing.T, name string, got, want []string) {
 	for i := range got {
 		if got[i] != want[i] {
 			t.Errorf("%s[%d]: got %q, want %q", name, i, got[i], want[i])
+		}
+	}
+}
+
+func TestJobsPassRestrictedPodSecurity(t *testing.T) {
+	// The CA bundle adds the trust init container; the S3 credentials add a
+	// Secret volume.
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{Name: "company-ca", Key: "ca.crt"},
+		Artifact: &aimv1alpha1.AIMArtifactConfig{
+			S3: &aimv1alpha1.S3ConnectionConfig{
+				Endpoint: "https://s3.example",
+				Auth: &aimv1alpha1.S3AuthConfig{
+					Mode:                 aimv1alpha1.S3AuthModeStatic,
+					CredentialsSecretRef: &aimv1alpha1.S3CredentialsSecretReference{Name: "s3-credentials"},
+				},
+			},
+		},
+	}
+
+	for _, sourceURI := range []string{"hf://org/model", "s3://bucket/model"} {
+		mc := &aimv1alpha1.AIMArtifact{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: sourceURI},
+		}
+		for name, job := range map[string]*batchv1.Job{
+			"check-size": buildCheckSizeJob(mc, config, true),
+			"download":   buildDownloadJob(mc, config, 1000, true),
+			"reaper":     buildAdapterReaperJob(mc, "adapter-pvc", nil, config),
+		} {
+			if violations := testutil.RestrictedPodSecurityViolations(t, job.Spec.Template.Spec); len(violations) > 0 {
+				t.Errorf("%s: %s Job breaks Pod Security restricted: %q", sourceURI, name, violations)
+			}
 		}
 	}
 }
