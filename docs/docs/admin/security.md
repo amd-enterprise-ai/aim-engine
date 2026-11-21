@@ -58,6 +58,16 @@ kubectl create clusterrolebinding team-a-models \
   --group=team-a
 ```
 
+:::{warning}
+An AIMService author controls the security context of the inference Pod (`spec.podSecurityContext` and `spec.securityContext`) and, with `spec.model.image`, its image. AIM Engine creates the Pod, so the author does not need permission to create Pods. In a namespace without Pod Security enforcement, a user with `aimservice-editor` or `aimservice-admin` can therefore run a privileged container or add Linux capabilities such as `SYS_ADMIN`, which can give access to the node. Enforce the Pod Security Standard `baseline` or `restricted` in each namespace where teams get these roles:
+
+```bash
+kubectl label namespace ml-team-a pod-security.kubernetes.io/enforce=baseline
+```
+
+The same applies to `aimruntimeconfig-editor` and `aimruntimeconfig-admin`: a namespace AIMRuntimeConfig sets the security contexts of the services in its namespace that use it and do not set their own. `aimclusterruntimeconfig-editor` and `aimclusterruntimeconfig-admin` do the same for all namespaces.
+:::
+
 ## Inference Route Hostnames
 
 AIM Engine exposes inference services through Gateway API `HTTPRoute` resources. A route with no hostname attaches to **every** listener on its parent Gateway. On a Gateway that fronts multiple hostnames (for example `workloads.*`, `api.*`, and `ui.*`), an unpinned route is therefore reachable on listeners that may not enforce the same authentication, which can expose a model endpoint without auth.

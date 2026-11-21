@@ -135,6 +135,11 @@ func buildInferenceServiceFromProfile(
 		}
 	}
 
+	// KServe merges the model overlay into the kserve-container of the
+	// referenced ServingRuntime, so the container security context goes there.
+	podSecurityContext, containerSecurityContext := servicepolicy.InferenceSecurityContexts(service, obs.mergedRuntimeConfig.Value)
+	model.SecurityContext = containerSecurityContext
+
 	serviceAccountName := service.Spec.ServiceAccountName
 	if serviceAccountName == "" {
 		serviceAccountName = profileSpec.ServiceAccountName
@@ -158,6 +163,7 @@ func buildInferenceServiceFromProfile(
 					ServiceAccountName: serviceAccountName,
 					PriorityClassName:  service.Spec.PriorityClassName,
 					Tolerations:        servicepolicy.InferenceTolerations(service, obs.mergedRuntimeConfig.Value),
+					SecurityContext:    podSecurityContext,
 				},
 				Model: model,
 			},

@@ -247,6 +247,7 @@ See [Model Caching](caching.md) for the full hierarchy (AIMProfileCache → AIMA
 | `serviceAccountName` | Pod service account for the inference workload. |
 | `priorityClassName` | Pod priority class. |
 | `tolerations` | Pod tolerations for the inference workload and its adapter staging Jobs. Replaces the runtime config's list as a whole; `[]` removes it. See [Tolerations](runtime-config.md#tolerations). |
+| `podSecurityContext` / `securityContext` | Pod security context and inference container security context. Each one replaces the runtime config's value as a whole, also when it is `{}`. See [Security contexts](runtime-config.md#security-contexts). |
 
 For example, a one-GPU service can override CPU and memory while inheriting the
 profile's accelerator request and limit:
