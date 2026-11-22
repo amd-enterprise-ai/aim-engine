@@ -62,7 +62,7 @@ When an AIMService uses `spec.template`, the controller emits these conditions:
 | `CacheReady` | `True` | `CacheReady` |
 | `CacheReady` | `False` | `CacheCreating`, `CacheNotReady`, `CacheFailed`, `CacheLost` |
 | `InferenceServiceReady` | `True` | `RuntimeReady` |
-| `InferenceServiceReady` | `False` | `CreatingRuntime`, `RuntimeScaling` |
+| `InferenceServiceReady` | `False` | `CreatingRuntime`, `RuntimeScaling`, `PodCreationFailed` |
 
 See [Legacy Conditions Reference](conditions-v1alpha1.md) for the full catalog.
 

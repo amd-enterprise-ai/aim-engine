@@ -588,8 +588,21 @@ func inferenceServiceComponentHealth(
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonRuntimeScaling
 			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount)
+			if refusal, refused := predictorPodCreationFailure(isvc); refused {
+				health.Message += "; the predictor Deployment cannot create a pod: " + refusal
+			}
 			return health
 		}
+	}
+
+	// Checked before the generation guard: in RawDeployment mode KServe copies
+	// the observedGeneration of the predictor Deployment, which also changes
+	// when the replica count changes, and the refusal is current either way.
+	if refusal, refused := predictorPodCreationFailure(isvc); refused {
+		health.State = constants.AIMStatusFailed
+		health.Reason = aimv1alpha1.AIMServiceReasonPodCreationFailed
+		health.Message = "The predictor Deployment cannot create a pod: " + refusal
+		return health
 	}
 
 	if isvc.Generation <= 0 || isvc.Status.ObservedGeneration != isvc.Generation {
@@ -603,6 +616,22 @@ func inferenceServiceComponentHealth(
 	health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
 	health.Message = "InferenceService is not ready"
 	return health
+}
+
+// deploymentReasonFailedCreate is the reason of the Deployment ReplicaFailure
+// condition when the API server refuses a Pod. Not exported by client-go.
+const deploymentReasonFailedCreate = "FailedCreate"
+
+// predictorPodCreationFailure returns the refusal message when the predictor
+// Deployment cannot create a Pod. In RawDeployment mode KServe copies the
+// Deployment ReplicaFailure condition into PredictorReady, so the message is
+// the text of the API server or of the admission policy.
+func predictorPodCreationFailure(isvc *servingv1beta1.InferenceService) (string, bool) {
+	cond := isvc.Status.GetCondition(servingv1beta1.PredictorReady)
+	if cond == nil || cond.Status != corev1.ConditionFalse || cond.Reason != deploymentReasonFailedCreate {
+		return "", false
+	}
+	return cond.Message, true
 }
 
 // isTransientKServeError checks if a KServe error message indicates a transient condition

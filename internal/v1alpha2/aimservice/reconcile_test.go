@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -2064,6 +2065,38 @@ func TestGetInferenceServiceHealth_ReadyPodsOverrideStaleGeneration(t *testing.T
 	if health.State != constants.AIMStatusProgressing ||
 		health.Reason != aimv1alpha1.AIMServiceReasonCreatingRuntime {
 		t.Fatalf("health without a ready pod = %#v, want Progressing/CreatingRuntime", health)
+	}
+}
+
+func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
+	const refusal = `pods "svc-predictor-6d8f-abcde" is forbidden: admission policy denied the request`
+	inferenceService := &servingv1beta1.InferenceService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", Generation: 1},
+		Status: servingv1beta1.InferenceServiceStatus{
+			Status: duckv1.Status{
+				ObservedGeneration: 1,
+				Conditions: duckv1.Conditions{{
+					Type:    servingv1beta1.PredictorReady,
+					Status:  corev1.ConditionFalse,
+					Reason:  "FailedCreate",
+					Message: refusal,
+				}},
+			},
+		},
+	}
+	obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{
+		inferenceService:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: inferenceService},
+		inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{}},
+	}}
+
+	health := obs.getInferenceServiceHealth()
+
+	if health.State != constants.AIMStatusFailed ||
+		health.Reason != aimv1alpha1.AIMServiceReasonPodCreationFailed {
+		t.Fatalf("health = %#v, want Failed/PodCreationFailed", health)
+	}
+	if !strings.Contains(health.Message, refusal) {
+		t.Errorf("message = %q, want it to contain %q", health.Message, refusal)
 	}
 }
 

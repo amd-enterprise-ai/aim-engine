@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Missing runtime lineage now reports `BaseImageUnresolved` instead of the misleading `InvalidProfileOverrides`, while existing ProfileSet and AIMService resources remain untouched.
 - ProfileSet controllers no longer requeue every set for RuntimeConfig status-only updates.
 - Service overlay profiles now record canonical runtime lineage consistently in both `spec.baseImageRef` and the `aim.eai.amd.com/base-image` annotation, while `spec.image` remains the mapped deployment reference.
+- An `AIMService` now shows when the API server or an admission policy refuses its predictor pod, for example because of a LimitRange or a ResourceQuota. Before, the service stayed in `Starting` with no message. Now its status is `Failed`, and the `InferenceServiceReady` and `Ready` conditions have the reason `PodCreationFailed` and the refusal text. The service goes back to `Starting` when a pod can be created. While an older pod still serves, the service stays `Running` and the `InferenceServiceReady` message has the refusal text.
 
 ## [0.2.7] - 2026-10-08
 
