@@ -355,6 +355,13 @@ type AIMArtifactConfig struct {
 	// +optional
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
+	// DownloadJobResources replaces the CPU and memory of the model download
+	// container (default: requests 500m, 1Gi; limits 4, 8Gi). Set requests and
+	// limits: a LimitRange default limit below a request makes the API server
+	// refuse the Pod.
+	// +optional
+	DownloadJobResources *corev1.ResourceRequirements `json:"downloadJobResources,omitempty"`
+
 	// S3 configures typed connection settings for AIMArtifacts whose sourceUri
 	// uses the s3:// scheme. Typed fields take final precedence, and
 	// artifact-level env is restricted to bounded downloader tuning.

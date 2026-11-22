@@ -27,6 +27,8 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -284,6 +286,71 @@ func TestBuildDownloadJobHasActiveDeadline(t *testing.T) {
 	}
 	if got, want := *job.Spec.ActiveDeadlineSeconds, int64(24*60*60); got != want {
 		t.Errorf("ActiveDeadlineSeconds = %d, want %d (24h)", got, want)
+	}
+}
+
+// A namespace LimitRange fills in each request or limit that the Job leaves
+// unset, and the API server refuses the Pod when a filled-in default limit is
+// lower than the Job's request. The default therefore sets both for CPU and
+// memory.
+func TestBuildDownloadJobDefaultResources(t *testing.T) {
+	mc := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "s3://bucket/model"},
+	}
+
+	got := buildDownloadJob(mc, nil, 1000, false).Spec.Template.Spec.Containers[0].Resources
+
+	want := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("1Gi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("4"),
+			corev1.ResourceMemory: resource.MustParse("8Gi"),
+		},
+	}
+	if !equality.Semantic.DeepEqual(got, want) {
+		t.Errorf("download container resources = %v, want %v", got, want)
+	}
+}
+
+func TestBuildDownloadJobRuntimeConfigResources(t *testing.T) {
+	mc := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model"},
+	}
+	larger := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("2"),
+			corev1.ResourceMemory: resource.MustParse("4Gi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("8"),
+			corev1.ResourceMemory: resource.MustParse("16Gi"),
+		},
+	}
+	tests := []struct {
+		name       string
+		configured corev1.ResourceRequirements
+	}{
+		{name: "replaces the default", configured: larger},
+		// An empty value sets no resources, so a namespace LimitRange decides.
+		{name: "empty value sets no resources", configured: corev1.ResourceRequirements{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &aimv1alpha1.AIMRuntimeConfigCommon{
+				Artifact: &aimv1alpha1.AIMArtifactConfig{DownloadJobResources: tt.configured.DeepCopy()},
+			}
+
+			got := buildDownloadJob(mc, config, 1000, false).Spec.Template.Spec.Containers[0].Resources
+
+			if !equality.Semantic.DeepEqual(got, tt.configured) {
+				t.Errorf("download container resources = %v, want %v", got, tt.configured)
+			}
+		})
 	}
 }
 

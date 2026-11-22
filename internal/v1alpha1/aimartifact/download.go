@@ -30,6 +30,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -271,6 +272,7 @@ func buildDownloadJob(
 							Env:             s3Settings.Env,
 							Args:            []string{mc.Spec.SourceURI},
 							VolumeMounts:    volumeMounts,
+							Resources:       resolveDownloadJobResources(runtimeConfigSpec),
 						},
 					},
 				},
@@ -283,6 +285,27 @@ func buildDownloadJob(
 		ResolveTrustProjection(runtimeConfigSpec, mc.Spec.SourceURI, includeAdditionalCABundle, downloadImage),
 	)
 	return job
+}
+
+// resolveDownloadJobResources returns the runtime config's download Job
+// resources, or the default. The default sets requests and limits for CPU and
+// memory, so a namespace LimitRange cannot add a default limit that is lower
+// than a request. The memory limit leaves room for the parallel S3 and Hugging
+// Face transfers and the page cache of the files that they write.
+func resolveDownloadJobResources(runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) corev1.ResourceRequirements {
+	if runtimeConfigSpec != nil && runtimeConfigSpec.Artifact != nil && runtimeConfigSpec.Artifact.DownloadJobResources != nil {
+		return *runtimeConfigSpec.Artifact.DownloadJobResources.DeepCopy()
+	}
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("1Gi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("4"),
+			corev1.ResourceMemory: resource.MustParse("8Gi"),
+		},
+	}
 }
 
 func getCheckSizeJobName(mc *aimv1alpha1.AIMArtifact) string {

@@ -99,6 +99,11 @@ func (in *AIMArtifactConfig) DeepCopyInto(out *AIMArtifactConfig) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.DownloadJobResources != nil {
+		in, out := &in.DownloadJobResources, &out.DownloadJobResources
+		*out = new(v1.ResourceRequirements)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.S3 != nil {
 		in, out := &in.S3, &out.S3
 		*out = new(S3ConnectionConfig)
