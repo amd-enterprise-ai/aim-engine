@@ -9,7 +9,9 @@ spec:
     After the upgrade guide's rollback, the v0.2.7 operator replaced the
     candidate and runs without restarts. The services moved to the profile
     pipeline before the upgrade, and the service created after it with only
-    spec.model.name, stay on it.
+    spec.model.name, stay on it. The PVCs, adapter and discovered model whose
+    owner references the candidate moved to v1alpha2 still exist, although
+    v0.2.7 doesn't serve that version.
   timeouts:
     assert: 300s
   steps:
@@ -82,8 +84,25 @@ spec:
                 echo "ERROR: the manager container is '$manager', want 'ready=true restarts=0 running-3m=true'"
                 exit 1
               fi
+              # v0.2.7 can't map the v1alpha2 AIMArtifact owners of the candidate's PVCs, so
+              # its owner event handler logs each PVC event; that isn't a failed watch.
               if kubectl logs -n aim-system deployment/aim-engine-controller-manager -c manager --tail=-1 \
+                | grep -v '"logger":"controller-runtime.eventhandler.enqueueRequestForOwner"' \
                 | grep -E 'no matches for kind|Could not wait for Cache to sync'; then
                 echo "ERROR: the operator log shows a watch that never synced"
                 exit 1
               fi
+
+    - name: Children with v1alpha2 owners survive the rollback
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl get pvc -n "$NAMESPACE" -l aim.eai.amd.com/cache.name=upgrade-model-artifact -o json \
+                | jq -e '.items | length == 2' >/dev/null
+              kubectl get aimartifact upgrade-adapter-artifact -n "$NAMESPACE" >/dev/null
+              kubectl get aimclustermodel -l aim.eai.amd.com/model-source=upgrade-model-source -o json \
+                | jq -e '.items | length == 1' >/dev/null
