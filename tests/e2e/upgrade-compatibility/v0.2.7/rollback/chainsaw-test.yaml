@@ -103,6 +103,7 @@ spec:
               set -eu
               kubectl get pvc -n "$NAMESPACE" -l aim.eai.amd.com/cache.name=upgrade-model-artifact -o json \
                 | jq -e '.items | length == 2' >/dev/null
-              kubectl get aimartifact upgrade-adapter-artifact -n "$NAMESPACE" >/dev/null
+              # kubectl's discovery cache from before the rollback still maps AIMArtifact to v1alpha2.
+              kubectl get aimartifacts.v1alpha1.aim.eai.amd.com upgrade-adapter-artifact -n "$NAMESPACE" >/dev/null
               kubectl get aimclustermodel -l aim.eai.amd.com/model-source=upgrade-model-source -o json \
                 | jq -e '.items | length == 1' >/dev/null
