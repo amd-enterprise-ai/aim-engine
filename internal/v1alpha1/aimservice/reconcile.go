@@ -599,6 +599,16 @@ func inferenceServiceComponentHealth(
 	// the observedGeneration of the predictor Deployment, which also changes
 	// when the replica count changes, and the refusal is current either way.
 	if refusal, refused := predictorPodCreationFailure(isvc); refused {
+		// A pod that exists can still become ready. After a spec fix, for
+		// example, the Deployment keeps the refused old ReplicaSet, and so the
+		// refusal, until the pod of the new ReplicaSet is ready.
+		if starting := activePodCount(inferenceServicePods); starting > 0 {
+			health.State = constants.AIMStatusProgressing
+			health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
+			health.Message = fmt.Sprintf("InferenceService has %d starting pod(s); "+
+				"the predictor Deployment cannot create a pod: %s", starting, refusal)
+			return health
+		}
 		health.State = constants.AIMStatusFailed
 		health.Reason = aimv1alpha1.AIMServiceReasonPodCreationFailed
 		health.Message = "The predictor Deployment cannot create a pod: " + refusal
@@ -632,6 +642,23 @@ func predictorPodCreationFailure(isvc *servingv1beta1.InferenceService) (string,
 		return "", false
 	}
 	return cond.Message, true
+}
+
+// activePodCount counts the pods that a ReplicaSet counts as replicas: not
+// terminating and not in a terminal phase.
+func activePodCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
+	if pods == nil || !pods.OK() || pods.Value == nil {
+		return 0
+	}
+	count := 0
+	for i := range pods.Value.Items {
+		pod := &pods.Value.Items[i]
+		if pod.DeletionTimestamp == nil &&
+			pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			count++
+		}
+	}
+	return count
 }
 
 // isTransientKServeError checks if a KServe error message indicates a transient condition

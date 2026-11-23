@@ -2109,6 +2109,32 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 			wantInMessage: refusal,
 		},
 		{
+			// After a spec fix, the Deployment keeps the refused old
+			// ReplicaSet until the pod of the new ReplicaSet is ready.
+			name:          "a starting pod keeps the service progressing and the refusal is shown",
+			reason:        "FailedCreate",
+			pods:          podsInPhase(corev1.PodPending, false),
+			wantState:     constants.AIMStatusProgressing,
+			wantReason:    aimv1alpha1.AIMServiceReasonCreatingRuntime,
+			wantInMessage: refusal,
+		},
+		{
+			name:          "a terminating pod does not count as starting",
+			reason:        "FailedCreate",
+			pods:          podsInPhase(corev1.PodRunning, true),
+			wantState:     constants.AIMStatusFailed,
+			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
+			wantInMessage: refusal,
+		},
+		{
+			name:          "a failed pod does not count as starting",
+			reason:        "FailedCreate",
+			pods:          podsInPhase(corev1.PodFailed, false),
+			wantState:     constants.AIMStatusFailed,
+			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
+			wantInMessage: refusal,
+		},
+		{
 			name:       "a predictor that is only starting is not a failure",
 			reason:     "MinimumReplicasUnavailable",
 			pods:       &corev1.PodList{},
@@ -2141,6 +2167,18 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// podsInPhase returns one predictor pod that is not ready.
+func podsInPhase(phase corev1.PodPhase, terminating bool) *corev1.PodList {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-predictor-new", Namespace: testNamespace},
+		Status:     corev1.PodStatus{Phase: phase},
+	}
+	if terminating {
+		pod.DeletionTimestamp = ptr.To(metav1.Now())
+	}
+	return &corev1.PodList{Items: []corev1.Pod{pod}}
 }
 
 // predictorNotReadyISVC returns an InferenceService as KServe reports it in
