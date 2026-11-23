@@ -179,7 +179,7 @@ Stickiness is a default-on protection, not a guarantee. The strongest guarantee 
 
 ## Profile overlays
 
-Sometimes you want to tweak a published profile for one service without forking it. `spec.profileOverrides` creates a service-owned **overlay AIMProfile** derived from `spec.profile.name`:
+Sometimes you want to tweak a published profile for one service without forking it. `spec.profileOverrides` creates a service-owned **overlay AIMProfile** derived from the profile that `spec.profile` resolves:
 
 ```yaml
 spec:
@@ -216,7 +216,7 @@ seed's `spec.image`. If it is absent, the service reports
 guess from the seed image's registry or tag. Configuration-only overlays do
 not require the field.
 
-`spec.profileOverrides` requires `spec.profile.name`; it can't be combined with a selector-based resolution shape.
+`spec.profileOverrides` requires `spec.profile` (`name` or `selector`). The API server refuses it on a service without `spec.profile`, for example the by-model and by-image shapes.
 
 ## Caching
 
@@ -328,7 +328,7 @@ CEL admission rules reject a handful of v1alpha1-isms outright:
 | `spec.template` (any value) | `spec.profile` (or `spec.model`) |
 | `spec.overrides` | `spec.profileOverrides` |
 | Neither `spec.model` nor `spec.profile` | Set at least one |
-| `spec.profileOverrides` without `spec.profile.name` | Provide `spec.profile.name` |
+| `spec.profileOverrides` without `spec.profile` | Set `spec.profile` (`name` or `selector`) |
 | `spec.profile.selector.role: base` | Omit `role` or set `deployable` |
 | `spec.profile.selector` without `aimId`, `modelRef`, or paired `spec.model` | Add one of those anchor fields |
 

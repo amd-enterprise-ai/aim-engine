@@ -319,7 +319,7 @@ The v1alpha2 CRD rejects legacy-only fields and invalid combinations of the onbo
 | Image-discovery/runtime fields such as `spec.discovery`, `spec.env`, `spec.imagePullSecrets`, `spec.serviceAccountName`, or `spec.resources` with `spec.modelId` | `AIMModel` | Configure the generated profile runtime on the referenced RuntimeConfig fallback. |
 | `spec.template` | `AIMService` | Use `spec.profile`. |
 | `spec.overrides` | `AIMService` | Use `spec.profileOverrides`. |
-| `spec.profileOverrides` without `spec.profile.name` | `AIMService` | Overlay requires a named seed. |
+| `spec.profileOverrides` without `spec.profile` | `AIMService` | The overlay derives from the profile that `spec.profile` resolves. Set `spec.profile.name` or `spec.profile.selector`. |
 | `spec.profile.selector.role: base` | `AIMService` | Services always resolve to deployable profiles. |
 | `spec.profile.selector` without `aimId` or `modelRef` or paired `spec.model` | `AIMService` | Resolver needs an anchor for watch fan-out. |
 
