@@ -58,7 +58,7 @@ type StatusStaleError struct {
 
 func (e *StatusStaleError) Error() string {
 	return fmt.Sprintf(
-		"AIMProfileCache %s/%s status has not observed metadata generation %d (observedGeneration=%d)%s",
+		"AIMProfileCache %s/%s has not yet processed its latest spec change (generation %d, observedGeneration %d)%s",
 		e.Namespace,
 		e.Name,
 		e.Generation,
@@ -78,7 +78,8 @@ func pausedSuffix(paused bool) string {
 	if !paused {
 		return ""
 	}
-	return fmt.Sprintf("; reconciliation is paused by the %s annotation", constants.AnnotationReconciliationPaused)
+	return fmt.Sprintf("; AIMProfileCache reconciliation is paused by the %s annotation, so its status will not change until the annotation is removed",
+		constants.AnnotationReconciliationPaused)
 }
 
 // FindReadyShared returns a Ready, profile-owned (Shared) AIMProfileCache in
@@ -186,18 +187,20 @@ func matchesShared(
 	return cache.Spec.Mode == aimv1alpha2.ProfileCacheModeShared
 }
 
-// ErrorConditionTypes are the framework conditions whose False status means a
-// cache's reconciliation is failing, so its readiness is unknown.
-var ErrorConditionTypes = []string{
-	controllerutils.ConditionTypeDependenciesReachable,
-	controllerutils.ConditionTypeAuthValid,
-	controllerutils.ConditionTypeConfigValid,
+// ErrorConditionTypes returns the framework conditions whose False status means
+// a cache's reconciliation is failing, so its readiness is unknown.
+func ErrorConditionTypes() []string {
+	return []string{
+		controllerutils.ConditionTypeDependenciesReachable,
+		controllerutils.ConditionTypeAuthValid,
+		controllerutils.ConditionTypeConfigValid,
+	}
 }
 
 // failedErrorCondition returns the first False condition of
 // ErrorConditionTypes, or nil when none is False.
 func failedErrorCondition(cache *aimv1alpha2.AIMProfileCache) *metav1.Condition {
-	for _, conditionType := range ErrorConditionTypes {
+	for _, conditionType := range ErrorConditionTypes() {
 		if cond := meta.FindStatusCondition(cache.Status.Conditions, conditionType); cond != nil &&
 			cond.Status == metav1.ConditionFalse {
 			return cond

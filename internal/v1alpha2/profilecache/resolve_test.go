@@ -174,10 +174,10 @@ func TestFindReadyShared_ReturnsErrorWhenCacheReadinessIsUnknown(t *testing.T) {
 	t.Parallel()
 
 	const profile = "qwen3-32b-mi300x"
-	for _, conditionType := range []string{
-		controllerutils.ConditionTypeDependenciesReachable,
-		controllerutils.ConditionTypeAuthValid,
-		controllerutils.ConditionTypeConfigValid,
+	for conditionType, reason := range map[string]string{
+		controllerutils.ConditionTypeDependenciesReachable: controllerutils.ReasonDependenciesNotReachable,
+		controllerutils.ConditionTypeAuthValid:             controllerutils.ReasonAuthError,
+		controllerutils.ConditionTypeConfigValid:           controllerutils.ReasonInvalidSpec,
 	} {
 		t.Run(conditionType, func(t *testing.T) {
 			unknown := cache(
@@ -190,7 +190,7 @@ func TestFindReadyShared_ReturnsErrorWhenCacheReadinessIsUnknown(t *testing.T) {
 			unknown.Status.Conditions = []metav1.Condition{{
 				Type:    conditionType,
 				Status:  metav1.ConditionFalse,
-				Reason:  "ApplyFailed",
+				Reason:  reason,
 				Message: "artifacts.aim.eai.amd.com is forbidden",
 			}}
 
@@ -207,7 +207,7 @@ func TestFindReadyShared_ReturnsErrorWhenCacheReadinessIsUnknown(t *testing.T) {
 			if got != nil {
 				t.Fatalf("FindReadyShared() = %q, want nil on unknown readiness", got.Name)
 			}
-			want := conditionType + " condition is False (ApplyFailed: artifacts.aim.eai.amd.com is forbidden)"
+			want := conditionType + " condition is False (" + reason + ": artifacts.aim.eai.amd.com is forbidden)"
 			if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "paused") {
 				t.Fatalf("FindReadyShared() error = %q, want it to contain %q and no pause note", err, want)
 			}
@@ -226,7 +226,7 @@ func TestFindReadyShared_NamesPausedReconciliation(t *testing.T) {
 	unknown := paused(cache(profile+"-cache", profile, aimv1alpha1.AIMResolutionScopeNamespace,
 		aimv1alpha2.ProfileCacheModeShared, constants.AIMStatusDegraded))
 	unknown.Status.Conditions = []metav1.Condition{{
-		Type: controllerutils.ConditionTypeConfigValid, Status: metav1.ConditionFalse, Reason: "Invalid",
+		Type: controllerutils.ConditionTypeConfigValid, Status: metav1.ConditionFalse, Reason: controllerutils.ReasonInvalidSpec,
 	}}
 	stale := paused(cache(profile+"-cache", profile, aimv1alpha1.AIMResolutionScopeNamespace,
 		aimv1alpha2.ProfileCacheModeShared, constants.AIMStatusReady))
@@ -237,7 +237,7 @@ func TestFindReadyShared_NamesPausedReconciliation(t *testing.T) {
 			t.Parallel()
 			_, err := FindReadyShared(context.Background(), newClient(t, obj), testNamespace, profile,
 				aimv1alpha1.AIMResolutionScopeNamespace)
-			if err == nil || !strings.Contains(err.Error(), "reconciliation is paused by the "+constants.AnnotationReconciliationPaused) {
+			if err == nil || !strings.Contains(err.Error(), "AIMProfileCache reconciliation is paused by the "+constants.AnnotationReconciliationPaused) {
 				t.Fatalf("FindReadyShared() error = %v, want it to name the paused annotation", err)
 			}
 		})
