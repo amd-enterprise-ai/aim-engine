@@ -477,77 +477,23 @@ An empty object (`{}`) also replaces the inherited value. For example, `security
 
 These fields apply only to the inference pods. They do not apply to the Jobs that prepare a model or stage adapters.
 
-:::{warning}
-AIMService authors control these fields for their own inference pods, and runtime config authors control them for every service that inherits the value. AIM Engine creates the pods, so these authors do not need permission to create Pods. A value with `privileged: true` or an added capability such as `SYS_ADMIN` can give the container access to the node. Enforce the Pod Security Standard `baseline` or `restricted` in each namespace where teams can write AIMService or AIMRuntimeConfig resources. See [Team RBAC](../admin/security.md#example-team-rbac).
-:::
+AIM Engine refuses the values in these fields that the Pod Security Standard `baseline` forbids. The API server refuses an AIMService, AIMRuntimeConfig or AIMClusterRuntimeConfig that has one of these values:
+
+- `podSecurityContext.sysctls` with an entry. AIM Engine refuses all sysctls, also those that `baseline` allows.
+- `securityContext.privileged: true`.
+- `securityContext.capabilities.add` with an entry. AIM Engine refuses all added capabilities, also those that `baseline` allows.
+- `securityContext.procMount` with a value other than `Default`.
+- In both fields:
+  - `seccompProfile.type` or `appArmorProfile.type` with a value other than `RuntimeDefault` or `Localhost`.
+  - `windowsOptions.hostProcess: true`.
+  - `seLinuxOptions.type` with a value other than empty, `container_t`, `container_init_t`, `container_kvm_t` or `container_engine_t`.
+  - `seLinuxOptions.user` or `seLinuxOptions.role` with a value.
+
+For what these rules do not prevent, see the [warning in Team RBAC](../admin/security.md#team-rbac-security-contexts).
 
 Changing a runtime config's security context restarts the inference pods of every service that inherits it, because the security contexts are part of each predictor's pod template. Services that set their own value are not affected.
 
-### Run inference pods under Pod Security `restricted`
-
-A namespace that enforces the Pod Security Standard `restricted` refuses inference pods without these fields. AIM images run as root by default, so the Pod must also select a non-root user. Set both fields, for example in the runtime config of the namespace:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMRuntimeConfig
-metadata:
-  name: default
-  namespace: my-models
-spec:
-  podSecurityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
-    fsGroup: 1000
-    supplementalGroups: [44, 110]   # host GIDs of video and render; see below
-    seccompProfile:
-      type: RuntimeDefault
-  securityContext:
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop: [ALL]
-```
-
-AIM images have no user entry for a non-root UID, so the inference container also needs `HOME` set to a writable directory and `USER` set to a name. Without `HOME`, vLLM tries to write its cache below `/`, and the container stops with `Permission denied: '/.cache'`. Without `USER`, PyTorch cannot find a user name for the UID, and the container stops with `getpwuid(): uid not found`.
-
-Where you set the two variables depends on the spec of the AIMService.
-
-**With `spec.profile`** (`name` or `selector`): the service uses the profile pipeline, which does not pass the runtime config `spec.env` to the inference container. Set the variables in `spec.profileOverrides.containerEnv` of the service:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMService
-metadata:
-  name: llama-3-1-8b
-  namespace: my-models
-spec:
-  profile:
-    name: my-profile
-  profileOverrides:
-    containerEnv:
-      - name: HOME
-        value: /tmp
-      - name: USER
-        value: aim
-```
-
-Set the profile overrides when you create the service. When you add them to a running service, the service moves to a new overlay profile with its own model cache, and the model weights can download again.
-
-**Without `spec.profile`**: the service uses the `AIMServiceTemplate` pipeline, which merges the runtime config `spec.env` into the inference container. Set the variables in the runtime config `spec.env`, next to the two security fields.
-
-A service without `spec.profile` that has the annotation `aim.eai.amd.com/reconciler-pipeline: profile` (the by-model and by-image shapes in [Services](services.md#resolution-shapes)) uses the profile pipeline, but the CRD accepts `spec.profileOverrides` only together with `spec.profile`. Thus neither method applies. Use a shape with `spec.profile` instead, for example [model + selector](services.md#model--selector).
-
-The AIM runtime installs pre-built AITER kernels into the AITER package directory of the image, which belongs to root. Use an AIM image whose runtime links the kernels into a private `AITER_JIT_DIR` when that directory is read-only; at startup, such a runtime logs `Using AITER_JIT_DIR=...`. With an older image, for example `docker.io/amdenterpriseai/aim-meta-llama-llama-3-1-8b-instruct:0.11.1`, the runtime logs `Permission denied` warnings for the kernels, the server becomes ready, and the engine stops at the first inference request with `ModuleNotFoundError`.
-
-GPU device access needs `supplementalGroups`. The AMD GPU device plugin gives the container `/dev/kfd` and `/dev/dri/renderD*` with the host group of `render` and mode 0660, and `/dev/dri/card*` with the host group of `video`. `fsGroup` does not change device files. If the Pod does not have these host GIDs in `supplementalGroups`, the GPU runtime cannot open the devices and reports that no GPU is available. The GIDs depend on the operating system of the node. To find them, run this command on a GPU node:
-
-```bash
-stat -c '%g %n' /dev/kfd /dev/dri/card* /dev/dri/renderD*
-```
-
-The values 44 (`video`) and 110 (`render`) in the example are from one Ubuntu node. They are not defaults.
-
-If the runtime config sets `additionalCABundleRef`, the inference pods also get a CA init container. It runs as UID 1000 without privilege escalation and drops all capabilities, and the Pod `seccompProfile` applies to it.
+To run inference pods in a namespace that enforces Pod Security `restricted`, see [Restricted Pod Security](../guides/restricted-pod-security.md).
 
 ## Environment variable overrides
 

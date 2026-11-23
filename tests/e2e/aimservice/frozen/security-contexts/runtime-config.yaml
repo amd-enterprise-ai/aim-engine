@@ -1,6 +1,8 @@
 # Namespace-local runtime config whose security contexts the service inherits
 # until it sets its own. Kept namespaced so the test does not touch the
 # cluster-scoped defaults other tests run against.
+# The spec is the example of docs/docs/guides/restricted-pod-security.md;
+# keep the two the same.
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig
 metadata:
