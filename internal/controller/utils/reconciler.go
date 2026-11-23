@@ -183,10 +183,10 @@ func (pr *PlanResult) ApplyWithForce(obj client.Object) {
 // obj must be an unstructured object carrying only its identity and the fields
 // being set: a typed object also serializes its non-pointer structs and
 // quantities. Every field it carries becomes owned by that dedicated manager, so
-// the fields survive a later apply by the main field manager that omits them, and
-// the main manager never becomes a co-owner of the rest of the object. Force takes
-// these fields from any other manager that owns them, so callers must only set
-// fields their controller is authoritative for.
+// the fields survive a later apply that omits them when that apply's manager
+// never owned them, and the main manager never becomes a co-owner of the rest of
+// the object. Force takes these fields from any other manager that owns them, so
+// callers must only set fields their controller is authoritative for.
 //
 // Set obj's UID to the observed object's: the API server then rejects the apply
 // when the object is missing or was recreated under the same name, instead of

@@ -47,6 +47,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -99,6 +100,10 @@ type Dependencies struct {
 	AdapterRuntimeConfigs map[string]controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	StagingJobs           map[string]controllerutils.FetchResult[*batchv1.Job]
 	ParentArtifact        *controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]
+	// PublishedParentUID is the UID the cache published for ParentArtifact. A
+	// fetched parent with another UID was recreated under the same name and is
+	// not the artifact the cache resolved.
+	PublishedParentUID    types.UID
 	SubtreeSyncJob        controllerutils.FetchResult[*batchv1.Job]
 	AdapterDiskPVC        string
 	AdapterDiskPVCUID     string
@@ -223,17 +228,24 @@ func IsActive(service *aimv1alpha2.AIMService) bool {
 	return service.Spec.AdaptersEnabled() || len(service.Status.Adapters) > 0
 }
 
+// ParentRef identifies the base model artifact a cache published in its
+// status.artifacts.
+type ParentRef struct {
+	Name string
+	UID  types.UID
+}
+
 // Fetch loads the resolved parent model artifact, then each declared adapter and
-// the Jobs belonging to the current storage binding. parentName is resolved by
-// the caller from the service's profile cache and may be empty when the base
-// model is not yet resolvable. A transient resolution gap uses the PVC persisted on service
-// status so the controller continues observing the previous binding; a newly
-// resolved PVC selects a fresh generation of staging and subtree-sync Jobs.
+// the Jobs belonging to the current storage binding. parent is resolved by the
+// caller from the service's profile cache and is empty when the base model is
+// not yet resolvable. A transient resolution gap uses the PVC persisted on
+// service status so the controller continues observing the previous binding; a
+// newly resolved PVC selects a fresh generation of staging and subtree-sync Jobs.
 func Fetch(
 	ctx context.Context,
 	c client.Client,
 	service *aimv1alpha2.AIMService,
-	parentName string,
+	parent ParentRef,
 ) Dependencies {
 	deps := Dependencies{
 		AdapterArtifacts:      make(map[string]controllerutils.FetchResult[*aimv1alpha1.AIMArtifact], len(service.Spec.Adapters)),
@@ -243,11 +255,12 @@ func Fetch(
 
 	adapterDiskPVC := service.Status.AdapterDiskPersistentVolumeClaim
 	adapterDiskPVCUID := service.Status.AdapterDiskPersistentVolumeClaimUID
-	if parentName != "" {
+	if parent.Name != "" {
 		pf := controllerutils.Fetch(ctx, c,
-			client.ObjectKey{Namespace: service.Namespace, Name: parentName},
+			client.ObjectKey{Namespace: service.Namespace, Name: parent.Name},
 			&aimv1alpha1.AIMArtifact{})
 		deps.ParentArtifact = &pf
+		deps.PublishedParentUID = parent.UID
 		if pf.OK() && pf.Value != nil && pf.Value.Status.AdapterPersistentVolumeClaim != "" {
 			adapterDiskPVC = pf.Value.Status.AdapterPersistentVolumeClaim
 			if adapterDiskPVC != service.Status.AdapterDiskPersistentVolumeClaim {
@@ -876,8 +889,9 @@ func Plan(
 // under its own field manager, so the cache controller applying the rest of the
 // artifact never removes it, and services mounting the artifact's model PVC are
 // not affected. Size and class stay empty for the AIMArtifact reconciler to
-// resolve from AIMRuntimeConfig.Storage. The apply carries the observed UID, so
-// it never creates the artifact or lands on one recreated under the same name.
+// resolve from AIMRuntimeConfig.Storage. The artifact is patched only when its
+// UID is the one the cache published, and the apply carries that UID, so it
+// never creates the artifact or lands on one recreated under the same name.
 func PlanParentAdapterDisk(
 	planResult *controllerutils.PlanResult,
 	service *aimv1alpha2.AIMService,
@@ -889,7 +903,7 @@ func PlanParentAdapterDisk(
 		return
 	}
 	parent := deps.ParentArtifact.Value
-	if parent.Spec.AdapterDisk != nil || parent.DeletionTimestamp != nil {
+	if parent.Spec.AdapterDisk != nil || parent.DeletionTimestamp != nil || parent.UID != deps.PublishedParentUID {
 		return
 	}
 

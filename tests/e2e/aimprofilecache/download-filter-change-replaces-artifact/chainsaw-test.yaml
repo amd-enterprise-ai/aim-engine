@@ -8,8 +8,8 @@
 # previous artifact in place for any other cache still using it.
 #
 # The served artifact is shared with the cache of another profile whose
-# adapter-enabled AIMServices added an adapter disk to it; the test adds the disk
-# directly in their place. The replacement is created by the cache of the profile
+# adapter-enabled AIMServices added an adapter disk to it; the test sends their
+# apply directly in their place. The replacement is created by the cache of the profile
 # without adapters, and inherits the disk so those services find it already there
 # once their cache follows.
 #
@@ -89,9 +89,34 @@ spec:
                 exit 1
               fi
 
-              # What an adapter-enabled AIMService on filter-change-lora applies.
-              kubectl -n "$NAMESPACE" patch aimartifact "$ARTIFACT" --type=merge \
-                -p '{"spec":{"adapterDisk":{}}}'
+              # The same request an adapter-enabled AIMService on filter-change-lora
+              # sends: a forced server-side apply of only spec.adapterDisk under the
+              # service's adapter-disk field manager, carrying the artifact's UID.
+              apply_adapter_disk() {
+                kubectl -n "$NAMESPACE" apply --server-side --force-conflicts \
+                  --field-manager=aim-service-controller-adapter-disk -f - <<EOF
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: $ARTIFACT
+                uid: $1
+              spec:
+                adapterDisk: {}
+              EOF
+              }
+
+              # An apply carrying another UID targets an artifact that no longer
+              # exists under this name, so the API server must reject it.
+              if apply_adapter_disk 00000000-0000-0000-0000-000000000000; then
+                echo "an adapter-disk apply with a stale UID was accepted"
+                exit 1
+              fi
+              if [ -n "$(kubectl -n "$NAMESPACE" get aimartifact "$ARTIFACT" -o jsonpath='{.spec.adapterDisk}')" ]; then
+                echo "the rejected apply added an adapter disk to $ARTIFACT"
+                exit 1
+              fi
+
+              apply_adapter_disk "$(kubectl -n "$NAMESPACE" get aimartifact "$ARTIFACT" -o jsonpath='{.metadata.uid}')"
 
               # Caches skip status-less artifacts, and the PVC name is recorded only
               # once the PVC exists, so wait for both before freezing.

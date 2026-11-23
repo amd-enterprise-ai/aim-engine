@@ -277,30 +277,61 @@ func TestPlanResources_IgnoresRequiresAdapterDisk(t *testing.T) {
 	}
 }
 
-// TestComposeState_RequiresAdapterDiskAdoptsDiskArtifact verifies that an
-// existing artifact WITH an adapter disk is adopted normally.
-func TestComposeState_RequiresAdapterDiskAdoptsDiskArtifact(t *testing.T) {
-	r := &ProfileCacheReconciler{}
-	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
-	pc.Spec.RequiresAdapterDisk = true
-	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
-		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
-	})
-
-	diskArtifact := makeArtifact("artifact-a", "hf://org/model-a", "org/model-a", constants.AIMStatusReady, "")
-	diskArtifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
-
-	fetch := ProfileCacheFetchResult{
-		profileCache: pc,
-		profile:      controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
-		artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
-			Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{diskArtifact}},
-		},
+// TestPlanResources_RequiresAdapterDiskAdoptsDiskArtifact verifies that an
+// existing artifact WITH an adapter disk is adopted normally, and that the cache
+// applies no AIMArtifact once the artifact has a status. Services add the disk
+// only to published artifacts, which have a status, so the cache never re-applies
+// one and removes the disk. An artifact with an empty status is still planned.
+func TestPlanResources_RequiresAdapterDiskAdoptsDiskArtifact(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      constants.AIMStatus
+		wantAdopted bool
+	}{
+		{name: "artifact with a status", status: constants.AIMStatusReady, wantAdopted: true},
+		{name: "artifact with an empty status", status: ""},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &ProfileCacheReconciler{}
+			pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
+			pc.Spec.RequiresAdapterDisk = true
+			profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
+				{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
+			})
 
-	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}, fetch)
-	if len(obs.BestArtifacts) != 1 || obs.BestArtifacts["org/model-a"].Name != "artifact-a" {
-		t.Fatalf("expected disk-bearing artifact-a to be adopted, got %#v", obs.BestArtifacts)
+			diskArtifact := makeArtifact("artifact-a", "hf://org/model-a", "org/model-a", tt.status, "")
+			diskArtifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+
+			fetch := ProfileCacheFetchResult{
+				profileCache: pc,
+				profile:      controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
+				artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
+					Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{diskArtifact}},
+				},
+			}
+
+			rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}
+			obs := r.ComposeState(context.Background(), rc, fetch)
+			_, adopted := obs.BestArtifacts["org/model-a"]
+			if adopted != tt.wantAdopted {
+				t.Fatalf("artifact-a adopted = %v, want %v (best artifacts %#v)", adopted, tt.wantAdopted, obs.BestArtifacts)
+			}
+
+			plan := r.PlanResources(context.Background(), rc, obs)
+			var planned []string
+			for _, obj := range append(plan.GetToApply(), plan.GetToApplyWithoutOwnerRef()...) {
+				if a, ok := obj.(*aimv1alpha1.AIMArtifact); ok {
+					planned = append(planned, a.Name)
+				}
+			}
+			if tt.wantAdopted && len(planned) != 0 {
+				t.Errorf("planned AIMArtifacts %v for an adopted artifact, want none", planned)
+			}
+			if !tt.wantAdopted && len(planned) != 1 {
+				t.Errorf("planned AIMArtifacts %v for an artifact with an empty status, want one", planned)
+			}
+		})
 	}
 }
 

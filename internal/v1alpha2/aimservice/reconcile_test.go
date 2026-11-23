@@ -3033,6 +3033,7 @@ func TestPlanResources_AddsAdapterDiskToParentArtifact(t *testing.T) {
 			if aimadapter.IsActive(tt.service) {
 				fetch.adapterDeps = aimadapter.Dependencies{
 					ParentArtifact:      &controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]{Value: parent},
+					PublishedParentUID:  parent.UID,
 					ParentResolutionErr: tt.parentErr,
 				}
 			}

@@ -22,7 +22,13 @@
 
 package aimservice
 
-import "fmt"
+import (
+	"fmt"
+
+	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimadapter"
+)
 
 // Adapter staging mechanics (validation, staging Jobs, read-only subtree mount,
 // status mirroring, component health) live in the pipeline-agnostic
@@ -30,28 +36,28 @@ import "fmt"
 // it resolves the parent model artifact through the AIMProfileCache's resolved
 // artifacts, keyed on the resolved profile's model id.
 
-// resolveAdapterParentName resolves the name of the base-model AIMArtifact this
-// service's adapters attach to, via the profile cache's resolved artifacts.
-// Adapters bind to a single base model, so a profile resolving to more than one
-// model source is ambiguous and returns a terminal error. Returns ("", nil)
-// when the parent cannot yet be resolved (profile or cache not ready).
-func resolveAdapterParentName(seed *ServiceObservation, result *ServiceFetchResult) (string, error) {
+// resolveAdapterParent resolves the base-model AIMArtifact this service's
+// adapters attach to, via the profile cache's resolved artifacts. Adapters bind
+// to a single base model, so a profile resolving to more than one model source
+// is ambiguous and returns a terminal error. Returns an empty ref when the
+// parent cannot yet be resolved (profile or cache not ready).
+func resolveAdapterParent(seed *ServiceObservation, result *ServiceFetchResult) (aimadapter.ParentRef, error) {
 	if seed.resolvedProfileSpec == nil || len(seed.resolvedProfileSpec.ModelSources) == 0 {
-		return "", nil
+		return aimadapter.ParentRef{}, nil
 	}
 	if len(seed.resolvedProfileSpec.ModelSources) > 1 {
-		return "", fmt.Errorf(
+		return aimadapter.ParentRef{}, fmt.Errorf(
 			"adapters require a single base model, but the resolved profile has %d model sources",
 			len(seed.resolvedProfileSpec.ModelSources))
 	}
 	if !result.profileCache.OK() || result.profileCache.Value == nil {
-		return "", nil
+		return aimadapter.ParentRef{}, nil
 	}
 	modelID := seed.resolvedProfileSpec.ModelSources[0].ModelID
 	for _, resolved := range result.profileCache.Value.Status.Artifacts {
 		if resolved.Model == modelID {
-			return resolved.Name, nil
+			return aimadapter.ParentRef{Name: resolved.Name, UID: types.UID(resolved.UID)}, nil
 		}
 	}
-	return "", nil
+	return aimadapter.ParentRef{}, nil
 }

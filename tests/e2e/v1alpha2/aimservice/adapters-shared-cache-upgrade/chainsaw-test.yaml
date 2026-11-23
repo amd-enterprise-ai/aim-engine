@@ -7,8 +7,9 @@
 # model artifact has no adapter disk. A dynamic-adapter service on the same
 # profile must reuse that cache and add spec.adapterDisk to the SAME artifact:
 # no new cache or artifact, no cache spec change, no re-download, and the first
-# service's InferenceService and pod are left untouched and its Ready condition
-# never transitions. The artifact records an AdapterDiskRequested event.
+# service's InferenceService, pod and ServingRuntime content are left untouched
+# and its Ready condition never transitions. The artifact records an
+# AdapterDiskRequested event.
 #
 # Once the adapter-enabled service is gone, the disk can be reclaimed without a
 # re-download by removing spec.adapterDisk, then deleting the reaper Job and the
@@ -110,19 +111,25 @@ spec:
               ISVC_GEN=$(kubectl get inferenceservice -n "$NAMESPACE" "$ISVC" -o jsonpath='{.metadata.generation}')
               PODS=$(kubectl get pods -n "$NAMESPACE" -l serving.kserve.io/inferenceservice="$ISVC" \
                 -o jsonpath='{.items[*].metadata.uid}')
+              # KServe restarts the predictor after its ServingRuntime changes, so a
+              # changed content hash catches a restart that has not happened yet.
+              RUNTIME=$(kubectl get inferenceservice -n "$NAMESPACE" "$ISVC" -o jsonpath='{.spec.predictor.model.runtime}')
+              RUNTIME_HASH=$(kubectl get servingruntime -n "$NAMESPACE" "$RUNTIME" \
+                -o jsonpath='{.metadata.annotations.aim\.eai\.amd\.com/runtime-projection-content-hash}')
               READY_SINCE=$(kubectl get aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-upgrade-plain \
                 -o jsonpath='{.status.conditions[?(@.type=="Ready")].lastTransitionTime}')
               echo "cache=$CACHE generation=$CACHE_GEN artifact=$ARTIFACT uid=$ARTIFACT_UID modelPVC=$MODEL_PVC ($MODEL_PVC_UID)"
-              echo "isvc=$ISVC generation=$ISVC_GEN pods=$PODS readySince=$READY_SINCE"
+              echo "isvc=$ISVC generation=$ISVC_GEN pods=$PODS runtime=$RUNTIME hash=$RUNTIME_HASH readySince=$READY_SINCE"
               [ -n "$ARTIFACT" ] && [ -n "$ARTIFACT_UID" ] && [ -n "$MODEL_PVC_UID" ] && [ -n "$ISVC_GEN" ] \
-                && [ -n "$PODS" ] && [ -n "$READY_SINCE" ] || { echo "ERROR: missing state"; exit 1; }
+                && [ -n "$PODS" ] && [ -n "$RUNTIME_HASH" ] && [ -n "$READY_SINCE" ] || { echo "ERROR: missing state"; exit 1; }
               [ -z "$DISK" ] || { echo "ERROR: artifact already has an adapter disk: $DISK"; exit 1; }
               kubectl create configmap adapters-upgrade-state -n "$NAMESPACE" \
                 --from-literal=cache="$CACHE" --from-literal=cacheGeneration="$CACHE_GEN" \
                 --from-literal=artifact="$ARTIFACT" --from-literal=artifactUID="$ARTIFACT_UID" \
                 --from-literal=modelPVC="$MODEL_PVC" --from-literal=modelPVCUID="$MODEL_PVC_UID" \
                 --from-literal=isvc="$ISVC" --from-literal=isvcGeneration="$ISVC_GEN" \
-                --from-literal=pods="$PODS" --from-literal=readySince="$READY_SINCE"
+                --from-literal=pods="$PODS" --from-literal=runtime="$RUNTIME" \
+                --from-literal=runtimeHash="$RUNTIME_HASH" --from-literal=readySince="$READY_SINCE"
               # lastTransitionTime has one-second precision: any Ready transition
               # after this point, even one reverted at once, records a later time.
               sleep 1
@@ -216,7 +223,10 @@ spec:
                 -o jsonpath='{.items[*].metadata.uid}')
               [ "$GEN" = "$(state isvcGeneration)" ] || { echo "ERROR: InferenceService generation changed: $(state isvcGeneration) -> $GEN"; exit 1; }
               [ "$PODS" = "$(state pods)" ] || { echo "ERROR: predictor pods changed: $(state pods) -> $PODS"; exit 1; }
-              echo "InferenceService $ISVC unchanged at generation $GEN with the same pods"
+              HASH=$(kubectl get servingruntime -n "$NAMESPACE" "$(state runtime)" \
+                -o jsonpath='{.metadata.annotations.aim\.eai\.amd\.com/runtime-projection-content-hash}')
+              [ "$HASH" = "$(state runtimeHash)" ] || { echo "ERROR: ServingRuntime $(state runtime) content changed: $(state runtimeHash) -> $HASH"; exit 1; }
+              echo "InferenceService $ISVC unchanged at generation $GEN with the same pods and ServingRuntime content"
               READY=$(kubectl get aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-upgrade-plain \
                 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.conditions[?(@.type=="Ready")].lastTransitionTime}')
               [ "$READY" = "True $(state readySince)" ] \
@@ -280,7 +290,10 @@ spec:
               MODEL_PVC_UID=$(kubectl get pvc -n "$NAMESPACE" "$(state modelPVC)" -o jsonpath='{.metadata.uid}')
               [ "$STATUS" = Ready ] || { echo "ERROR: artifact status is $STATUS after reclaiming the disk"; exit 1; }
               [ "$MODEL_PVC_UID" = "$(state modelPVCUID)" ] || { echo "ERROR: model PVC replaced: $(state modelPVCUID) -> $MODEL_PVC_UID"; exit 1; }
-              echo "adapter disk $PVC reclaimed; artifact $ARTIFACT Ready on the same model PVC"
+              HASH=$(kubectl get servingruntime -n "$NAMESPACE" "$(state runtime)" \
+                -o jsonpath='{.metadata.annotations.aim\.eai\.amd\.com/runtime-projection-content-hash}')
+              [ "$HASH" = "$(state runtimeHash)" ] || { echo "ERROR: ServingRuntime $(state runtime) content changed: $(state runtimeHash) -> $HASH"; exit 1; }
+              echo "adapter disk $PVC reclaimed; artifact $ARTIFACT Ready on the same model PVC and ServingRuntime content"
 
     - name: Recreate the dynamic-adapter service
       try:
@@ -314,4 +327,7 @@ spec:
               kubectl get pvc -n "$NAMESPACE" "$PVC" >/dev/null
               MODEL_PVC_UID=$(kubectl get pvc -n "$NAMESPACE" "$(state modelPVC)" -o jsonpath='{.metadata.uid}')
               [ "$MODEL_PVC_UID" = "$(state modelPVCUID)" ] || { echo "ERROR: model PVC replaced: $(state modelPVCUID) -> $MODEL_PVC_UID"; exit 1; }
-              echo "adapter disk $PVC added back to $ARTIFACT on the same model PVC"
+              HASH=$(kubectl get servingruntime -n "$NAMESPACE" "$(state runtime)" \
+                -o jsonpath='{.metadata.annotations.aim\.eai\.amd\.com/runtime-projection-content-hash}')
+              [ "$HASH" = "$(state runtimeHash)" ] || { echo "ERROR: ServingRuntime $(state runtime) content changed: $(state runtimeHash) -> $HASH"; exit 1; }
+              echo "adapter disk $PVC added back to $ARTIFACT on the same model PVC and ServingRuntime content"

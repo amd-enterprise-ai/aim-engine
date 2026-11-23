@@ -188,6 +188,7 @@ func depsWith(parent *aimv1alpha1.AIMArtifact, artifacts map[string]*aimv1alpha1
 	if parent != nil {
 		pf := controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]{Value: parent}
 		deps.ParentArtifact = &pf
+		deps.PublishedParentUID = parent.UID
 		deps.AdapterDiskPVC = parent.Status.AdapterPersistentVolumeClaim
 		if deps.AdapterDiskPVC != "" {
 			deps.AdapterDiskPVCUID = testAdapterPVCUID
@@ -595,8 +596,8 @@ func TestComposeNoParentDisk(t *testing.T) {
 }
 
 // TestPlanParentAdapterDisk verifies that an adapter-enabled service adds only
-// spec.adapterDisk to a valid diskless parent, pinned to the parent's UID, and
-// leaves every other parent alone.
+// spec.adapterDisk to a valid diskless parent, pinned to the UID the cache
+// published, and leaves every other parent alone.
 func TestPlanParentAdapterDisk(t *testing.T) {
 	diskless := func() *aimv1alpha1.AIMArtifact {
 		parent := modelParent("")
@@ -621,6 +622,12 @@ func TestPlanParentAdapterDisk(t *testing.T) {
 			mutate: func(deps *Dependencies) {
 				deps.ParentArtifact = &controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]{Error: fmt.Errorf("boom")}
 			},
+		},
+		{
+			name:    "parent recreated under the published name",
+			service: dynamicService(),
+			parent:  diskless(),
+			mutate:  func(deps *Dependencies) { deps.PublishedParentUID = "previous-base-uid" },
 		},
 		{
 			name:    "parent already has a disk",
@@ -1229,7 +1236,10 @@ func TestFetchSelectsJobsForFreshStorageBinding(t *testing.T) {
 		WithObjects(parent, adapter, newPVC, oldStage, newStage, oldSync, newSync).
 		Build()
 
-	deps := Fetch(context.Background(), c, svc, parent.Name)
+	deps := Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name, UID: "published-uid"})
+	if deps.PublishedParentUID != "published-uid" {
+		t.Errorf("PublishedParentUID = %q, want published-uid", deps.PublishedParentUID)
+	}
 	stage := deps.StagingJobs[adapter.Name]
 	if !stage.OK() || stage.Value == nil || stage.Value.Name != newStage.Name {
 		t.Fatalf("Fetch selected staging Job %+v, want %s", stage.Value, newStage.Name)
@@ -1285,7 +1295,7 @@ func TestFetchAndComposeReportAdapterDiskBlockers(t *testing.T) {
 			}
 			c := fakeclient.NewClientBuilder().WithScheme(scheme).WithObjects(parent, pvc).Build()
 
-			st := Compose(svc, Fetch(context.Background(), c, svc, parent.Name))
+			st := Compose(svc, Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name}))
 			if st.ParentBlocker != tt.wantBlocker || st.AdapterDiskPVCPending != tt.wantPending {
 				t.Errorf("ParentBlocker=%q AdapterDiskPVCPending=%v, want %q and %v",
 					st.ParentBlocker, st.AdapterDiskPVCPending, tt.wantBlocker, tt.wantPending)

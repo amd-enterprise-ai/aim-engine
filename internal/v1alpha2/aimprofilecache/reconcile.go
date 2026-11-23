@@ -516,8 +516,10 @@ func (r *ProfileCacheReconciler) PlanResources(
 		// A replacement inherits the adapter disk of the artifact it replaces, so the
 		// disk already exists when the cache switches to it instead of being added
 		// by the adapter-enabled AIMServices afterwards. A size or class set on the
-		// served disk carries over. The cache must not re-apply an artifact after
-		// creating it: an apply without adapterDisk would remove the disk set here.
+		// served disk carries over. The cache applies an artifact again only while
+		// its status is empty. Services add the disk only to artifacts the cache has
+		// published, which always have a status, so a cache apply never removes a
+		// disk a service added.
 		if replacement, replacing := obs.Replacements[model.ModelID]; replacing && replacement.serving.Spec.AdapterDisk != nil {
 			artifact.Spec.AdapterDisk = replacement.serving.Spec.AdapterDisk.DeepCopy()
 		}
