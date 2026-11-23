@@ -465,7 +465,24 @@ Changing a runtime config's list restarts the inference pods of every service th
 
 ## Environment variable overrides
 
-`spec.env` injects environment variables into managed workloads. Most commonly used to set the HuggingFace downloader fallback chain.
+`spec.env` injects environment variables into managed workloads, for example the inference containers of AIMServices and the model download Jobs. Most commonly used to set the HuggingFace downloader fallback chain. An `AIMService` can also set `spec.env` for its own inference container.
+
+### Inference container env
+
+The runtime config `spec.env` and the AIMService `spec.env` reach the inference container in both AIMService pipelines, but the two pipelines use a different order.
+
+For a service with `spec.profile` (the profile pipeline):
+
+1. The profile env wins. This is the profile `containerEnv`, also through `spec.profileOverrides.containerEnv`, and the framework-owned variables such as `AIM_PROFILE_ID` (see [Inference Engines](inference-engines.md)).
+2. The AIMService `spec.env` and the runtime config `spec.env` only add variables that the profile does not set. The AIMService value wins over the namespace runtime config value, and the namespace runtime config value wins over the cluster runtime config value.
+
+To change a variable that the profile sets, use `spec.profileOverrides.containerEnv`. This creates an overlay profile with its own cache. The AIMService and runtime config env go on the service's InferenceService. They do not change the profile, the profile cache or the profile's ServingRuntime, so a new env does not download the model again.
+
+For a service without `spec.profile` (the template pipeline), the AIMService `spec.env` wins over the template env, and the template env wins over the runtime config env.
+
+`AIM_ENGINE_ARGS` values are merged as JSON objects across the cluster runtime config, the namespace runtime config and the AIMService, and the more specific value wins for each key. In the profile pipeline, if the profile sets `AIM_ENGINE_ARGS` in `containerEnv`, the container gets only the profile value. The template pipeline also merges the template value.
+
+Changing a runtime config's `spec.env` restarts the inference pods of every service that gets the changed variables, because the env is part of each predictor's pod template.
 
 ### Download protocol strategy
 

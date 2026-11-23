@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strings"
 
+	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -102,7 +103,8 @@ func fetchLegacyProfileConfigMap(
 //
 // The overlay carries only service-owned bits: replicas/autoscaling, auth
 // annotations, service-level resource / pull-secret / service-account
-// overrides, and a service-owned (Dedicated) cache.
+// overrides, the runtime config and service env, and a service-owned
+// (Dedicated) cache.
 func buildInferenceServiceFromProfile(
 	service *aimv1alpha1.AIMService,
 	obs ServiceObservation,
@@ -127,6 +129,7 @@ func buildInferenceServiceFromProfile(
 		ModelFormat: servingv1beta1.ModelFormat{Name: serving.RuntimeModelFormat},
 		Runtime:     ptr.To(serving.RuntimeName(obs.profileName)),
 	}
+	model.Env = runtimeConfigEnv(service, obs.mergedRuntimeConfig.Value, obs.desiredProfileRuntime)
 	if service.Spec.Resources != nil {
 		if obs.effectiveResources != nil {
 			model.Resources = *obs.effectiveResources.DeepCopy()
@@ -179,6 +182,41 @@ func buildInferenceServiceFromProfile(
 	)
 
 	return isvc
+}
+
+// runtimeConfigEnv returns the runtime config env with the service spec.env
+// merged over it, for the model container. KServe merges the model env over
+// the ServingRuntime container env by name, so a name that the ServingRuntime
+// sets (profile containerEnv or framework env) is left out and keeps the
+// profile value. Without a desired ServingRuntime nothing is added: the
+// InferenceService is planned only after it is current.
+func runtimeConfigEnv(
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	servingRuntime *kservev1alpha1.ServingRuntime,
+) []corev1.EnvVar {
+	if servingRuntime == nil {
+		return nil
+	}
+	var merged []corev1.EnvVar
+	if runtimeConfig != nil {
+		merged = runtimeConfig.Env
+	}
+	merged = utils.MergeEnvVars(merged, service.Spec.Env, utils.EnvVarAIMEngineArgs)
+
+	runtimeNames := map[string]bool{}
+	for _, container := range servingRuntime.Spec.Containers {
+		for _, env := range container.Env {
+			runtimeNames[env.Name] = true
+		}
+	}
+	var env []corev1.EnvVar
+	for _, item := range merged {
+		if !runtimeNames[item.Name] {
+			env = append(env, item)
+		}
+	}
+	return env
 }
 
 func addRuntimeTrustOverlay(
