@@ -24,6 +24,7 @@ package utils
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"regexp"
 	"strings"
@@ -189,7 +190,11 @@ func MergeEnvVars(defaults, overrides []corev1.EnvVar, jsonMergeKeys ...string) 
 	}
 
 	// Start with defaults, replacing or merging any that are overridden
-	merged := make([]corev1.EnvVar, 0, len(defaults)+len(overrides))
+	mergedCap := len(defaults)
+	if len(overrides) <= math.MaxInt-len(defaults) {
+		mergedCap = len(defaults) + len(overrides)
+	}
+	merged := make([]corev1.EnvVar, 0, mergedCap)
 	for _, env := range defaults {
 		if override, exists := overrideMap[env.Name]; exists {
 			// Check if this is a JSON-mergeable env var
