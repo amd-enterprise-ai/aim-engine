@@ -1162,6 +1162,37 @@ spec:
                         type: string
                     type: object
                 type: object
+                x-kubernetes-validations:
+                - message: podSecurityContext.sysctls must be empty; AIM Engine refuses
+                    all sysctls, also those that Pod Security baseline allows
+                  rule: '!has(self.sysctls) || size(self.sysctls) == 0'
+                - message: podSecurityContext.seccompProfile.type must be RuntimeDefault
+                    or Localhost; AIM Engine refuses settings that Pod Security baseline
+                    forbids
+                  rule: '!has(self.seccompProfile) || self.seccompProfile.type in
+                    [''RuntimeDefault'', ''Localhost'']'
+                - message: podSecurityContext.appArmorProfile.type must be RuntimeDefault
+                    or Localhost; AIM Engine refuses settings that Pod Security baseline
+                    forbids
+                  rule: '!has(self.appArmorProfile) || self.appArmorProfile.type in
+                    [''RuntimeDefault'', ''Localhost'']'
+                - message: podSecurityContext.windowsOptions.hostProcess must not
+                    be true; AIM Engine refuses settings that Pod Security baseline
+                    forbids
+                  rule: '!has(self.windowsOptions) || !has(self.windowsOptions.hostProcess)
+                    || !self.windowsOptions.hostProcess'
+                - message: podSecurityContext.seLinuxOptions.type must be empty, container_t,
+                    container_init_t, container_kvm_t or container_engine_t; AIM Engine
+                    refuses settings that Pod Security baseline forbids
+                  rule: '!has(self.seLinuxOptions) || !has(self.seLinuxOptions.type)
+                    || self.seLinuxOptions.type in ['''', ''container_t'', ''container_init_t'',
+                    ''container_kvm_t'', ''container_engine_t'']'
+                - message: podSecurityContext.seLinuxOptions.user and role must be
+                    empty; AIM Engine refuses settings that Pod Security baseline
+                    forbids
+                  rule: '!has(self.seLinuxOptions) || ((!has(self.seLinuxOptions.user)
+                    || self.seLinuxOptions.user == '''') && (!has(self.seLinuxOptions.role)
+                    || self.seLinuxOptions.role == ''''))'
               pvcHeadroomPercent:
                 description: |-
                   DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.
@@ -1475,6 +1506,43 @@ spec:
                         type: string
                     type: object
                 type: object
+                x-kubernetes-validations:
+                - message: securityContext.privileged must not be true; AIM Engine
+                    refuses settings that Pod Security baseline forbids
+                  rule: '!has(self.privileged) || !self.privileged'
+                - message: securityContext.capabilities.add must be empty; AIM Engine
+                    refuses all added capabilities, also those that Pod Security baseline
+                    allows
+                  rule: '!has(self.capabilities) || !has(self.capabilities.add) ||
+                    size(self.capabilities.add) == 0'
+                - message: securityContext.procMount must be Default; AIM Engine refuses
+                    settings that Pod Security baseline forbids
+                  rule: '!has(self.procMount) || self.procMount == ''Default'''
+                - message: securityContext.seccompProfile.type must be RuntimeDefault
+                    or Localhost; AIM Engine refuses settings that Pod Security baseline
+                    forbids
+                  rule: '!has(self.seccompProfile) || self.seccompProfile.type in
+                    [''RuntimeDefault'', ''Localhost'']'
+                - message: securityContext.appArmorProfile.type must be RuntimeDefault
+                    or Localhost; AIM Engine refuses settings that Pod Security baseline
+                    forbids
+                  rule: '!has(self.appArmorProfile) || self.appArmorProfile.type in
+                    [''RuntimeDefault'', ''Localhost'']'
+                - message: securityContext.windowsOptions.hostProcess must not be
+                    true; AIM Engine refuses settings that Pod Security baseline forbids
+                  rule: '!has(self.windowsOptions) || !has(self.windowsOptions.hostProcess)
+                    || !self.windowsOptions.hostProcess'
+                - message: securityContext.seLinuxOptions.type must be empty, container_t,
+                    container_init_t, container_kvm_t or container_engine_t; AIM Engine
+                    refuses settings that Pod Security baseline forbids
+                  rule: '!has(self.seLinuxOptions) || !has(self.seLinuxOptions.type)
+                    || self.seLinuxOptions.type in ['''', ''container_t'', ''container_init_t'',
+                    ''container_kvm_t'', ''container_engine_t'']'
+                - message: securityContext.seLinuxOptions.user and role must be empty;
+                    AIM Engine refuses settings that Pod Security baseline forbids
+                  rule: '!has(self.seLinuxOptions) || ((!has(self.seLinuxOptions.user)
+                    || self.seLinuxOptions.user == '''') && (!has(self.seLinuxOptions.role)
+                    || self.seLinuxOptions.role == ''''))'
               storage:
                 description: |-
                   Storage configures storage defaults for this service's PVCs and caches.

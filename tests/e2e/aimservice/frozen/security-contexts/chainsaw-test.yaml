@@ -11,6 +11,12 @@
 # and version conversion as an empty object rather than an unset one, and that
 # the existing InferenceService changes to the service's values.
 #
+# Before that, the test checks that the CRDs refuse settings that Pod Security
+# baseline forbids: privileged on AIMService in both served versions, and one
+# Pod-level and one container-level value on AIMRuntimeConfig and on
+# AIMClusterRuntimeConfig. The namespace runtime config is the restricted
+# example of the docs, so its creation shows that the CRD accepts it.
+#
 # Test type: Frozen dependency test
 # Frozen resources: AIMClusterProfile (Ready, CPU-only), AIMProfileCache and
 # AIMArtifact (Ready)
@@ -25,10 +31,115 @@ spec:
   timeouts:
     assert: 60s
   steps:
+    - name: Refuse privileged on a v1alpha1 AIMService
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'securityContext.privileged must not be true')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-security-contexts-privileged-v1a1
+              spec:
+                model:
+                  name: some-model
+                securityContext:
+                  privileged: true
+
+    - name: Refuse privileged on a v1alpha2 AIMService
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'securityContext.privileged must not be true')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-security-contexts-privileged-v1a2
+              spec:
+                profile:
+                  name: test-security-contexts-profile
+                securityContext:
+                  privileged: true
+
+    - name: Refuse an Unconfined seccomp profile on AIMRuntimeConfig
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'podSecurityContext.seccompProfile.type must be RuntimeDefault or Localhost')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMRuntimeConfig
+              metadata:
+                name: test-security-contexts-refused
+              spec:
+                podSecurityContext:
+                  seccompProfile:
+                    type: Unconfined
+
+    - name: Refuse an added capability on AIMRuntimeConfig
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'securityContext.capabilities.add must be empty')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMRuntimeConfig
+              metadata:
+                name: test-security-contexts-refused
+              spec:
+                securityContext:
+                  capabilities:
+                    add: [SYS_ADMIN]
+
+    - name: Refuse a custom SELinux type on AIMClusterRuntimeConfig
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'podSecurityContext.seLinuxOptions.type must be empty')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterRuntimeConfig
+              metadata:
+                name: test-security-contexts-refused
+              spec:
+                podSecurityContext:
+                  seLinuxOptions:
+                    type: spc_t
+
+    - name: Refuse an Unmasked proc mount on AIMClusterRuntimeConfig
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'securityContext.procMount must be Default')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterRuntimeConfig
+              metadata:
+                name: test-security-contexts-refused
+              spec:
+                securityContext:
+                  procMount: Unmasked
+
     - use:
         template: ../../../_shared/hf-token-step.yaml
 
     - name: Create the namespace runtime config with security contexts
+      # runtime-config.yaml is the restricted example of the docs, so this
+      # step also shows that the CRD accepts it.
       try:
         - apply:
             file: runtime-config.yaml

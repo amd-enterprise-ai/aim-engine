@@ -178,12 +178,26 @@ type AIMServiceRuntimeConfig struct {
 	// the runtime config's, and a namespace config's replaces the cluster's.
 	// A set value, also {}, replaces the inherited one as a whole.
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="!has(self.sysctls) || size(self.sysctls) == 0",message="podSecurityContext.sysctls must be empty; AIM Engine refuses all sysctls, also those that Pod Security baseline allows"
+	// +kubebuilder:validation:XValidation:rule="!has(self.seccompProfile) || self.seccompProfile.type in ['RuntimeDefault', 'Localhost']",message="podSecurityContext.seccompProfile.type must be RuntimeDefault or Localhost; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.appArmorProfile) || self.appArmorProfile.type in ['RuntimeDefault', 'Localhost']",message="podSecurityContext.appArmorProfile.type must be RuntimeDefault or Localhost; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.windowsOptions) || !has(self.windowsOptions.hostProcess) || !self.windowsOptions.hostProcess",message="podSecurityContext.windowsOptions.hostProcess must not be true; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.seLinuxOptions) || !has(self.seLinuxOptions.type) || self.seLinuxOptions.type in ['', 'container_t', 'container_init_t', 'container_kvm_t', 'container_engine_t']",message="podSecurityContext.seLinuxOptions.type must be empty, container_t, container_init_t, container_kvm_t or container_engine_t; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.seLinuxOptions) || ((!has(self.seLinuxOptions.user) || self.seLinuxOptions.user == '') && (!has(self.seLinuxOptions.role) || self.seLinuxOptions.role == ''))",message="podSecurityContext.seLinuxOptions.user and role must be empty; AIM Engine refuses settings that Pod Security baseline forbids"
 	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
 
 	// SecurityContext for the inference container. An AIMService's value
 	// replaces the runtime config's, and a namespace config's replaces the
 	// cluster's. A set value, also {}, replaces the inherited one as a whole.
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="!has(self.privileged) || !self.privileged",message="securityContext.privileged must not be true; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.capabilities) || !has(self.capabilities.add) || size(self.capabilities.add) == 0",message="securityContext.capabilities.add must be empty; AIM Engine refuses all added capabilities, also those that Pod Security baseline allows"
+	// +kubebuilder:validation:XValidation:rule="!has(self.procMount) || self.procMount == 'Default'",message="securityContext.procMount must be Default; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.seccompProfile) || self.seccompProfile.type in ['RuntimeDefault', 'Localhost']",message="securityContext.seccompProfile.type must be RuntimeDefault or Localhost; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.appArmorProfile) || self.appArmorProfile.type in ['RuntimeDefault', 'Localhost']",message="securityContext.appArmorProfile.type must be RuntimeDefault or Localhost; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.windowsOptions) || !has(self.windowsOptions.hostProcess) || !self.windowsOptions.hostProcess",message="securityContext.windowsOptions.hostProcess must not be true; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.seLinuxOptions) || !has(self.seLinuxOptions.type) || self.seLinuxOptions.type in ['', 'container_t', 'container_init_t', 'container_kvm_t', 'container_engine_t']",message="securityContext.seLinuxOptions.type must be empty, container_t, container_init_t, container_kvm_t or container_engine_t; AIM Engine refuses settings that Pod Security baseline forbids"
+	// +kubebuilder:validation:XValidation:rule="!has(self.seLinuxOptions) || ((!has(self.seLinuxOptions.user) || self.seLinuxOptions.user == '') && (!has(self.seLinuxOptions.role) || self.seLinuxOptions.role == ''))",message="securityContext.seLinuxOptions.user and role must be empty; AIM Engine refuses settings that Pod Security baseline forbids"
 	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 
 	// Env specifies environment variables for inference containers.
