@@ -115,8 +115,10 @@ Events use the condition's `reason` field as the event reason. Common event reas
 | `ProfileCacheNotReady` | Normal | Profile cache is not Ready; the message includes the cache's own Ready message |
 | `RuntimeReady` | Normal | InferenceService is serving |
 | `PodCreationFailed` | Warning | The API server or an admission policy refuses the predictor pod. Emitted on every reconcile |
-| `InvalidImageReference` | Warning | Model image URI is invalid |
-| `PathTemplateInvalid` | Warning | Routing path template failed to resolve |
+| `RolloutInProgress` | Normal | A new predictor revision is not ready yet; the previous one still serves |
+| `RolloutStalled` | Warning | The new predictor revision can't progress; the previous one still serves |
+| `ModelHasNoProfiles` | Warning | The AIMModel or AIMClusterModel the service resolves through produces no AIMProfiles |
+| `TemplateFieldsSet` | Warning | The service sets fields that have no effect on profile-based serving (`TemplateFieldsIgnored` condition) |
 
 **AIMModel / AIMClusterModel:**
 
@@ -126,6 +128,12 @@ Events use the condition's `reason` field as the event reason. Common event reas
 | `AllProfilesFailed` | Warning | All managed profiles failed |
 | `NoMatchingProfiles` | Warning | Derivation selector matched zero sources |
 | `MetadataExtractionFailed` | Warning | Failed to extract model metadata |
+| `InvalidImageReference` | Warning | `spec.image` is not a valid image reference |
+| `ImageNotFound` | Warning | The registry has no such repository or tag (HTTP 404) |
+| `ImagePullAuthFailure` | Warning | The registry refused access (HTTP 401 or 403) |
+| `DiscoveryImagePullFailed` | Normal | The discovery pod can't pull the image; the Job is deleted and the attempt backs off |
+| `NoDeployableProfiles` | Warning | The model's spec produces no AIMProfiles |
+| `TemplateFieldsSet` | Warning | The model sets fields that have no effect on profile-based serving (`TemplateFieldsIgnored` condition) |
 
 **AIMArtifact:**
 
