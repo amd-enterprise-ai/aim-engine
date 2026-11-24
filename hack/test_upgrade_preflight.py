@@ -631,7 +631,7 @@ class UpgradePreflightTest(unittest.TestCase):
         self.assertIn("INFO [template-settings] AIMService team/overrides: sets spec.overrides, which the profile"
                       " pipeline ignores. See #move-template-services", result.stdout)
         self.assertIn("INFO [template-settings] AIMService team/env: sets spec.env, which v0.2.7 ignores"
-                      " after the move until the upgrade. See #move-template-services", result.stdout)
+                      " after the move. See #move-template-services", result.stdout)
         self.assertIn("INFO [template-settings] AIMModel team/tuned: sets spec.env, spec.resources, which the profile"
                       " pipeline ignores. See #move-template-services", result.stdout)
         self.assertIn("INFO [template-settings] AIMClusterModel cluster-tuned: sets spec.env, which the profile"

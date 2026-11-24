@@ -654,10 +654,9 @@ Carry each setting over:
 | model `spec.resources` | the AIMService's or the AIMProfile's `spec.resources` |
 
 On v0.2.7, a moved service runs without its own `spec.env` and the `spec.env`
-of its AIMRuntimeConfig and AIMClusterRuntimeConfig until you upgrade; the
-upgrade applies them again. If the service needs them before then, set them in
-`spec.profileOverrides.containerEnv`. That creates an overlay profile, whose
-cache downloads the weights again.
+of its AIMRuntimeConfig and AIMClusterRuntimeConfig. If the service needs them,
+set them in `spec.profileOverrides.containerEnv`. That creates an overlay
+profile, whose cache downloads the weights again.
 
 The preflight prints an `INFO [template-settings]` line for each service whose
 hand-written template sets `customProfile`, `env` or `resources`, or that sets
