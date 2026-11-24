@@ -51,6 +51,17 @@ jobs:
             scenario: v0.2.7
             setup_dir: tests/e2e/upgrade-compatibility/v0.2.7/setup
             verify_dir: tests/e2e/upgrade-compatibility/v0.2.7/verify
+          - name: v0.2.7-helm
+            slug: v027helm
+            repository: amd-enterprise-ai/aim-engine
+            ref: 3f585b07c3d7fa215d6ceed20190a809e82dbe11
+            baseline_image_tag: v0.2.7
+            scenario: v0.2.7
+            setup_dir: tests/e2e/upgrade-compatibility/v0.2.7/setup
+            verify_dir: tests/e2e/upgrade-compatibility/v0.2.7/verify
+            # Installs, upgrades and rolls back the CRDs chart, and upgrades the
+            # operator with --reuse-values, as docs/docs/admin/upgrading.md does.
+            crds_install: helm
     concurrency:
       group: test-upgrade-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.slug }}
       cancel-in-progress: true
@@ -211,7 +222,14 @@ jobs:
       - name: Install baseline CRDs
         run: |
           set -euo pipefail
-          kubectl apply --server-side -f "${BASELINE_DIR}/dist/crds.yaml"
+          if [[ "${{ matrix.crds_install }}" == helm ]]; then
+            make -C "${BASELINE_DIR}" crds-package CHART_VERSION=0.2.7
+            helm install aim-engine-crds "${BASELINE_DIR}/dist/aim-engine-crds-chart-0.2.7.tgz" \
+              --namespace aim-system \
+              --create-namespace
+          else
+            kubectl apply --server-side -f "${BASELINE_DIR}/dist/crds.yaml"
+          fi
           mapfile -t crds < <(kubectl get crd -o name | grep 'aim.eai.amd.com')
           kubectl wait --for=condition=Established --timeout=120s "${crds[@]}"
 
@@ -546,31 +564,53 @@ jobs:
       - name: Upgrade CRDs
         run: |
           set -euo pipefail
-          kubectl apply --server-side -f dist/crds.yaml
+          if [[ "${{ matrix.crds_install }}" == helm ]]; then
+            make crds-package CHART_VERSION=0.0.0-candidate
+            # The command of docs/docs/admin/upgrading.md#2-update-crds-first, which
+            # deletes the template CRDs.
+            helm upgrade aim-engine-crds dist/aim-engine-crds-chart-0.0.0-candidate.tgz \
+              --namespace aim-system
+            kubectl wait --for=delete --timeout=60s \
+              crd/aimservicetemplates.aim.eai.amd.com \
+              crd/aimclusterservicetemplates.aim.eai.amd.com \
+              crd/aimtemplatecaches.aim.eai.amd.com
+          else
+            kubectl apply --server-side -f dist/crds.yaml
+          fi
           mapfile -t crds < <(kubectl get crd -o name | grep 'aim.eai.amd.com')
           kubectl wait --for=condition=Established --timeout=120s "${crds[@]}"
 
       - name: Upgrade operator
         run: |
-          helm upgrade aim-engine dist/chart \
-            --namespace aim-system \
-            --wait \
-            --timeout 5m \
-            --set crd.enable=false \
-            --set manager.image.repository="${CANDIDATE_IMAGE_REPOSITORY}" \
-            --set manager.image.tag="${CANDIDATE_IMAGE_TAG}" \
-            --set manager.artifactDownloaderImage="${ARTIFACT_DOWNLOADER_IMAGE}" \
-            --set manager.runtimeProjectionMode=Both \
-            --set acceleratorDetector.enable=false \
-            --set clusterRuntimeConfig.enable=false \
-            --set clusterModelSource.enable=false \
-            --set scaleFromZero.gatewayProvider=none
+          if [[ "${{ matrix.crds_install }}" == helm ]]; then
+            # The command of docs/docs/admin/upgrading.md#4-upgrade-the-operator.
+            # --reuse-values keeps the baseline image, so set the one built in this run.
+            helm upgrade aim-engine dist/chart \
+              --namespace aim-system \
+              --reuse-values \
+              --set manager.image.repository="${CANDIDATE_IMAGE_REPOSITORY}" \
+              --set manager.image.tag="${CANDIDATE_IMAGE_TAG}"
+          else
+            helm upgrade aim-engine dist/chart \
+              --namespace aim-system \
+              --wait \
+              --timeout 5m \
+              --set crd.enable=false \
+              --set manager.image.repository="${CANDIDATE_IMAGE_REPOSITORY}" \
+              --set manager.image.tag="${CANDIDATE_IMAGE_TAG}" \
+              --set manager.artifactDownloaderImage="${ARTIFACT_DOWNLOADER_IMAGE}" \
+              --set manager.runtimeProjectionMode=Both \
+              --set acceleratorDetector.enable=false \
+              --set clusterRuntimeConfig.enable=false \
+              --set clusterModelSource.enable=false \
+              --set scaleFromZero.gatewayProvider=none
+          fi
 
       - name: Wait for candidate operator
         run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=180s
 
       - name: Remove the template CRDs
-        if: matrix.scenario == 'v0.2.7'
+        if: matrix.scenario == 'v0.2.7' && matrix.crds_install != 'helm'
         run: |
           set -euo pipefail
           # The kubectl commands of docs/docs/admin/upgrading.md#remove-the-template-crds.
@@ -694,8 +734,12 @@ jobs:
         if: matrix.scenario == 'v0.2.7'
         run: |
           set -euo pipefail
-          # The commands of docs/docs/admin/upgrading.md#rollback, for the kubectl CRD install this lane uses.
-          kubectl apply --server-side -f "${BASELINE_DIR}/dist/crds.yaml"
+          # The commands of docs/docs/admin/upgrading.md#rollback.
+          if [[ "${{ matrix.crds_install }}" == helm ]]; then
+            helm rollback aim-engine-crds -n aim-system
+          else
+            kubectl apply --server-side -f "${BASELINE_DIR}/dist/crds.yaml"
+          fi
           kubectl wait --for=condition=Established --timeout=60s \
             crd/aimservicetemplates.aim.eai.amd.com \
             crd/aimclusterservicetemplates.aim.eai.amd.com \
