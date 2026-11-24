@@ -35,6 +35,7 @@ import (
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1127,6 +1128,157 @@ func TestPipelineRun_MaterializesProfileRuntimeBeforeInferenceService(t *testing
 	runProfileServicePipelineCycle(t, ctx, pipeline, currentService)
 	isvc = getObjectForTest(t, ctx, c, isvcKey, &servingv1beta1.InferenceService{})
 	assertInferenceServiceRuntime(t, isvc, updatedRuntimeName)
+}
+
+// TestPipelineRun_RuntimeConfigEnvReachesInferenceService pins the env order of
+// the profile pipeline: the profile env wins, then the service spec.env, then
+// the namespace runtime config, then the cluster runtime config. The env goes
+// on the InferenceService, so the shared ServingRuntime does not change.
+func TestPipelineRun_RuntimeConfigEnvReachesInferenceService(t *testing.T) {
+	tests := []struct {
+		name         string
+		clusterEnv   []corev1.EnvVar
+		namespaceEnv []corev1.EnvVar
+		serviceEnv   []corev1.EnvVar
+		wantModelEnv map[string]string
+	}{
+		{
+			name: "profile env, then service, then namespace, then cluster",
+			clusterEnv: []corev1.EnvVar{
+				{Name: "HOME", Value: "/cluster"},
+				{Name: "USER", Value: "cluster"},
+				{Name: "LOGNAME", Value: "cluster"},
+				{Name: "TMPDIR", Value: "/cluster"},
+				{Name: constants.EnvAIMProfileID, Value: "custom/other/profile"},
+			},
+			namespaceEnv: []corev1.EnvVar{
+				{Name: "HOME", Value: "/namespace"},
+				{Name: "USER", Value: "namespace"},
+				{Name: "LOGNAME", Value: "namespace"},
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":4096}`},
+			},
+			serviceEnv: []corev1.EnvVar{
+				{Name: "HOME", Value: "/service"},
+				{Name: "USER", Value: "service"},
+				{Name: "AIM_ENGINE_ARGS", Value: `{"gpu-memory-utilization":0.8}`},
+			},
+			wantModelEnv: map[string]string{
+				"USER":            "service",
+				"LOGNAME":         "namespace",
+				"TMPDIR":          "/cluster",
+				"AIM_ENGINE_ARGS": `{"gpu-memory-utilization":0.8,"max-model-len":4096}`,
+			},
+		},
+		{
+			name:         "no env anywhere leaves the InferenceService without env",
+			wantModelEnv: map[string]string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			service := &aimv1alpha1.AIMService{
+				ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+				Spec: aimv1alpha1.AIMServiceSpec{
+					Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testClusterProfileName},
+				},
+			}
+			service.Spec.Env = tt.serviceEnv
+			profileSpec := sampleProfileSpec()
+			profileSpec.ContainerEnv = []corev1.EnvVar{{Name: "HOME", Value: "/profile-home"}}
+			clusterProfile := &aimv1alpha2.AIMClusterProfile{
+				ObjectMeta: metav1.ObjectMeta{Name: testClusterProfileName, UID: "profile-uid"},
+				Spec:       aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: *profileSpec},
+				Status: aimv1alpha2.AIMProfileStatus{
+					Status:     constants.AIMStatusReady,
+					Deployable: true,
+				},
+			}
+			clusterConfig := &aimv1alpha1.AIMClusterRuntimeConfig{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+			clusterConfig.Spec.Env = tt.clusterEnv
+			namespaceConfig := &aimv1alpha1.AIMRuntimeConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "ns"}}
+			namespaceConfig.Spec.Env = tt.namespaceEnv
+
+			c, pipeline := newProfileRuntimePipelineFixture(t, service, clusterProfile)
+			for _, config := range []client.Object{clusterConfig, namespaceConfig} {
+				if err := c.Create(ctx, config); err != nil {
+					t.Fatalf("create %T: %v", config, err)
+				}
+			}
+			serviceKey := client.ObjectKey{Name: testServiceName, Namespace: "ns"}
+			for range 2 {
+				runProfileServicePipelineCycle(t, ctx, pipeline, getProfileServiceForTest(t, ctx, c, serviceKey))
+			}
+
+			isvcName, err := v1alpha1service.GenerateInferenceServiceName(testServiceName, "ns")
+			if err != nil {
+				t.Fatalf("generate InferenceService name: %v", err)
+			}
+			isvc := getObjectForTest(t, ctx, c, client.ObjectKey{Name: isvcName, Namespace: "ns"}, &servingv1beta1.InferenceService{})
+			got := isvc.Spec.Predictor.Model.Env
+			if len(got) != len(tt.wantModelEnv) || !equality.Semantic.DeepEqual(envMap(got), tt.wantModelEnv) {
+				t.Errorf("InferenceService model env = %v, want %v", got, tt.wantModelEnv)
+			}
+
+			runtimeKey := client.ObjectKey{Name: serving.RuntimeName(testClusterProfileName), Namespace: "ns"}
+			servingRuntime := getObjectForTest(t, ctx, c, runtimeKey, &kservev1alpha1.ServingRuntime{})
+			runtimeEnv := envMap(servingRuntime.Spec.Containers[0].Env)
+			if runtimeEnv["HOME"] != "/profile-home" {
+				t.Errorf("ServingRuntime HOME = %q, want the profile value", runtimeEnv["HOME"])
+			}
+			for name := range tt.wantModelEnv {
+				if _, found := runtimeEnv[name]; found {
+					t.Errorf("ServingRuntime env has %s, want it only on the InferenceService", name)
+				}
+			}
+		})
+	}
+}
+
+// TestRuntimeConfigEnvDoesNotChangeOverlayOrCache pins that the runtime config
+// env and the service spec.env are not inputs of the overlay profile or of the
+// profile cache. A change to either would give the service a new cache, which
+// downloads the model weights again.
+func TestRuntimeConfigEnvDoesNotChangeOverlayOrCache(t *testing.T) {
+	build := func(env []corev1.EnvVar) (*aimv1alpha2.AIMProfile, *aimv1alpha2.AIMProfileCache) {
+		service := &aimv1alpha1.AIMService{
+			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+			Spec: aimv1alpha1.AIMServiceSpec{
+				Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+				ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
+					ContainerEnv: []corev1.EnvVar{{Name: "HOME", Value: "/tmp"}},
+				},
+				Caching: &aimv1alpha1.AIMServiceCachingConfig{Mode: aimv1alpha1.CachingModeDedicated},
+			},
+		}
+		service.Spec.Env = env
+		runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+		runtimeConfig.Env = env
+		obs := ServiceObservation{
+			ServiceFetchResult: ServiceFetchResult{
+				service:             service,
+				mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig},
+			},
+			resolvedProfileSpec:   profileSpecWithModelSources(),
+			resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+			profileName:           testProfileA,
+			profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
+		}
+		overlay, _, err := buildServiceOverlayProfile(service, obs)
+		if err != nil {
+			t.Fatalf("buildServiceOverlayProfile: %v", err)
+		}
+		return overlay, planProfileCache(service, obs)
+	}
+
+	overlay, cache := build(nil)
+	overlayWithEnv, cacheWithEnv := build([]corev1.EnvVar{{Name: "USER", Value: "aim"}})
+	if !equality.Semantic.DeepEqual(overlayWithEnv, overlay) {
+		t.Errorf("env changed the overlay profile:\n got %+v\nwant %+v", overlayWithEnv, overlay)
+	}
+	if cache == nil || !equality.Semantic.DeepEqual(cacheWithEnv, cache) {
+		t.Errorf("env changed the profile cache:\n got %+v\nwant %+v", cacheWithEnv, cache)
+	}
 }
 
 type profileRuntimeTestPipeline = controllerutils.Pipeline[

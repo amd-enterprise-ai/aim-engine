@@ -273,6 +273,21 @@ kubectl delete pod -n <namespace> \
   -l aim.eai.amd.com/service=<service-name>
 ```
 
+### Env for profile services
+
+The `spec.env` of a runtime config and of the `AIMService` itself now reaches the inference container of an `AIMService` in the profile pipeline (`spec.profile`). Before, only template-based services received it. After the upgrade, the inference pods of each profile service whose runtime config or `spec.env` sets a variable that the profile does not set restart once and get the new variables. A variable that the profile sets keeps the profile value (see [Inference container env](../concepts/runtime-config.md#inference-container-env)). Other services do not restart. AIM Engine sets no rollout strategy, so the predictor Deployment uses the KServe default: a rolling update with `maxSurge` and `maxUnavailable` of 25%, unless the KServe `deploy` configuration sets `deploymentRolloutStrategy`. With fewer than four replicas, this starts each new pod before it stops an old one, so a GPU service needs free GPUs for its new pods. Until the GPUs are free, the new pods stay `Pending` and the old pods continue to serve.
+
+Before the upgrade, examine the env that profile services will get. To list the runtime configs and the profile services that set `spec.env`:
+
+```bash
+kubectl get aimclusterruntimeconfig -o json | \
+  jq -r '.items[] | select(.spec.env != null) | .metadata.name'
+kubectl get aimruntimeconfig -A -o json | \
+  jq -r '.items[] | select(.spec.env != null) | [.metadata.namespace, .metadata.name] | @tsv'
+kubectl get aimservice -A -o json | \
+  jq -r '.items[] | select(.status.reconcilerPipeline == "profile" and .spec.env != null) | [.metadata.namespace, .metadata.name] | @tsv'
+```
+
 ### Download filters declared by AIM images
 
 AIM images can declare the files their model needs with `download_filter` in their profile YAML, and discovered profiles carry it onto their model source as `downloadFilter`. Upgrading the operator does not change profiles discovered from images that make no declaration.

@@ -63,9 +63,10 @@ on the ISVC overlay, not the runtime.
 
 **Overlay**:
 The service-specific fields an `AIMService` layers onto the runtime it references:
-service-owned cache, autoscaling, auth, and service-level resource / pull-secret /
-service-account overrides. Everything else (image, base resources, affinity,
-profile ConfigMap, framework env) lives on the runtime.
+service-owned cache, autoscaling, auth, the runtime config and service env, and
+service-level resource / pull-secret / service-account overrides. Everything else
+(image, base resources, affinity, profile ConfigMap, framework env) lives on the
+runtime.
 
 **Reserved `aim-` prefix**:
 AIM Engine names every runtime it projects `aim-<profile name>` and owns that
