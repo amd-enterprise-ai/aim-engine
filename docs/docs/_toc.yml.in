@@ -45,6 +45,8 @@ subtrees:
                 title: Private Registries
               - file: guides/multi-tenancy
                 title: Multi-Tenancy
+              - file: guides/restricted-pod-security
+                title: Restricted Pod Security
               - file: guides/bring-your-own-kserve
                 title: Bring your own KServe
       - file: concepts/concepts

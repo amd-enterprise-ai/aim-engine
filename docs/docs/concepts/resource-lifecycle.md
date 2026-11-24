@@ -192,7 +192,7 @@ CRD schemas include [CEL validation rules](https://kubernetes.io/docs/tasks/exte
 | `AIMService` | `spec.profile.name` and `spec.profile.selector` are mutually exclusive |
 | `AIMService` | `spec.profile.selector.role: base` is forbidden |
 | `AIMService` | `spec.profile.selector` requires `aimId`, `modelRef`, or paired `spec.model` |
-| `AIMService` | `spec.profileOverrides` requires `spec.profile.name` |
+| `AIMService` | `spec.profileOverrides` requires `spec.profile` (`name` or `selector`) |
 | `AIMService` | `spec.template` is forbidden on v1alpha2 (rejected by CEL `!has(spec.template)`); use `spec.profile` or `spec.model` |
 | `AIMProfile` / `AIMClusterProfile` | `spec.aimId` and `spec.modelSources` must be both populated or both empty |
 | `AIMProfileSet` / `AIMClusterProfileSet` | Default source selection requires at least one selector field; explicit `sourceRef` scopes a catalog without a selector |
