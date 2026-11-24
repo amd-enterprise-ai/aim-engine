@@ -42,8 +42,8 @@ import (
 )
 
 // FetchHPA fetches the KEDA-managed HorizontalPodAutoscaler associated with
-// the given InferenceService. It is exported so other pipelines (v1alpha2
-// profile-based AIMService) can reuse the same naming convention.
+// the given InferenceService. Exported for the v1alpha2 profile pipeline, which
+// relies on the same naming convention.
 func FetchHPA(
 	ctx context.Context,
 	c client.Client,
@@ -98,9 +98,9 @@ func SetActivationMetricCondition(
 }
 
 // ActivationMetricRequeueAfter returns the remaining grace period while the
-// scale-from-zero activation metric is awaiting readable HPA evidence. Shared
-// by both AIMService pipelines so the Unknown-to-False deadline is enforced
-// even when no watched resource changes.
+// scale-from-zero activation metric is awaiting readable HPA evidence. The
+// AIMService reconcile requeues with it so the Unknown-to-False deadline is
+// enforced even when no watched resource changes.
 func ActivationMetricRequeueAfter(
 	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
