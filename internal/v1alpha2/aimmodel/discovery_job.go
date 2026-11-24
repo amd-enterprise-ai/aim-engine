@@ -86,6 +86,11 @@ const (
 	// (tens of GB) over a slow link; the profile walk itself takes seconds.
 	discoveryJobActiveDeadlineSeconds = 3600
 
+	// discoveryPullRetryGrace is how long a discovery Job keeps a pull error
+	// other than auth or not-found, such as a 429, a 5xx or a connection reset,
+	// before it is deleted, so the kubelet retries the pull in place.
+	discoveryPullRetryGrace = 10 * time.Minute
+
 	// DiscoveryRecordBegin and DiscoveryRecordEnd delimit base64-encoded profile YAML
 	// blocks emitted by the in-image shell script.
 	DiscoveryRecordBegin = "@@BEGIN "

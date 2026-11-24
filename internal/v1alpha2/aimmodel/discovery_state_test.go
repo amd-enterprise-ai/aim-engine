@@ -63,22 +63,48 @@ func TestDecideDiscovery_RunningJobThatCannotPullFailsTheAttempt(t *testing.T) {
 	t.Parallel()
 
 	const image = "docker.io/amdenterpriseai/aim-missing:0.0.0"
+	backOff := &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: `Back-off pulling image "` + image + `"`}
 	tests := []struct {
 		name       string
 		waiting    *corev1.ContainerStateWaiting
+		startedAgo time.Duration
 		wantDelete bool
 	}{
 		{
-			name:       "ImagePullBackOff",
-			waiting:    &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: `Back-off pulling image "` + image + `"`},
+			name:       "generic pull error within the grace period keeps waiting",
+			waiting:    backOff,
+			startedAgo: time.Minute,
+		},
+		{
+			name: "rate-limited pull within the grace period keeps waiting",
+			waiting: &corev1.ContainerStateWaiting{
+				Reason:  "ErrImagePull",
+				Message: "toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading",
+			},
+			startedAgo: time.Minute,
+		},
+		{
+			name:       "generic pull error past the grace period",
+			waiting:    backOff,
+			startedAgo: discoveryPullRetryGrace + time.Minute,
 			wantDelete: true,
 		},
 		{
-			name: "ErrImagePull",
+			name: "auth error",
 			waiting: &corev1.ContainerStateWaiting{
 				Reason:  "ErrImagePull",
 				Message: "pull access denied, repository does not exist or may require authorization",
 			},
+			startedAgo: time.Minute,
+			wantDelete: true,
+		},
+		{
+			name: "not-found error",
+			waiting: &corev1.ContainerStateWaiting{
+				Reason:  "ErrImagePull",
+				Message: `failed to pull and unpack image "` + image + `": manifest unknown`,
+			},
+			startedAgo: time.Minute,
 			wantDelete: true,
 		},
 		{
@@ -90,6 +116,9 @@ func TestDecideDiscovery_RunningJobThatCannotPullFailsTheAttempt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			in, job := runningDiscoveryJob(image)
+			if tt.startedAgo > 0 {
+				job.Status.StartTime = &metav1.Time{Time: time.Now().Add(-tt.startedAgo)}
+			}
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-x7k2p", Namespace: "team-a", Labels: map[string]string{"job-name": job.Name}},
 				Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{

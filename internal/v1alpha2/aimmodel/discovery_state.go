@@ -180,8 +180,13 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 		if !IsDiscoveryJobComplete(job) {
 			// A pod that can't pull its image never fails on its own. Deleting
 			// the Job frees its slot under the global cap without waiting for
-			// the Job deadline.
-			if pullErr := fetch.PullError.Value; pullErr != nil {
+			// the Job deadline. Auth and not-found errors don't clear by
+			// themselves; other pull errors get discoveryPullRetryGrace.
+			pullErr := fetch.PullError.Value
+			pullFailed := pullErr != nil && (pullErr.Type == utils.ImagePullErrorAuth ||
+				pullErr.Type == utils.ImagePullErrorNotFound ||
+				(job.Status.StartTime != nil && time.Since(job.Status.StartTime.Time) >= discoveryPullRetryGrace))
+			if pullFailed {
 				failure := fmt.Sprintf("cannot pull image %s (%s)", in.Image, pullErr.Reason)
 				if pullErr.Message != "" {
 					failure += ": " + pullErr.Message

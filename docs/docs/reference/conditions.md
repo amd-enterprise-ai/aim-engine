@@ -218,7 +218,7 @@ Set for image-backed models (`spec.image` set), including models with inline `sp
 | `False` | `LogParseFailed` | Discovery completed but logs could not be parsed |
 | `False` | `CacheParseFailed` | Discovery cache `ConfigMap` could not be parsed |
 | `False` | `DiscoveryFailed` | Discovery Job failed (image pull failure, registry auth, etc.) |
-| `False` | `DiscoveryImagePullFailed` | The discovery pod can't pull the image; the Job is deleted and the attempt backs off |
+| `False` | `DiscoveryImagePullFailed` | The discovery pod can't pull the image; the Job is deleted and the attempt backs off. An auth or not-found error deletes it right away; for other pull errors the kubelet retries for 10 minutes first |
 | `False` | `DiscoveryCountFailed` | Could not count current attempts |
 | `False` | `DiscoveryCapReached` | Concurrent discovery cap reached; waiting for slot |
 | `False` | `AwaitingDiscovery` | Waiting out the backoff after a failed discovery attempt |

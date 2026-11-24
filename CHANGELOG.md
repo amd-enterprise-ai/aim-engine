@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Models whose spec produces no AIMProfiles report `ProfilesAvailable=False` with reason `NoDeployableProfiles`, naming the cause and the fix; services that resolve through them report `ModelHasNoProfiles`.
 - Registry errors on image models are reported by cause: `ImageNotFound` (HTTP 404) and `InvalidImageReference` block the model, and `ImagePullAuthFailure` (HTTP 401 or 403) sets `AuthValid=False` while discovery still runs.
 - Image models back off when a reconcile fails instead of retrying every 2 s, and a model blocked by a missing image or pull secret, or an invalid reference, rechecks every minute instead of reconciling in a loop. A registry answer of HTTP 401, 403 or 404 is reused for a minute, only by models in the same namespace with the same pull secrets; other registry failures are reused for 15 minutes by every model on the image.
-- Discovery Jobs that can't pull their image no longer hold the cluster-wide discovery slots. The operator deletes the Job and backs off with reason `DiscoveryImagePullFailed`, and a discovery Job that hasn't finished after an hour fails.
+- Discovery Jobs that can't pull their image no longer hold the cluster-wide discovery slots. The operator deletes the Job and backs off with reason `DiscoveryImagePullFailed`, right away for an auth or not-found error and after 10 minutes for other pull errors. A discovery Job that hasn't finished after an hour fails.
 
 ### Upgrade
 - **Upgrade from v0.2.7 or later.** Upgrade older releases to the latest 0.2.x release first and let it reconcile your resources; see `docs/docs/admin/upgrading.md#minimum-version`.
