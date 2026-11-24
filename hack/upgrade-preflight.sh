@@ -291,16 +291,17 @@ report_dedicated_caches() {
       + " and the profile cache downloads it again. See #cache-outcomes"'
 }
 
-# The profile pipeline reads neither spec.template, spec.overrides nor spec.env
-# of a service, nor spec.env and spec.resources of a model, so a move drops what
-# they set. Templates an AIMModel or AIMClusterModel generated only copy the
+# The profile pipeline reads neither spec.template nor spec.overrides of a
+# service, nor spec.env and spec.resources of a model, so a move drops what they
+# set. v0.2.7's profile pipeline also ignores a service's spec.env, until the
+# upgrade. Templates an AIMModel or AIMClusterModel generated only copy the
 # model, so only hand-written ones are listed. Namespaced templates come first,
 # as v0.2.7 resolves them.
 report_template_settings() {
   {
     echo "${services}" | problems '
       (select(.spec.overrides != null) | "sets spec.overrides, which the profile pipeline ignores"),
-      (select(.spec.env != null) | "sets spec.env, which the profile pipeline ignores"),
+      (select(.spec.env != null) | "sets spec.env, which v0.2.7 ignores after the move until the upgrade"),
       (. as $service
         | [$templates[].items[] | select(.metadata.name == ($service.status.resolvedTemplate.name // $service.spec.template.name)
             and (.metadata.namespace // $service.metadata.namespace) == $service.metadata.namespace)][0] // empty
