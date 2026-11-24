@@ -293,10 +293,12 @@ report_dedicated_caches() {
 
 # The profile pipeline reads neither spec.template nor spec.overrides of a
 # service, nor spec.env and spec.resources of a model, so a move drops what they
-# set. v0.2.7's profile pipeline also ignores a service's spec.env. Templates an
-# AIMModel or AIMClusterModel generated only copy the model, so only hand-written
-# ones are listed. Namespaced templates come first,
-# as v0.2.7 resolves them.
+# set. v0.2.7's profile pipeline also ignores a service's spec.env, and the
+# profile pipeline never lets spec.env change a variable that the profile sets,
+# so a service whose spec.env and template env share a variable is listed.
+# Templates an AIMModel or AIMClusterModel generated only copy the model, so only
+# hand-written ones are listed for their own settings. Namespaced templates come
+# first, as v0.2.7 resolves them.
 report_template_settings() {
   {
     echo "${services}" | problems '
@@ -305,10 +307,14 @@ report_template_settings() {
       (. as $service
         | [$templates[].items[] | select(.metadata.name == ($service.status.resolvedTemplate.name // $service.spec.template.name)
             and (.metadata.namespace // $service.metadata.namespace) == $service.metadata.namespace)][0] // empty
-        | select(any(.metadata.ownerReferences[]?; .kind | IN("AIMModel", "AIMClusterModel")) | not)
-        | . as $template | [("customProfile", "env", "resources") | select($template.spec[.] != null)]
-        | select(length > 0)
-        | "its \($template.kind) \($template.metadata.name) sets \(join(", ")), which the profile pipeline ignores")' \
+        | . as $template
+        | (select(any(.metadata.ownerReferences[]?; .kind | IN("AIMModel", "AIMClusterModel")) | not)
+            | [("customProfile", "env", "resources") | select($template.spec[.] != null)]
+            | select(length > 0)
+            | "its \($template.kind) \($template.metadata.name) sets \(join(", ")), which the profile pipeline ignores"),
+          ([$service.spec.env[]?.name | select(IN($template.spec.env[]?.name))]
+            | select(length > 0)
+            | "its spec.env and its \($template.kind) \($template.metadata.name) both set \(join(", ")), and the profile pipeline keeps the profile value"))' \
       --slurpfile templates <(list aimservicetemplates.aim.eai.amd.com; list aimclusterservicetemplates.aim.eai.amd.com)
     printf '%s\n' "${models}" "${cluster_models}" | problems '. as $model
       | [("env", "resources") | select($model.spec[.] != null) | "spec.\(.)"] | select(length > 0)

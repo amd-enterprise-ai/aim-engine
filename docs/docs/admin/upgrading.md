@@ -658,10 +658,18 @@ of its AIMRuntimeConfig and AIMClusterRuntimeConfig. If the service needs them,
 set them in `spec.profileOverrides.containerEnv`. That creates an overlay
 profile, whose cache downloads the weights again.
 
+If a service's `spec.env` and its template's `env` set the same variable, the
+template pipeline uses the `spec.env` value. The profile pipeline doesn't let
+`spec.env` change a variable that the profile sets, so once the template's `env`
+is in the profile's `containerEnv`, the profile value wins. To keep the
+`spec.env` value, write it into that `containerEnv` when you carry the template's
+`env` over, or set it in the service's `spec.profileOverrides.containerEnv`.
+
 The preflight prints an `INFO [template-settings]` line for each service whose
-hand-written template sets `customProfile`, `env` or `resources`, or that sets
-`spec.overrides` or `spec.env`, and for each AIMModel and AIMClusterModel that
-sets `spec.env` or `spec.resources`.
+hand-written template sets `customProfile`, `env` or `resources`, that sets
+`spec.overrides` or `spec.env`, or whose `spec.env` and template `env` set the
+same variable, and for each AIMModel and AIMClusterModel that sets `spec.env` or
+`spec.resources`.
 
 Then add the annotation:
 
