@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,12 +53,17 @@ import (
 )
 
 // imageInspectCooldown is the minimum interval between registry inspections of an
-// image after a registry-side failure. The cache is keyed by image and shared
-// across models, so many AIMModels referencing the same failing image do not
-// collectively hammer the registry; each image is re-inspected at most once per
-// cooldown. Every registry failure is throttled, whatever registryError
-// classifies it as.
-const imageInspectCooldown = 15 * time.Minute
+// image after an infrastructure failure (timeout, DNS, connection, 5xx). The entry
+// is keyed by image alone and shared across models, because the network is shared:
+// many AIMModels referencing the same unreachable image do not collectively hammer
+// the registry or each wait out registryReadTimeout.
+var imageInspectCooldown = 15 * time.Minute
+
+// imageAccessFailureCooldown is how long a 401, 403 or 404 is cached. The answer
+// depends on the credentials, so the entry is keyed by image, namespace and pull
+// secrets and never reaches another tenant, and it is short so a pushed tag or a
+// fixed secret is seen within a minute.
+var imageAccessFailureCooldown = time.Minute
 
 // registryReadTimeout bounds the keychain build and the manifest and config
 // reads of one inspection. A manifest and a config blob take seconds even over
@@ -76,34 +82,50 @@ type inspectFailure struct {
 	err error
 }
 
-// recentInspectFailure returns the cached registry error for imageURI while its
-// last failure is within the cooldown, otherwise nil. Expired entries are evicted
-// on read so the map does not grow unbounded across rotating image tags.
-func recentInspectFailure(imageURI string) error {
+// recentInspectFailure returns the cached infrastructure failure of imageURI or
+// the cached access failure of accessKey while it is within its cooldown,
+// otherwise nil.
+func recentInspectFailure(imageURI, accessKey string) error {
 	inspectFailureMu.Lock()
 	defer inspectFailureMu.Unlock()
-	f, ok := inspectFailures[imageURI]
+	if err := cachedInspectFailure(imageURI, imageInspectCooldown); err != nil {
+		return err
+	}
+	return cachedInspectFailure(accessKey, imageAccessFailureCooldown)
+}
+
+// cachedInspectFailure returns the error cached under key while it is younger
+// than cooldown. Expired entries are evicted on read so the map does not grow
+// unbounded across rotating image tags. The caller holds inspectFailureMu.
+func cachedInspectFailure(key string, cooldown time.Duration) error {
+	f, ok := inspectFailures[key]
 	if !ok {
 		return nil
 	}
-	if time.Since(f.at) < imageInspectCooldown {
+	if time.Since(f.at) < cooldown {
 		return f.err
 	}
-	delete(inspectFailures, imageURI)
+	delete(inspectFailures, key)
 	return nil
 }
 
-// recordInspectResult caches registry errors to drive the cooldown and clears
-// the entry on success or non-registry errors.
-func recordInspectResult(imageURI string, err error) {
+// recordInspectResult caches registry errors to drive the cooldown: 401, 403 and
+// 404 under accessKey, other registry failures under imageURI. It clears both
+// entries on success or non-registry errors.
+func recordInspectResult(imageURI, accessKey string, err error) {
 	inspectFailureMu.Lock()
 	defer inspectFailureMu.Unlock()
 	var regErr *utils.ImageRegistryError
-	if errors.As(err, &regErr) {
-		inspectFailures[imageURI] = inspectFailure{at: time.Now(), err: err}
+	if !errors.As(err, &regErr) {
+		delete(inspectFailures, imageURI)
+		delete(inspectFailures, accessKey)
 		return
 	}
-	delete(inspectFailures, imageURI)
+	if regErr.Type == utils.ImagePullErrorAuth || regErr.Type == utils.ImagePullErrorNotFound {
+		inspectFailures[accessKey] = inspectFailure{at: time.Now(), err: err}
+		return
+	}
+	inspectFailures[imageURI] = inspectFailure{at: time.Now(), err: err}
 }
 
 // inspectImage extracts metadata from a container image using the provided image pull secrets.
@@ -130,12 +152,19 @@ func inspectImage(
 ) (_ *aimv1alpha1.ImageMetadata, retErr error) {
 	logger := ctrl.LoggerFrom(ctx)
 
+	secretNames := make([]string, len(imagePullSecrets))
+	for i, secret := range imagePullSecrets {
+		secretNames[i] = secret.Name
+	}
+	sort.Strings(secretNames)
+	accessKey := imageURI + " " + secretNamespace + "/" + strings.Join(secretNames, ",")
+
 	// Skip the registry GET while a recent registry failure is still within the cooldown.
-	if err := recentInspectFailure(imageURI); err != nil {
+	if err := recentInspectFailure(imageURI, accessKey); err != nil {
 		logger.V(1).Info("Skipping image inspect within registry failure cooldown", "imageURI", imageURI)
 		return nil, err
 	}
-	defer func() { recordInspectResult(imageURI, retErr) }()
+	defer func() { recordInspectResult(imageURI, accessKey, retErr) }()
 
 	// Parse the image reference
 	ref, err := name.ParseReference(imageURI)
@@ -150,9 +179,7 @@ func inspectImage(
 	// rather than silently ignoring missing secrets (even if the image might be public).
 	// This provides fail-fast behavior and surfaces configuration issues early.
 	if len(imagePullSecrets) > 0 && secretNamespace != "" && clientset != nil {
-		secretNames := make([]string, len(imagePullSecrets))
-		for i, secret := range imagePullSecrets {
-			secretNames[i] = secret.Name
+		for _, secret := range imagePullSecrets {
 			// Verify the secret exists
 			_, err := clientset.CoreV1().Secrets(secretNamespace).Get(ctx, secret.Name, metav1.GetOptions{})
 			if err != nil {

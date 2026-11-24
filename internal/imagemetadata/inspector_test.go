@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	corev1 "k8s.io/api/core/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -51,26 +52,28 @@ const inspectorTestGPUModel = "MI300X"
 
 func TestInspectFailureCooldown(t *testing.T) {
 	const imageURI = "registry.invalid/repo/image:tag"
+	const accessKey = imageURI + " team-a/"
 	t.Cleanup(func() {
 		inspectFailureMu.Lock()
 		delete(inspectFailures, imageURI)
+		delete(inspectFailures, accessKey)
 		inspectFailureMu.Unlock()
 	})
 
-	if err := recentInspectFailure(imageURI); err != nil {
+	if err := recentInspectFailure(imageURI, accessKey); err != nil {
 		t.Fatalf("expected no cooldown initially, got %v", err)
 	}
 
 	// Non-registry errors must not start a cooldown.
-	recordInspectResult(imageURI, errors.New("not a registry error"))
-	if err := recentInspectFailure(imageURI); err != nil {
+	recordInspectResult(imageURI, accessKey, errors.New("not a registry error"))
+	if err := recentInspectFailure(imageURI, accessKey); err != nil {
 		t.Fatalf("non-registry error should not trigger cooldown, got %v", err)
 	}
 
-	// Every registry error type starts the cooldown.
+	// An infrastructure registry error starts the cooldown of the image itself.
 	regErr := &utils.ImageRegistryError{Type: utils.ImagePullErrorGeneric, Message: "dial tcp: lookup failed"}
-	recordInspectResult(imageURI, regErr)
-	if got := recentInspectFailure(imageURI); !errors.Is(got, regErr) {
+	recordInspectResult(imageURI, accessKey, regErr)
+	if got := recentInspectFailure(imageURI, imageURI+" team-b/registry-b"); !errors.Is(got, regErr) {
 		t.Fatalf("expected cached registry error, got %v", got)
 	}
 
@@ -79,7 +82,7 @@ func TestInspectFailureCooldown(t *testing.T) {
 	inspectFailureMu.Lock()
 	inspectFailures[imageURI] = inspectFailure{at: time.Now().Add(-imageInspectCooldown - time.Minute), err: regErr}
 	inspectFailureMu.Unlock()
-	if err := recentInspectFailure(imageURI); err != nil {
+	if err := recentInspectFailure(imageURI, accessKey); err != nil {
 		t.Fatalf("expected expired cooldown, got %v", err)
 	}
 	inspectFailureMu.Lock()
@@ -90,9 +93,9 @@ func TestInspectFailureCooldown(t *testing.T) {
 	}
 
 	// Success clears any cached failure.
-	recordInspectResult(imageURI, regErr)
-	recordInspectResult(imageURI, nil)
-	if err := recentInspectFailure(imageURI); err != nil {
+	recordInspectResult(imageURI, accessKey, regErr)
+	recordInspectResult(imageURI, accessKey, nil)
+	if err := recentInspectFailure(imageURI, accessKey); err != nil {
 		t.Fatalf("success should clear cooldown, got %v", err)
 	}
 }
@@ -186,7 +189,7 @@ func TestInspectImage_RegistryNeverAnswers(t *testing.T) {
 	t.Cleanup(server.Close)
 	t.Cleanup(func() { close(stop) })
 	imageURI := strings.TrimPrefix(server.URL, "http://") + "/amdenterpriseai/aim-dummy:0.2.2"
-	t.Cleanup(func() { recordInspectResult(imageURI, nil) })
+	t.Cleanup(func() { recordInspectResult(imageURI, "", nil) })
 
 	timeout := registryReadTimeout
 	registryReadTimeout = 200 * time.Millisecond
@@ -203,10 +206,64 @@ func TestInspectImage_RegistryNeverAnswers(t *testing.T) {
 			err, got.Category(), got.Reason())
 	}
 
+	accessCooldown := imageAccessFailureCooldown
+	imageAccessFailureCooldown = 0
+	t.Cleanup(func() { imageAccessFailureCooldown = accessCooldown })
 	seen := requests.Load()
-	if _, err := inspectImage(context.Background(), imageURI, nil, nil, ""); err == nil || requests.Load() != seen {
-		t.Fatalf("second inspect within the cooldown: error %v, registry requests %d -> %d; want the cached error and no request",
+	otherSecrets := []corev1.LocalObjectReference{{Name: "registry-b"}}
+	if _, err := inspectImage(context.Background(), imageURI, otherSecrets, nil, "team-b"); err == nil || requests.Load() != seen {
+		t.Fatalf("inspect from another namespace within the cooldown: error %v, registry requests %d -> %d; want the cached error and no request",
 			err, seen, requests.Load())
+	}
+}
+
+// fakeRegistry answers the registry ping anonymously and every manifest read
+// with status. It returns the image reference and the number of manifest reads.
+func fakeRegistry(t *testing.T, status int) (string, *atomic.Int32) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("DOCKER_CONFIG", "")
+	t.Setenv("REGISTRY_AUTH_FILE", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	var manifestReads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			return
+		}
+		manifestReads.Add(1)
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(server.Close)
+	imageURI := strings.TrimPrefix(server.URL, "http://") + "/amdenterpriseai/aim-dummy:0.2.2"
+	return imageURI, &manifestReads
+}
+
+func TestInspectImage_AccessFailuresAreKeyedByNamespaceAndSecrets(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusNotFound} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			imageURI, manifestReads := fakeRegistry(t, status)
+			accessCooldown := imageAccessFailureCooldown
+			t.Cleanup(func() { imageAccessFailureCooldown = accessCooldown })
+
+			expectReads := func(step, namespace string, pullSecrets []corev1.LocalObjectReference, want int32) {
+				t.Helper()
+				if _, err := inspectImage(context.Background(), imageURI, pullSecrets, nil, namespace); err == nil {
+					t.Fatalf("%s: expected a registry error", step)
+				}
+				if got := manifestReads.Load(); got != want {
+					t.Fatalf("%s: %d manifest reads, want %d", step, got, want)
+				}
+			}
+			expectReads("anonymous read in team-a", "team-a", nil, 1)
+			expectReads("team-a again within the cooldown", "team-a", nil, 1)
+			expectReads("team-b with its own pull secrets", "team-b",
+				[]corev1.LocalObjectReference{{Name: "registry-b"}, {Name: "mirror-b"}}, 2)
+			expectReads("team-b with the same pull secrets in another order", "team-b",
+				[]corev1.LocalObjectReference{{Name: "mirror-b"}, {Name: "registry-b"}}, 2)
+
+			imageAccessFailureCooldown = 0
+			expectReads("team-a after the cooldown", "team-a", nil, 3)
+		})
 	}
 }
 

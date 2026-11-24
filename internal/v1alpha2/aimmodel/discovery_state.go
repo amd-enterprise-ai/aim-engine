@@ -266,7 +266,8 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 	}
 
 	// The model's blocked apply would drop a new Job, so no attempt is counted.
-	// The requeue re-reads the image: neither the registry nor pull secrets are watched.
+	// The requeue re-reads the image: neither the registry nor pull secrets are
+	// watched, and the inspector caches a 404 for no longer than this requeue.
 	if in.BlockedByImageMetadata {
 		return DiscoveryDecision{
 			State:        nextState,

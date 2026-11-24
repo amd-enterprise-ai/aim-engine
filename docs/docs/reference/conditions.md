@@ -241,6 +241,8 @@ Set for image-backed models. Tracks the operator's registry read of the labels o
 | `False` | `DNSFailure`, `ConnectionRefused`, `NetworkTimeout`, `ConnectionReset`, `NetworkError` | The operator cannot reach the registry. Discovery still runs |
 | `False` | `ImageInspectionFailed` | Any other registry failure, such as a 5xx response. Discovery still runs |
 
+The operator reads the image again one minute after an HTTP 401, 403 or 404; until then, only models in the same namespace with the same pull secrets get that answer. After any other registry failure it waits 15 minutes, and every model on the image gets the same failure meanwhile.
+
 For a model with `spec.modelSources`, which runs no discovery, auth and network failures block the model and set `AuthValid=False` or `DependenciesReachable=False`.
 
 ### RuntimeImageLineage
