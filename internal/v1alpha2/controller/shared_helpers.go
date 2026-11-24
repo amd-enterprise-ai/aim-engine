@@ -57,6 +57,12 @@ func runTypedReconcile[T client.Object](
 	return run(ctx, obj)
 }
 
+// modelMaxConcurrentReconciles lets the AIMModel and AIMClusterModel
+// controllers read other images while one registry read waits out its timeout.
+// The registry read runs before the discovery lock, which still serializes the
+// pipeline of image models.
+const modelMaxConcurrentReconciles = 4
+
 // runWithDiscoveryLock returns run's result and error unchanged, so pipeline
 // errors back off in the rate limiter. Only a discovery lock that cannot be
 // taken gets the short fixed requeue.
