@@ -1,0 +1,87 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Deleting a namespace is not blocked by the cleanup finalizers of the
+# AIMService (aim.eai.amd.com/cache-cleanup) and its Dedicated AIMProfileCache
+# (aim.eai.amd.com/profile-cache-artifact-cleanup): in a terminating namespace
+# the operator skips the cleanup and drops the finalizers.
+#
+# Chainsaw deletes what it applied before the namespace, which never reaches
+# that path, so the resources are applied by script into a namespace of their
+# own and the namespace itself is deleted.
+#
+# No accelerator is involved and the AIMArtifact download fails on purpose, so
+# this runs in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-namespace-deletion-not-blocked
+spec:
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create an isolated namespace
+      try:
+        - apply:
+            file: namespace.yaml
+
+    - name: Create the profile and a service with dedicated caching
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl apply -n chainsaw-namespace-deletion-not-blocked -f profile.yaml
+              kubectl apply -n chainsaw-namespace-deletion-not-blocked -f service.yaml
+
+    - name: The service and its AIMProfileCache carry their cleanup finalizers
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: ns-delete-finalizer
+                namespace: chainsaw-namespace-deletion-not-blocked
+                finalizers:
+                  - aim.eai.amd.com/cache-cleanup
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                namespace: chainsaw-namespace-deletion-not-blocked
+                labels:
+                  aim.eai.amd.com/service.name: ns-delete-finalizer
+                finalizers:
+                  - aim.eai.amd.com/profile-cache-artifact-cleanup
+              spec:
+                mode: Dedicated
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                namespace: chainsaw-namespace-deletion-not-blocked
+                labels:
+                  aim.eai.amd.com/profile.name: ns-delete-finalizer
+
+    - name: Delete the namespace
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl delete namespace chainsaw-namespace-deletion-not-blocked --wait=false
+
+    - name: The namespace is gone
+      try:
+        - error:
+            timeout: 240s
+            resource:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: chainsaw-namespace-deletion-not-blocked
+      catch:
+        - script:
+            content: |
+              kubectl get aimservices,aimprofilecaches,aimartifacts,pvc -n chainsaw-namespace-deletion-not-blocked \
+                -o custom-columns=KIND:.kind,NAME:.metadata.name,FINALIZERS:.metadata.finalizers || true

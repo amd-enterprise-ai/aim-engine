@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: ns-delete-finalizer
+spec:
+  profile:
+    name: ns-delete-finalizer
+  replicas: 1
+  caching:
+    mode: Dedicated
+    env:
+      # The download fails, so the AIMArtifact never becomes Ready.
+      - name: AIM_DEBUG_CAUSE_FAILURE
+        value: "true"

@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: ns-delete-finalizer
+spec:
+  aimId: test/ns-delete-finalizer
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      size: 1Gi
