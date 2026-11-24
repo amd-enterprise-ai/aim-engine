@@ -61,6 +61,23 @@ Common causes:
 - **Insufficient resources** — Not enough GPU, memory, or CPU available
 - **PVC not binding** — Storage class doesn't support RWX, or insufficient capacity
 
+### Service Failed with `PodCreationFailed`
+
+The predictor Deployment exists, but the API server or an admission policy refuses its pod. The `InferenceServiceReady` condition and the `Ready` condition give the refusal text:
+
+```bash
+kubectl get aimservice <name> -n <namespace> \
+  -o jsonpath='{.status.conditions[?(@.type=="InferenceServiceReady")].message}'
+```
+
+Common causes:
+
+- **LimitRange**: The service sets a CPU or memory request but no limit, and the namespace LimitRange adds a default limit that is lower than the request. Set `spec.resources.limits` on the service, or change the LimitRange.
+- **ResourceQuota**: The pod would exceed a namespace quota.
+- **Admission policy**: A ValidatingAdmissionPolicy or an admission webhook refuses the pod. The message usually names the policy or the webhook.
+
+The ReplicaSet controller tries again to create the pod, with an increasing delay. When the cause is removed, the service goes back to `Starting` at the next try. A change to `spec.resources` of the service makes a new ReplicaSet, which tries at once.
+
 ### Profile Resolution Fails (v1alpha2)
 
 **`ProfileReady=False` with reason `ProfileNotFound`:**
