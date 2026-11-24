@@ -17,6 +17,7 @@ on:
       - 'Makefile'
       - 'hack/**'
       - 'tests/**'
+      - 'docs/docs/admin/upgrading.md'
       - 'mise.toml'
       - '.github/workflows/test-e2e.yml'
 

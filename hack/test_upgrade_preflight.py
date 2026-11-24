@@ -425,6 +425,10 @@ class UpgradePreflightTest(unittest.TestCase):
                 item("AIMProfile", "derived", metadata=model_owned),
                 item("AIMProfile", "kept", metadata=owned_by("aim.eai.amd.com/v1alpha1", "AIMClusterModelSource", "s")),
             ],
+            MODELS: [
+                item("AIMModel", "service-model", spec={"image": "aim:1.0.0"},
+                     metadata=owned_by("aim.eai.amd.com/v1alpha1", "AIMService", "svc")),
+            ],
         }
 
         result = self.run_preflight(resources)
@@ -440,6 +444,7 @@ class UpgradePreflightTest(unittest.TestCase):
         self.assertIn("""AIMProfile team/derived: is owned by v1alpha1 AIMModel m; rewrite the reference with:"""
                       """ kubectl patch aimprofile derived -n team --type json -p"""
                       """ '[{"op":"replace","path":"/metadata/ownerReferences/1/apiVersion",""", result.stdout)
+        self.assert_fails(result, "stale-owner-references", "AIMModel team/service-model", section)
         self.assert_fails(result, "stale-owner-references", "Job team/discovery", section)
         self.assertIn(
             "Job team/discovery: is owned by v1alpha1 AIMServiceTemplate t; delete it with its owner, or remove the"
@@ -451,7 +456,7 @@ class UpgradePreflightTest(unittest.TestCase):
 
     def test_a_failed_list_fails_the_checks_that_read_it(self):
         cases = {
-            "aimservicetemplates.aim.eai.amd.com": ["template-objects"],
+            "aimservicetemplates.aim.eai.amd.com": ["template-objects", "template-settings"],
             TEMPLATE_CACHES: ["template-objects", "template-finalizers", "dedicated-template-caches"],
             INFERENCE_SERVICES: ["template-pipeline-services", "stale-owner-references"],
             "jobs.batch": ["stale-owner-references"],
@@ -552,6 +557,44 @@ class UpgradePreflightTest(unittest.TestCase):
         self.assertIn("INFO [dedicated-template-caches] AIMTemplateCache team/dedicated: "
                       "AIMArtifact dedicated-weights uses 120Gi", result.stdout)
         self.assertNotIn("shared-weights", result.stdout)
+
+    def test_lists_template_settings_the_move_drops(self):
+        moved = {"annotations": {"aim.eai.amd.com/reconciler-pipeline": "profile"}}
+        generated = service("generated", {"model": {"name": "m"}}, **moved)
+        generated["status"]["resolvedTemplate"] = {"name": "generated"}
+        kept = [crd(SERVICES, served=("v1alpha1", "v1alpha2"))]
+        kept += [crd(name, annotations=KEEP) for name in TEMPLATE_CRDS]
+        resources = {
+            CRDS: kept,
+            SERVICES: [
+                service("hand-written", {"model": {"name": "m"}, "template": {"name": "custom"}}, **moved),
+                generated,
+                service("overrides", {"model": {"name": "m"}, "overrides": {"metric": "latency"}}, **moved),
+            ],
+            "aimservicetemplates.aim.eai.amd.com": [
+                item("AIMServiceTemplate", "custom", namespace="other", spec={"customProfile": {}}),
+                item("AIMServiceTemplate", "custom", spec={"env": [{"name": "A", "value": "1"}],
+                                                           "resources": {"limits": {"cpu": "4"}}}),
+            ],
+            "aimclusterservicetemplates.aim.eai.amd.com": [
+                item("AIMClusterServiceTemplate", "generated", namespace=None, spec={"env": [{"name": "A"}]},
+                     metadata=owned_by("aim.eai.amd.com/v1alpha2", "AIMClusterModel", "m")),
+            ],
+        }
+
+        result = self.run_preflight(resources)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("INFO [template-settings] AIMService team/hand-written: its AIMServiceTemplate custom sets env,"
+                      " resources, which the profile pipeline ignores. See #move-template-services", result.stdout)
+        self.assertIn("INFO [template-settings] AIMService team/overrides: sets spec.overrides, which the profile"
+                      " pipeline ignores. See #move-template-services", result.stdout)
+        self.assertNotIn("team/generated", result.stdout)
+
+    def test_guide_link_has_the_form_the_release_stamps_with_its_tag(self):
+        # compile-release.yaml replaces /blob/main/ on this line with the release tag.
+        self.assertIn('\nguide="https://github.com/amd-enterprise-ai/aim-engine/blob/main/docs/docs/admin/upgrading.md"\n',
+                      SCRIPT.read_text())
 
     def test_requires_jq(self):
         with tempfile.TemporaryDirectory() as tmp:

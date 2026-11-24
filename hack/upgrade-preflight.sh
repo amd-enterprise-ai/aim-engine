@@ -226,7 +226,8 @@ check_stale_owner_references() {
   local lists found
   lists="$(for resource in inferenceservices.serving.kserve.io httproutes.gateway.networking.k8s.io \
     scaledobjects.keda.sh persistentvolumeclaims jobs.batch configmaps \
-    aimartifacts.aim.eai.amd.com aimprofiles.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com; do
+    aimartifacts.aim.eai.amd.com aimprofiles.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com \
+    aimmodels.aim.eai.amd.com; do
     list "${resource}"
   done)"
   found="$(problems '"kubectl patch \(.kind | ascii_downcase) \(.metadata.name) -n \(.metadata.namespace)" as $patch
@@ -257,6 +258,24 @@ report_dedicated_caches() {
     | "INFO [dedicated-template-caches] AIMTemplateCache \($cache.metadata.namespace)/\($cache.metadata.name):"
       + " AIMArtifact \(.metadata.name) uses \(.status.allocatedSize // .spec.size // "an unknown size"),"
       + " and the profile cache downloads it again. See #cache-outcomes"'
+}
+
+# The profile pipeline reads neither spec.template nor spec.overrides, so a move
+# drops what they set. Templates an AIMModel or AIMClusterModel generated only
+# copy the model, so only hand-written ones are listed. Namespaced templates
+# come first, as v0.2.7 resolves them.
+report_template_settings() {
+  echo "${services}" | problems '
+    (select(.spec.overrides != null) | "sets spec.overrides, which the profile pipeline ignores"),
+    (. as $service
+      | [$templates[].items[] | select(.metadata.name == ($service.status.resolvedTemplate.name // $service.spec.template.name)
+          and (.metadata.namespace // $service.metadata.namespace) == $service.metadata.namespace)][0] // empty
+      | select(any(.metadata.ownerReferences[]?; .kind | IN("AIMModel", "AIMClusterModel")) | not)
+      | . as $template | [("customProfile", "env", "resources") | select($template.spec[.] != null)]
+      | select(length > 0)
+      | "its \($template.kind) \($template.metadata.name) sets \(join(", ")), which the profile pipeline ignores")' \
+    --slurpfile templates <(list aimservicetemplates.aim.eai.amd.com; list aimclusterservicetemplates.aim.eai.amd.com) \
+    | sed 's|^|INFO [template-settings] |; s|$|. See #move-template-services|'
 }
 
 run_check() {
@@ -311,6 +330,8 @@ run_check template-finalizers
 run_check stale-owner-references
 report_dedicated_caches
 report_list_errors dedicated-template-caches
+report_template_settings
+report_list_errors template-settings
 manual v1alpha1-clients update-v1alpha1-manifests "AIMService, AIMModel and AIMClusterModel stop serving\
  aim.eai.amd.com/v1alpha1: check GitOps repositories and scripts for such manifests"
 

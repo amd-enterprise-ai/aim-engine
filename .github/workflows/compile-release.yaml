@@ -330,6 +330,10 @@ jobs:
             -e "s|__CHART_OCI_REPO__|${CHART_OCI_REPO}|g" \
             release-notes.template > release-notes.md
 
+      - name: Point the preflight at this release's upgrade guide
+        if: steps.ver.outputs.is_release == 'true'
+        run: sed "/^guide=/s|/blob/main/|/blob/${VERSION}/|" hack/upgrade-preflight.sh > dist/upgrade-preflight.sh
+
       - name: Create draft release and upload assets
         # Stays a draft until the images are promoted to amdenterpriseai and
         # publish-release publishes it.
@@ -346,7 +350,7 @@ jobs:
             config/prereqs/scale-from-zero/envoy-gateway-route-metrics.yaml
             config/prereqs/scale-from-zero/envoy-gateway-metrics-collector.yaml
             config/prereqs/scale-from-zero/kgateway-metrics-collector.yaml
-            hack/upgrade-preflight.sh
+            dist/upgrade-preflight.sh
           token: '${{ secrets.GITHUB_TOKEN }}'
           draft: true
           prerelease: false

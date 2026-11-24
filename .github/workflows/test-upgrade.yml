@@ -15,6 +15,7 @@ on:
       - 'Makefile'
       - 'hack/**'
       - 'tests/e2e/upgrade-compatibility/**'
+      - 'docs/docs/admin/upgrading.md'
       - 'mise.toml'
       - '.github/workflows/test-upgrade.yml'
 
@@ -493,7 +494,8 @@ jobs:
           resources="$(kubectl api-resources -o name)"
           for resource in inferenceservices.serving.kserve.io httproutes.gateway.networking.k8s.io \
             scaledobjects.keda.sh persistentvolumeclaims jobs.batch configmaps \
-            aimartifacts.aim.eai.amd.com aimprofiles.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com; do
+            aimartifacts.aim.eai.amd.com aimprofiles.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com \
+            aimmodels.aim.eai.amd.com; do
             grep -qxF "${resource}" <<<"${resources}" || continue
             kubectl get "${resource}" --all-namespaces -o json \
               | jq -r '.items[] | . as $item | .metadata.ownerReferences // [] | to_entries[]

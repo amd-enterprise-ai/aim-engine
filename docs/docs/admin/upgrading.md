@@ -566,10 +566,11 @@ section of this guide that fixes it:
 | `models-without-native-path` | An AIMModel or AIMClusterModel uses `spec.custom`, `spec.customTemplates` or `spec.modelSources`; is an image model with `spec.aimId` or `spec.discovery.extractMetadata: false`; or was generated for an inline custom service | [Replace models without a native path](#replace-models-without-a-native-path) |
 | `template-objects` | An AIMServiceTemplate, AIMClusterServiceTemplate or AIMTemplateCache exists | [Delete template objects](#delete-template-objects) |
 | `template-finalizers` | An AIMService or AIMTemplateCache has a template cleanup finalizer | [Delete template objects](#delete-template-objects) |
-| `stale-owner-references` | An InferenceService, HTTPRoute, ScaledObject, PVC, Job, ConfigMap, AIMArtifact, AIMProfile or AIMProfileCache is owned by a v1alpha1 AIMService, AIMModel, AIMClusterModel or template object. Each line ends with the `kubectl patch` command that fixes the reference | [Remove stale v1alpha1 owner references](#remove-stale-v1alpha1-owner-references) |
+| `stale-owner-references` | An InferenceService, HTTPRoute, ScaledObject, PVC, Job, ConfigMap, AIMArtifact, AIMProfile, AIMProfileCache or AIMModel is owned by a v1alpha1 AIMService, AIMModel, AIMClusterModel or template object. Each line ends with the `kubectl patch` command that fixes the reference | [Remove stale v1alpha1 owner references](#remove-stale-v1alpha1-owner-references) |
 
 `INFO` lines list Dedicated template caches with their sizes (see
-[Cache outcomes](#cache-outcomes)). `MANUAL` lines name what the script can't
+[Cache outcomes](#cache-outcomes)), and services whose template settings the
+move drops (see [Move template services](#move-template-services)). `MANUAL` lines name what the script can't
 check and you confirm by hand: the operator version when it can't be read (see
 [Minimum version](#minimum-version)), and v1alpha1 manifests outside the
 cluster (see [Update v1alpha1 manifests](#update-v1alpha1-manifests)). They
@@ -617,8 +618,34 @@ For a GPU template, replace `"acceleratorType":"cpu"` with
 for example `MI300X`.
 
 The selected profile can still differ from the template, for example in GPU
-count or precision. Add `acceleratorCount` or `precision` to the selector to
-match them, or set `spec.profile.name` to run one specific profile.
+count, precision or metric. Add `acceleratorCount`, `precision` or `metric` to
+the selector to match them, or set `spec.profile.name` to run one specific
+profile.
+
+The profile pipeline doesn't read `spec.template` or `spec.overrides`, so the
+move drops whatever else a hand-written template or the service's overrides
+set. Templates that an AIMModel or AIMClusterModel generated only copy the
+model. Before you annotate, check what the template sets, with the first
+command for an AIMServiceTemplate or the second for an
+AIMClusterServiceTemplate:
+
+```bash
+kubectl get aimservicetemplate <template> -n <namespace> -o jsonpath='{.spec}'
+kubectl get aimclusterservicetemplate <template> -o jsonpath='{.spec}'
+```
+
+Carry each setting over:
+
+| Template or service field | Where it goes on v0.2.7 |
+|---|---|
+| template `resources`, `runtimeConfigName`, `imagePullSecrets`, `serviceAccountName` | the same fields on the AIMService |
+| template `caching.env` | the AIMService's `spec.caching.env` |
+| template `customProfile.engineArgs`, `customProfile.envVars` and `env` | a hand-written AIMProfile's `spec.engineArgs`, `spec.engineEnv` and `spec.containerEnv`, selected with `spec.profile.name` |
+| service `spec.overrides` (metric, precision, hardware) | `spec.profile.selector` (`metric`, `precision`, `acceleratorModel`, `acceleratorCount`) |
+
+The preflight prints an `INFO [template-settings]` line for each service whose
+hand-written template sets `customProfile`, `env` or `resources`, or that sets
+`spec.overrides`.
 
 Then add the annotation:
 
@@ -830,14 +857,16 @@ hangs in `foregroundDeletion`.
 
 v0.2.7 rewrites v1alpha1 owner references to AIMService, AIMModel and
 AIMClusterModel on the objects it manages when it next reconciles the owner.
-Before the upgrade, rewrite the ones left, for example on objects your own
-tools created, to `aim.eai.amd.com/v1alpha2`:
+Before the upgrade, rewrite the ones left to `aim.eai.amd.com/v1alpha2`. Like
+the preflight, the loop only scans the kinds it lists; if your own tools set
+such owners on other kinds, add them to it:
 
 ```bash
 resources="$(kubectl api-resources -o name)"
 for resource in inferenceservices.serving.kserve.io httproutes.gateway.networking.k8s.io \
   scaledobjects.keda.sh persistentvolumeclaims jobs.batch configmaps \
-  aimartifacts.aim.eai.amd.com aimprofiles.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com; do
+  aimartifacts.aim.eai.amd.com aimprofiles.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com \
+  aimmodels.aim.eai.amd.com; do
   grep -qxF "${resource}" <<<"${resources}" || continue
   kubectl get "${resource}" --all-namespaces -o json \
     | jq -r '.items[] | . as $item | .metadata.ownerReferences // [] | to_entries[]
@@ -905,7 +934,9 @@ objects. So delete the template objects before the upgrade, as in
 `template-objects` check enforces this.
 
 **Helm**: upgrading the CRDs chart deletes the template CRDs. When the
-preflight passes, no template objects are left, so nothing else is needed.
+preflight passes, no template objects are left, so nothing else is needed. If
+a GitOps tool syncs the CRDs chart, pause its sync until the preflight passes,
+or first annotate the template CRDs as below.
 
 If you can't delete every template object before the upgrade, keep the
 template CRDs and remove them by hand after it. This only covers leftover
