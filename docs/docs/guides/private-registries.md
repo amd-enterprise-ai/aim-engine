@@ -499,7 +499,7 @@ event, and should only be used briefly while diagnosing a certificate problem.
 
 ## Credential Scope
 
-Download credentials are merged from the most specific source to the cluster default: the model source `env`, then the AIMService `spec.caching.env`, then the AIMProfile `spec.caching.env`, then the `AIMRuntimeConfig` `spec.caching.env`, then the `AIMClusterRuntimeConfig` `spec.caching.env`. This lets you set a cluster-wide default, such as a HuggingFace token, and override it per namespace, profile or service. See [Download Job env](../concepts/runtime-config.md#download-job-env) for the full order, including the env that AIM Engine sets and the v1alpha1 template pipeline.
+Download credentials are merged from the most specific source to the cluster default: the model source `env`, then the AIMService `spec.caching.env`, then the AIMProfile `spec.caching.env`, then the `AIMRuntimeConfig` `spec.caching.env`, then the `AIMClusterRuntimeConfig` `spec.caching.env`. This lets you set a cluster-wide default, such as a HuggingFace token, and override it per namespace, profile or service. See [Download Job env](../concepts/runtime-config.md#download-job-env) for the full order, including the env that AIM Engine sets.
 
 ## Troubleshooting
 

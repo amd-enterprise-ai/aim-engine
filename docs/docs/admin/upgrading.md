@@ -93,12 +93,15 @@ lineage are deferred.
 
 ### 2. Update CRDs first
 
-CRDs must be updated before the operator, as new operator versions may depend on new CRD fields:
+CRDs must be updated before the operator, as new operator versions may depend on new CRD fields.
+Download the preflight as in [Run the upgrade preflight](#run-the-upgrade-preflight), and upgrade
+the CRDs only when it passes:
 
 ```bash
-helm upgrade aim-engine-crds oci://docker.io/amdenterpriseai/aim-engine-crds-chart \
-  --version <new-version> \
-  --namespace aim-system
+bash upgrade-preflight.sh &&
+  helm upgrade aim-engine-crds oci://docker.io/amdenterpriseai/aim-engine-crds-chart \
+    --version <new-version> \
+    --namespace aim-system
 ```
 
 This deletes the template CRDs. See
@@ -284,7 +287,7 @@ resources while runtime-image lineage is unresolved.
 
 ## Rollback
 
-Before you roll back, while the current operator still runs:
+Before you roll back, while the new operator still runs:
 
 1. Annotate every AIMService that has neither `spec.profile` nor the
    `aim.eai.amd.com/reconciler-pipeline: profile` annotation, including
@@ -380,11 +383,11 @@ This release removes the template CRDs and stops serving v1alpha1 for
 AIMService, AIMModel and AIMClusterModel. v0.2.7 needs both, so rolling back
 only the operator fails: the v0.2.7 pod exits on
 `no matches for kind "AIMTemplateCache"`, and the rolling update keeps the
-current operator running. Without `--wait`, `helm rollback` still reports
+new operator running. Without `--wait`, `helm rollback` still reports
 success. If you already rolled back only the operator, roll back the CRDs, then
 delete the crash-looping operator pod.
 
-Between the two rollbacks, the current operator runs on the v0.2.7 CRDs. It
+Between the two rollbacks, the new operator runs on the v0.2.7 CRDs. It
 logs failed applies, such as `.spec.baseImageRef: field not declared in schema`,
 and deletes nothing.
 
@@ -548,12 +551,14 @@ curl -fsSLO https://github.com/amd-enterprise-ai/aim-engine/releases/download/<r
 bash upgrade-preflight.sh
 ```
 
-It needs `kubectl`, with permission to get and list the resources below,
-Deployments and pods in all namespaces, and to get the AIMService,
-AIMServiceTemplate, AIMClusterServiceTemplate and AIMTemplateCache
+It needs `kubectl` 1.28 or later, with permission to get and list the
+resources below, Deployments and pods in all namespaces, and to get the
+AIMService, AIMServiceTemplate, AIMClusterServiceTemplate and AIMTemplateCache
 CustomResourceDefinitions, and `jq` 1.6 or later. It only reads from the
 cluster. It exits with 0 when every blocking check passes, 1 when any fails,
-and 2 when a required tool is missing. If the preflight can't list a resource,
+and 2 when it can't run: a required tool is missing, or kubectl can't read
+what every check needs, for example while an aggregated API such as
+metrics-server is unavailable. If the preflight can't list a resource,
 each check that reads it fails with the resource and kubectl's error: fix the
 permission and rerun. Each `FAIL` line names the check, the object and the
 section of this guide that fixes it:
@@ -569,7 +574,7 @@ section of this guide that fixes it:
 | `stale-owner-references` | An InferenceService, HTTPRoute, ScaledObject, PVC, Job, ConfigMap, AIMArtifact, AIMProfile, AIMProfileCache or AIMModel is owned by a v1alpha1 AIMService, AIMModel, AIMClusterModel or template object. Each line ends with the `kubectl patch` command that fixes the reference | [Remove stale v1alpha1 owner references](#remove-stale-v1alpha1-owner-references) |
 
 `INFO` lines list Dedicated template caches with their sizes (see
-[Cache outcomes](#cache-outcomes)), and services whose template settings the
+[Cache outcomes](#cache-outcomes)), and services and models whose settings the
 move drops (see [Move template services](#move-template-services)). `MANUAL` lines name what the script can't
 check and you confirm by hand: the operator version when it can't be read (see
 [Minimum version](#minimum-version)), and v1alpha1 manifests outside the
@@ -584,7 +589,10 @@ finished moving, pods that still mount a template cache's PVC, and v1alpha1
 AIMService, AIMModel or AIMClusterModel owner references still block.
 
 Once the new CRDs are applied, the AIMService CRD no longer serves v1alpha1.
-The preflight then prints a single `Already upgraded` line and exits 0.
+The preflight then only fails while the operator still runs v0.2.7 or older
+(`operator-upgraded`), or while template objects are left
+(`template-objects`). Otherwise it prints a single `Already upgraded` line and
+exits 0.
 
 ### Move template services
 
@@ -622,12 +630,12 @@ count, precision or metric. Add `acceleratorCount`, `precision` or `metric` to
 the selector to match them, or set `spec.profile.name` to run one specific
 profile.
 
-The profile pipeline doesn't read `spec.template` or `spec.overrides`, so the
-move drops whatever else a hand-written template or the service's overrides
-set. Templates that an AIMModel or AIMClusterModel generated only copy the
-model. Before you annotate, check what the template sets, with the first
-command for an AIMServiceTemplate or the second for an
-AIMClusterServiceTemplate:
+The profile pipeline doesn't read `spec.template`, `spec.overrides` or
+`spec.env` of the service, or `spec.env` and `spec.resources` of its AIMModel
+or AIMClusterModel, so the move drops whatever else they set. Templates that an
+AIMModel or AIMClusterModel generated only copy the model. Before you annotate,
+check what the template sets, with the first command for an AIMServiceTemplate
+or the second for an AIMClusterServiceTemplate:
 
 ```bash
 kubectl get aimservicetemplate <template> -n <namespace> -o jsonpath='{.spec}'
@@ -636,16 +644,24 @@ kubectl get aimclusterservicetemplate <template> -o jsonpath='{.spec}'
 
 Carry each setting over:
 
-| Template or service field | Where it goes on v0.2.7 |
+| Template, service or model field | Where it goes on v0.2.7 |
 |---|---|
 | template `resources`, `runtimeConfigName`, `imagePullSecrets`, `serviceAccountName` | the same fields on the AIMService |
 | template `caching.env` | the AIMService's `spec.caching.env` |
 | template `customProfile.engineArgs`, `customProfile.envVars` and `env` | a hand-written AIMProfile's `spec.engineArgs`, `spec.engineEnv` and `spec.containerEnv`, selected with `spec.profile.name` |
 | service `spec.overrides` (metric, precision, hardware) | `spec.profile.selector` (`metric`, `precision`, `acceleratorModel`, `acceleratorCount`) |
+| service `spec.env` | the AIMService's `spec.profileOverrides.containerEnv` |
+| model `spec.env` | the model's `spec.profiles.overrides.containerEnv` for every derived profile, or an AIMService's `spec.profileOverrides.containerEnv` for one service |
+| model `spec.resources` | the AIMService's or the AIMProfile's `spec.resources` |
+
+On the profile pipeline, an AIMService's `spec.env` and the `env` of an
+AIMRuntimeConfig or AIMClusterRuntimeConfig don't reach the inference
+container, so they can't replace the model's `spec.env`.
 
 The preflight prints an `INFO [template-settings]` line for each service whose
 hand-written template sets `customProfile`, `env` or `resources`, or that sets
-`spec.overrides`.
+`spec.overrides` or `spec.env`, and for each AIMModel and AIMClusterModel that
+sets `spec.env` or `spec.resources`.
 
 Then add the annotation:
 
@@ -818,14 +834,16 @@ kubectl get aimclustermodels -o json \
     done
 ```
 
-Then, once every service runs on the profile pipeline, delete the template
-objects while the current operator still runs. Its finalizers then clean up,
-and garbage collection deletes the objects the templates own:
+Then delete the template objects while v0.2.7 still runs. Its finalizers then
+clean up, and garbage collection deletes the objects the templates own,
+including the PVC of a Dedicated template cache's artifact. So the commands
+only delete once the preflight's `template-pipeline-services` check passes:
 
 ```bash
-kubectl delete aimtemplatecaches --all --all-namespaces
-kubectl delete aimservicetemplates --all --all-namespaces
-kubectl delete aimclusterservicetemplates --all
+grep -qxF 'ok   [template-pipeline-services]' <(bash upgrade-preflight.sh) &&
+  kubectl delete aimtemplatecaches --all --all-namespaces &&
+  kubectl delete aimservicetemplates --all --all-namespaces &&
+  kubectl delete aimclusterservicetemplates --all
 ```
 
 `kubectl delete` waits for the finalizers. If a template cache stays in
@@ -897,8 +915,13 @@ lists, or remove its owner reference if you need the object:
 ```bash
 kubectl delete <resource> <name> -n <namespace>
 kubectl patch <resource> <name> -n <namespace> --type json \
-  -p '[{"op":"remove","path":"/metadata/ownerReferences/<index>"}]'
+  -p '[{"op":"test","path":"/metadata/ownerReferences/<index>/uid","value":"<uid>"},
+    {"op":"remove","path":"/metadata/ownerReferences/<index>"}]'
 ```
+
+The `test` operation makes the patch fail, instead of removing another owner
+reference, when an earlier patch has shifted the index. Rerun the preflight
+for fresh commands.
 
 ### Update v1alpha1 manifests
 
@@ -922,6 +945,17 @@ before you upgrade. Replace template objects in those manifests too:
 
 AIMArtifact, AIMRuntimeConfig, AIMClusterRuntimeConfig and
 AIMClusterModelSource stay at v1alpha1.
+
+Roll the changed manifests out before you upgrade the CRDs: `helm upgrade` the
+release, or sync the GitOps app. Helm, and Flux's helm-controller, look up each
+object of the manifest a release last stored by its API version. Once v1alpha1
+is no longer served, `helm upgrade` and `helm uninstall` of a release that
+stored v1alpha1 AIMService, AIMModel or AIMClusterModel objects fail with
+`unable to build kubernetes objects from current release manifest`. To recover
+such a release, update the API versions in its stored manifest as in Helm's
+[Updating API Versions of a Release Manifest](https://helm.sh/docs/topics/kubernetes_apis/),
+with the helm-mapkubeapis plugin and a custom map file, or by editing the
+release Secret.
 
 ### Remove the template CRDs
 

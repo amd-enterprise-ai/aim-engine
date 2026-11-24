@@ -39,11 +39,18 @@ GUIDE = HACK.parent / "docs" / "docs" / "admin" / "upgrading.md"
 # Serves <resource>.json from FAKE_CLUSTER for "get <resource> ...", and logs
 # every call so tests can check that the preflight only reads. With
 # <resource>.error, it fails like a forbidden list: the error on stderr, an
-# empty list on stdout and exit 1.
+# empty list on stdout and exit 1. With api-resources.error, api-resources
+# prints the list and then fails, as kubectl does while an aggregated API is
+# unavailable.
 FAKE_KUBECTL = """#!/bin/sh
 echo "$*" >> "$FAKE_CLUSTER/calls.log"
 case "$1" in
-  api-resources) cat "$FAKE_CLUSTER/api-resources.txt" ;;
+  api-resources)
+    cat "$FAKE_CLUSTER/api-resources.txt"
+    if [ -f "$FAKE_CLUSTER/api-resources.error" ]; then
+      cat "$FAKE_CLUSTER/api-resources.error" >&2
+      exit 1
+    fi ;;
   get)
     if [ -f "$FAKE_CLUSTER/$2.error" ]; then
       cat "$FAKE_CLUSTER/$2.error" >&2
@@ -438,18 +445,20 @@ class UpgradePreflightTest(unittest.TestCase):
         self.assertIn(
             "InferenceService team/stale: is owned by v1alpha1 AIMService svc; rewrite the reference with:"
             " kubectl patch inferenceservice stale -n team --type json -p"
-            """ '[{"op":"replace","path":"/metadata/ownerReferences/0/apiVersion","""
-            """"value":"aim.eai.amd.com/v1alpha2"}]'.""",
+            """ '[{"op":"test","path":"/metadata/ownerReferences/0/uid","value":"uid-svc"},"""
+            """{"op":"replace","path":"/metadata/ownerReferences/0/apiVersion","value":"aim.eai.amd.com/v1alpha2"}]'.""",
             result.stdout)
         self.assertIn("""AIMProfile team/derived: is owned by v1alpha1 AIMModel m; rewrite the reference with:"""
                       """ kubectl patch aimprofile derived -n team --type json -p"""
-                      """ '[{"op":"replace","path":"/metadata/ownerReferences/1/apiVersion",""", result.stdout)
+                      """ '[{"op":"test","path":"/metadata/ownerReferences/1/uid","value":"uid-m"},"""
+                      """{"op":"replace","path":"/metadata/ownerReferences/1/apiVersion",""", result.stdout)
         self.assert_fails(result, "stale-owner-references", "AIMModel team/service-model", section)
         self.assert_fails(result, "stale-owner-references", "Job team/discovery", section)
         self.assertIn(
             "Job team/discovery: is owned by v1alpha1 AIMServiceTemplate t; delete it with its owner, or remove the"
             """ reference with: kubectl patch job discovery -n team --type json -p"""
-            """ '[{"op":"remove","path":"/metadata/ownerReferences/0"}]'.""",
+            """ '[{"op":"test","path":"/metadata/ownerReferences/0/uid","value":"uid-t"},"""
+            """{"op":"remove","path":"/metadata/ownerReferences/0"}]'.""",
             result.stdout)
         self.assertNotIn("team/current", result.stdout)
         self.assertNotIn("team/kept", result.stdout)
@@ -474,18 +483,45 @@ class UpgradePreflightTest(unittest.TestCase):
 
     def test_an_upgraded_cluster_prints_one_line(self):
         scrubbed = item("AIMService", "svc", spec={"model": {"name": "m"}}, status={"status": "Running"})
+        upgraded_operator = operator("docker.io/amdenterpriseai/aim-engine:v0.3.0")
         for name, aimservice_crd in {
             "v1alpha1 unserved": crd(SERVICES, served=("v1alpha2",)),
             "v1alpha1 removed": item("CustomResourceDefinition", SERVICES, namespace=None,
                                      spec={"versions": [{"name": "v1alpha2", "served": True}]}),
         }.items():
             with self.subTest(name):
-                result = self.run_preflight({CRDS: [aimservice_crd], SERVICES: [scrubbed]})
+                result = self.run_preflight({CRDS: [aimservice_crd], SERVICES: [scrubbed],
+                                             "deployments": [upgraded_operator]})
 
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout.splitlines(), [
-                    "Already upgraded: the AIMService CRD no longer serves aim.eai.amd.com/v1alpha1,"
-                    " so there is nothing to check."])
+                    "Already upgraded: the AIMService CRD no longer serves aim.eai.amd.com/v1alpha1."])
+
+    def test_an_upgraded_cluster_fails_with_a_v027_operator_or_template_objects(self):
+        upgraded = {CRDS: [crd(SERVICES, served=("v1alpha2",))] + [crd(name) for name in TEMPLATE_CRDS],
+                    "deployments": [operator("docker.io/amdenterpriseai/aim-engine:v0.3.0")]}
+        cases = {
+            "v0.2.7 operator": ({"deployments": [operator("docker.io/amdenterpriseai/aim-engine:v0.2.7")]},
+                                "operator-upgraded", "Deployment aim-system/aim-engine-controller-manager",
+                                "4-upgrade-the-operator"),
+            "template object left": ({TEMPLATE_CACHES: [item("AIMTemplateCache", "cache")]},
+                                     "template-objects", "AIMTemplateCache team/cache", "delete-template-objects"),
+        }
+        for name, (resources, check, obj, section) in cases.items():
+            with self.subTest(name):
+                result = self.run_preflight({**upgraded, **resources})
+
+                self.assert_fails(result, check, obj, section)
+                self.assertNotIn("Already upgraded", result.stdout)
+
+    def test_exits_2_when_kubectl_cannot_read_what_every_check_needs(self):
+        for resource in ("api-resources", CRDS, SERVICES, MODELS, CLUSTER_MODELS, "deployments"):
+            with self.subTest(resource):
+                result = self.run_preflight(errors=[resource])
+
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(FORBIDDEN.format(resource), result.stderr)
+                self.assertNotIn("All blocking checks passed.", result.stdout)
 
     def test_kept_template_crds_turn_template_findings_into_manual_lines(self):
         kept = [crd(SERVICES, served=("v1alpha1", "v1alpha2"))]
@@ -570,7 +606,12 @@ class UpgradePreflightTest(unittest.TestCase):
                 service("hand-written", {"model": {"name": "m"}, "template": {"name": "custom"}}, **moved),
                 generated,
                 service("overrides", {"model": {"name": "m"}, "overrides": {"metric": "latency"}}, **moved),
+                service("env", {"model": {"name": "m"}, "env": [{"name": "A", "value": "1"}]}, **moved),
             ],
+            MODELS: [item("AIMModel", "tuned", spec={"image": "aim:1.0.0", "env": [{"name": "A", "value": "1"}],
+                                                      "resources": {"limits": {"cpu": "4"}}})],
+            CLUSTER_MODELS: [item("AIMClusterModel", "cluster-tuned", namespace=None,
+                                  spec={"image": "aim:1.0.0", "env": [{"name": "A", "value": "1"}]})],
             "aimservicetemplates.aim.eai.amd.com": [
                 item("AIMServiceTemplate", "custom", namespace="other", spec={"customProfile": {}}),
                 item("AIMServiceTemplate", "custom", spec={"env": [{"name": "A", "value": "1"}],
@@ -588,6 +629,12 @@ class UpgradePreflightTest(unittest.TestCase):
         self.assertIn("INFO [template-settings] AIMService team/hand-written: its AIMServiceTemplate custom sets env,"
                       " resources, which the profile pipeline ignores. See #move-template-services", result.stdout)
         self.assertIn("INFO [template-settings] AIMService team/overrides: sets spec.overrides, which the profile"
+                      " pipeline ignores. See #move-template-services", result.stdout)
+        self.assertIn("INFO [template-settings] AIMService team/env: sets spec.env, which the profile"
+                      " pipeline ignores. See #move-template-services", result.stdout)
+        self.assertIn("INFO [template-settings] AIMModel team/tuned: sets spec.env, spec.resources, which the profile"
+                      " pipeline ignores. See #move-template-services", result.stdout)
+        self.assertIn("INFO [template-settings] AIMClusterModel cluster-tuned: sets spec.env, which the profile"
                       " pipeline ignores. See #move-template-services", result.stdout)
         self.assertNotIn("team/generated", result.stdout)
 

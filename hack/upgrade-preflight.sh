@@ -6,10 +6,10 @@
 #
 # Usage: upgrade-preflight.sh
 #
-# Exits 0 when every blocking check passes or the cluster is already upgraded,
-# and 1 when any check fails. Each failure names the check, the object and the
-# section of the upgrade guide that fixes it. Rerun the script after each fix
-# until it passes.
+# Exits 0 when every blocking check passes, 1 when any check fails, and 2 when
+# it can't run: a required tool is missing, or kubectl fails to read what every
+# check needs. Each failure names the check, the object and the section of the
+# upgrade guide that fixes it. Rerun the script after each fix until it passes.
 
 # The jq filters use jq variables such as $object, which must stay unexpanded.
 # shellcheck disable=SC2016
@@ -85,6 +85,25 @@ list() {
   fi
 }
 
+# Prints the output of kubectl with arguments $@. The checks can't run without
+# it, so when kubectl fails, it prints kubectl's error and exits 2.
+fetch() {
+  local output
+  if ! output="$(kubectl "$@" 2>"${scratch}/fetch.stderr")"; then
+    echo "upgrade-preflight: kubectl $* failed: $(<"${scratch}/fetch.stderr")" >&2
+    exit 2
+  fi
+  echo "${output}"
+}
+
+# Prints "<Deployment namespace/name><tab><image>" for the manager container of
+# each operator Deployment.
+operator_images() {
+  fetch get deployments --all-namespaces --field-selector metadata.name=aim-engine-controller-manager -o json \
+    | jq -r '.items[] | ["Deployment \(.metadata.namespace)/\(.metadata.name)",
+      (.spec.template.spec.containers[] | select(.name == "manager") | .image)] | @tsv'
+}
+
 # Prints the X.Y.Z version from an image reference's tag, or nothing.
 image_version() {
   local reference="${1%@*}"
@@ -109,16 +128,13 @@ version_at_least() {
 }
 
 check_minimum_version() {
-  local found deployments images object image version
+  local found images object image version
   found="$(problems "select(.status.reconcilerPipeline == null)
     | \"has no status.reconcilerPipeline, so v${minimum_version} or later has not reconciled it yet\"" \
     <<<"${services}")"
   report minimum-version minimum-version "${found}"
 
-  deployments="$(kubectl get deployments --all-namespaces \
-    --field-selector metadata.name=aim-engine-controller-manager -o json)"
-  images="$(jq -r '.items[] | ["Deployment \(.metadata.namespace)/\(.metadata.name)",
-    (.spec.template.spec.containers[] | select(.name == "manager") | .image)] | @tsv' <<<"${deployments}")"
+  images="$(operator_images)"
   if [[ -z "${images}" ]]; then
     manual minimum-version minimum-version "Deployment aim-engine-controller-manager: not found in any namespace,\
  so confirm by hand that the operator runs v${minimum_version} or later"
@@ -131,6 +147,19 @@ check_minimum_version() {
  so confirm by hand that it runs v${minimum_version} or later"
     elif ! version_at_least "${version}" "${minimum_version}"; then
       report minimum-version minimum-version "${object}: runs v${version}, upgrade to v${minimum_version} or later first"
+    fi
+  done <<<"${images}"
+}
+
+# v0.2.7 and older releases can't run on the new CRDs, so once they are applied
+# the operator must be upgraded too.
+check_operator_upgraded() {
+  local images object image version
+  images="$(operator_images)"
+  while IFS=$'\t' read -r object image; do
+    version="$(image_version "${image}")"
+    if [[ -n "${version}" ]] && version_at_least "${minimum_version}" "${version}"; then
+      report operator-upgraded 4-upgrade-the-operator "${object}: runs v${version} on the new CRDs, upgrade it"
     fi
   done <<<"${images}"
 }
@@ -234,7 +263,8 @@ check_stale_owner_references() {
     | .metadata.ownerReferences // [] | to_entries[]
     | select(.value.apiVersion == "aim.eai.amd.com/v1alpha1"
       and (.value.kind | IN("AIMService", "AIMModel", "AIMClusterModel")))
-    | ([{op: "replace", path: "/metadata/ownerReferences/\(.key)/apiVersion", value: "aim.eai.amd.com/v1alpha2"}]
+    | ([{op: "test", path: "/metadata/ownerReferences/\(.key)/uid", value: .value.uid},
+        {op: "replace", path: "/metadata/ownerReferences/\(.key)/apiVersion", value: "aim.eai.amd.com/v1alpha2"}]
       | tojson | @sh) as $operations
     | "is owned by v1alpha1 \(.value.kind) \(.value.name); rewrite the reference with:"
       + " \($patch) --type json -p \($operations)"' <<<"${lists}")"
@@ -244,7 +274,8 @@ check_stale_owner_references() {
     | .metadata.ownerReferences // [] | to_entries[]
     | select(.value.apiVersion == "aim.eai.amd.com/v1alpha1"
       and (.value.kind | IN("AIMServiceTemplate", "AIMClusterServiceTemplate", "AIMTemplateCache")))
-    | ([{op: "remove", path: "/metadata/ownerReferences/\(.key)"}] | tojson | @sh) as $operations
+    | ([{op: "test", path: "/metadata/ownerReferences/\(.key)/uid", value: .value.uid},
+        {op: "remove", path: "/metadata/ownerReferences/\(.key)"}] | tojson | @sh) as $operations
     | "is owned by v1alpha1 \(.value.kind) \(.value.name); delete it with its owner, or remove the reference with:"
       + " \($patch) --type json -p \($operations)"' <<<"${lists}")"
   report_template_problems stale-owner-references remove-stale-v1alpha1-owner-references "${found}"
@@ -260,22 +291,28 @@ report_dedicated_caches() {
       + " and the profile cache downloads it again. See #cache-outcomes"'
 }
 
-# The profile pipeline reads neither spec.template nor spec.overrides, so a move
-# drops what they set. Templates an AIMModel or AIMClusterModel generated only
-# copy the model, so only hand-written ones are listed. Namespaced templates
-# come first, as v0.2.7 resolves them.
+# The profile pipeline reads neither spec.template, spec.overrides nor spec.env
+# of a service, nor spec.env and spec.resources of a model, so a move drops what
+# they set. Templates an AIMModel or AIMClusterModel generated only copy the
+# model, so only hand-written ones are listed. Namespaced templates come first,
+# as v0.2.7 resolves them.
 report_template_settings() {
-  echo "${services}" | problems '
-    (select(.spec.overrides != null) | "sets spec.overrides, which the profile pipeline ignores"),
-    (. as $service
-      | [$templates[].items[] | select(.metadata.name == ($service.status.resolvedTemplate.name // $service.spec.template.name)
-          and (.metadata.namespace // $service.metadata.namespace) == $service.metadata.namespace)][0] // empty
-      | select(any(.metadata.ownerReferences[]?; .kind | IN("AIMModel", "AIMClusterModel")) | not)
-      | . as $template | [("customProfile", "env", "resources") | select($template.spec[.] != null)]
-      | select(length > 0)
-      | "its \($template.kind) \($template.metadata.name) sets \(join(", ")), which the profile pipeline ignores")' \
-    --slurpfile templates <(list aimservicetemplates.aim.eai.amd.com; list aimclusterservicetemplates.aim.eai.amd.com) \
-    | sed 's|^|INFO [template-settings] |; s|$|. See #move-template-services|'
+  {
+    echo "${services}" | problems '
+      (select(.spec.overrides != null) | "sets spec.overrides, which the profile pipeline ignores"),
+      (select(.spec.env != null) | "sets spec.env, which the profile pipeline ignores"),
+      (. as $service
+        | [$templates[].items[] | select(.metadata.name == ($service.status.resolvedTemplate.name // $service.spec.template.name)
+            and (.metadata.namespace // $service.metadata.namespace) == $service.metadata.namespace)][0] // empty
+        | select(any(.metadata.ownerReferences[]?; .kind | IN("AIMModel", "AIMClusterModel")) | not)
+        | . as $template | [("customProfile", "env", "resources") | select($template.spec[.] != null)]
+        | select(length > 0)
+        | "its \($template.kind) \($template.metadata.name) sets \(join(", ")), which the profile pipeline ignores")' \
+      --slurpfile templates <(list aimservicetemplates.aim.eai.amd.com; list aimclusterservicetemplates.aim.eai.amd.com)
+    printf '%s\n' "${models}" "${cluster_models}" | problems '. as $model
+      | [("env", "resources") | select($model.spec[.] != null) | "spec.\(.)"] | select(length > 0)
+      | "sets \(join(", ")), which the profile pipeline ignores"'
+  } | sed 's|^|INFO [template-settings] |; s|$|. See #move-template-services|'
 }
 
 run_check() {
@@ -298,23 +335,32 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
 : >"${scratch}/list-errors"
 
-# The new release's AIMService CRD stops serving v1alpha1, and the new operator
-# clears status.reconcilerPipeline, so the checks below would fail every
-# service of an upgraded cluster.
-crds="$(kubectl get customresourcedefinitions aimservices.aim.eai.amd.com "${template_crds[@]}" \
+crds="$(fetch get customresourcedefinitions aimservices.aim.eai.amd.com "${template_crds[@]}" \
   --ignore-not-found -o json)"
-if jq -e '.items[] | select(.metadata.name == "aimservices.aim.eai.amd.com")
-    | any(.spec.versions[]; .name == "v1alpha1" and .served) | not' <<<"${crds}" >/dev/null; then
-  echo "Already upgraded: the AIMService CRD no longer serves aim.eai.amd.com/v1alpha1, so there is nothing to check."
-  exit 0
-fi
 template_crds_kept="$(jq '[.items[] | select(.metadata.annotations["helm.sh/resource-policy"] == "keep")
   | .metadata.name] as $kept | all($ARGS.positional[]; IN($kept[]))' --args "${template_crds[@]}" <<<"${crds}")"
+api_resources="$(fetch api-resources -o name)"
 
-api_resources="$(kubectl api-resources -o name)"
-services="$(kubectl get aimservices.aim.eai.amd.com --all-namespaces -o json)"
-models="$(kubectl get aimmodels.aim.eai.amd.com --all-namespaces -o json)"
-cluster_models="$(kubectl get aimclustermodels.aim.eai.amd.com -o json)"
+# The new release's AIMService CRD stops serving v1alpha1, and the new operator
+# clears status.reconcilerPipeline, so the checks below would fail every
+# service of an upgraded cluster. There, only the operator version and leftover
+# template objects are checked.
+if jq -e '.items[] | select(.metadata.name == "aimservices.aim.eai.amd.com")
+    | any(.spec.versions[]; .name == "v1alpha1" and .served) | not' <<<"${crds}" >/dev/null; then
+  check_operator_upgraded
+  check_template_objects
+  report_list_errors template-objects
+  if ((failures > 0)); then
+    echo "${failures} problem(s) found after the CRDs upgrade. Sections (#...) refer to ${guide}"
+    exit 1
+  fi
+  echo "Already upgraded: the AIMService CRD no longer serves aim.eai.amd.com/v1alpha1."
+  exit 0
+fi
+
+services="$(fetch get aimservices.aim.eai.amd.com --all-namespaces -o json)"
+models="$(fetch get aimmodels.aim.eai.amd.com --all-namespaces -o json)"
+cluster_models="$(fetch get aimclustermodels.aim.eai.amd.com -o json)"
 
 echo "Sections (#...) refer to ${guide}"
 if [[ "${template_crds_kept}" == true ]]; then
@@ -333,7 +379,7 @@ report_list_errors dedicated-template-caches
 report_template_settings
 report_list_errors template-settings
 manual v1alpha1-clients update-v1alpha1-manifests "AIMService, AIMModel and AIMClusterModel stop serving\
- aim.eai.amd.com/v1alpha1: check GitOps repositories and scripts for such manifests"
+ aim.eai.amd.com/v1alpha1: check GitOps repositories, Helm releases and scripts for such manifests"
 
 if ((failures > 0)); then
   echo "${failures} blocking problem(s) found. Fix them on the current release and rerun before upgrading."
