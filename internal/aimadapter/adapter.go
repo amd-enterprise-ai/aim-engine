@@ -148,6 +148,10 @@ type State struct {
 	ParentBlocker string
 	// AdapterDiskPVCPending reports whether the adapter disk PVC is unbound.
 	AdapterDiskPVCPending bool
+	// AwaitingParentAdapterDisk reports whether the resolved parent has no adapter
+	// disk PVC yet while the service keeps using a recorded PVC this parent did
+	// not create, such as a previous base model AIMArtifact's.
+	AwaitingParentAdapterDisk bool
 	// MaxRank is the AIM_ADAPTER_MAX_RANK value resolved for the serving
 	// workload. Dynamic mode uses service/runtime configuration; static mode
 	// infers the value from the declared adapter artifacts.
@@ -386,6 +390,7 @@ func ComposeWithRuntimeConfig(
 		st.AdapterDiskPVCUID = service.Status.AdapterDiskPersistentVolumeClaimUID
 	}
 	st.AdapterDiskPVCPending = deps.AdapterDiskPVCPending
+	st.AwaitingParentAdapterDisk = awaitingParentAdapterDisk(parent, st.AdapterDiskPVC)
 	st.StorageBindingChanged = st.AdapterDiskPVC != service.Status.AdapterDiskPersistentVolumeClaim ||
 		st.AdapterDiskPVCUID != service.Status.AdapterDiskPersistentVolumeClaimUID
 
@@ -738,6 +743,14 @@ func subtreeSyncSucceeded(deps Dependencies) bool {
 	return j.OK() && j.Value != nil && utils.IsJobSucceeded(j.Value)
 }
 
+// awaitingParentAdapterDisk reports whether the parent publishes no adapter disk
+// PVC while the service uses pvc, whose name differs from the adapter disk PVC
+// the parent would create.
+func awaitingParentAdapterDisk(parent *aimv1alpha1.AIMArtifact, pvc string) bool {
+	return parent != nil && parent.Status.AdapterPersistentVolumeClaim == "" &&
+		pvc != "" && pvc != aimartifact.GenerateAdapterPvcName(parent)
+}
+
 // stagedOnCurrentBinding reports whether status records the adapter as
 // Downloaded on the binding resolved this cycle.
 func stagedOnCurrentBinding(service *aimv1alpha2.AIMService, st State, name string) bool {
@@ -841,6 +854,12 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 		health.Message = fmt.Sprintf("Moving to adapter disk PVC %s once its adapters are staged (%d/%d); "+
 			"serving adapters from PVC %s until then", st.AdapterDiskPVC, countDownloaded(st.Adapters), numAdapters,
 			st.HeldAdapterDiskPVC)
+		if st.AdapterDiskPVCPending {
+			health.Message += fmt.Sprintf("; waiting for PVC %s to bind; %s", st.AdapterDiskPVC, pendingAdapterDiskHint)
+			if st.ParentBlocker != "" {
+				health.Message += fmt.Sprintf("; AIMArtifact %s: %s", st.ParentName, st.ParentBlocker)
+			}
+		}
 		return health
 	}
 
@@ -849,8 +868,7 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 		health.Reason = ReasonSubtreeProvisioning
 		health.Message = "Provisioning the service adapter subtree"
 		if st.AdapterDiskPVCPending {
-			health.Message = fmt.Sprintf("Waiting for adapter disk PVC %s to bind; if it stays Pending, "+
-				"check that its storage class supports ReadWriteMany (see the PVC's events)", st.AdapterDiskPVC)
+			health.Message = fmt.Sprintf("Waiting for adapter disk PVC %s to bind; %s", st.AdapterDiskPVC, pendingAdapterDiskHint)
 		}
 		return health
 	}
@@ -858,7 +876,15 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 	// Subtree is mountable. Report Ready regardless of download progress so the
 	// base model can serve; surface staging progress in the message only.
 	health.State = constants.AIMStatusReady
-	if numAdapters == 0 {
+	if st.AwaitingParentAdapterDisk {
+		health.Reason = ReasonStaging
+		progress := "no adapters declared"
+		if numAdapters > 0 {
+			progress = fmt.Sprintf("%d/%d adapter(s) staged", countDownloaded(st.Adapters), numAdapters)
+		}
+		health.Message = fmt.Sprintf("Keeping previous adapter disk PVC %s mounted (%s). %s",
+			st.AdapterDiskPVC, progress, parentLacksDiskMessage(st))
+	} else if numAdapters == 0 {
 		health.Reason = ReasonStaged
 		health.Message = "Adapter subtree ready; no adapters declared"
 	} else if st.AllStaged {
@@ -871,6 +897,9 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 	}
 	return health
 }
+
+const pendingAdapterDiskHint = "if it stays Pending, check that its storage class supports ReadWriteMany " +
+	"(see the PVC's events)"
 
 func parentLacksDiskMessage(st State) string {
 	var msg string

@@ -181,7 +181,11 @@ artifact with a new UID-derived adapter PVC re-runs the sync and staging on the
 new disk. The InferenceService keeps mounting the previous disk until every
 adapter whose `AIMArtifact` is `Ready` is staged on the new one, unless the
 previous PVC is gone; until then the `AdaptersReady` message names both PVCs and
-`status.adapters` describes the new disk. Staging Jobs run asynchronously and
+`status.adapters` describes the new disk. While the new base model `AIMArtifact`
+has no adapter disk PVC yet, the service keeps the previous disk mounted, and
+the `AdaptersReady` message says what that `AIMArtifact` is waiting for,
+including its `DependenciesReachable` message, such as a `ResourceQuota`
+rejecting the PVC. Staging Jobs run asynchronously and
 the runtime hot-loads each adapter as it lands. A staged adapter stays
 `Downloaded` after its finished staging Job is cleaned up, so it is not staged
 again. The controller sets `AIM_ADAPTER_SOURCE` to the mount path
@@ -322,7 +326,7 @@ status:
 | `ParentLacksAdapterDisk` | The base model `AIMArtifact` has not resolved yet, has no `spec.adapterDisk` yet, or has not created its adapter disk PVC yet. Once the `AIMArtifact` resolves, the message names it and includes its `DependenciesReachable` message when that is `False` (`Progressing`). |
 | `AdapterSubtreeProvisioning` | The per-service subtree is being created; the ISVC is gated on this. The message says when the adapter disk PVC is still `Pending` (`Progressing`). |
 | `AdapterConfigInvalid` | Multiple model sources, an incompatible model ID, an exact-parent mismatch, a duplicate adapter path, or a non-adapter artifact was referenced (`Failed`, blocks the ISVC). |
-| `AdaptersStaging` | The subtree is ready but one or more adapters are not `Downloaded` (`Ready` aggregate condition). Dynamic serving continues; static ISVC creation remains gated. |
+| `AdaptersStaging` | The subtree is ready but one or more adapters are not `Downloaded` (`Ready` aggregate condition). Dynamic serving continues; static ISVC creation remains gated. Also reported while the service moves to a new adapter disk PVC and keeps the previous one mounted; the message names the PVC still mounted. |
 | `AdaptersStaged` | All declared adapters are staged (`Ready`). |
 
 ### Service stays at `AdaptersReady=False`
@@ -355,6 +359,11 @@ kubectl get pvc <adapter-pvc-name> -n <namespace>
   that supports `ReadWriteMany` on the runtime config the `AIMArtifact` uses,
   then delete the `Pending` PVC. The `AIMArtifact` recreates it with the new
   class; the base model is not downloaded again.
+
+A service moving from a previous adapter disk stays at `AdaptersReady=True`
+with `AdaptersStaging` in these cases instead: its message names the PVC it
+keeps mounted, then the same causes, including a new PVC that is still
+`Pending`.
 
 ## Reclaim
 

@@ -48,6 +48,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimartifact"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 )
 
@@ -977,6 +978,50 @@ func TestHealthStates(t *testing.T) {
 			t.Errorf("got reason=%q message=%q, want %s naming the pending PVC", h.Reason, h.Message, ReasonSubtreeProvisioning)
 		}
 	})
+	t.Run("held move names a pending PVC and the parent's blocker", func(t *testing.T) {
+		for _, tc := range []struct {
+			name        string
+			pending     bool
+			wantMessage []string
+			denyMessage []string
+		}{
+			{
+				name:    "pending",
+				pending: true,
+				wantMessage: []string{
+					"serving adapters from PVC old-pvc", "waiting for PVC new-pvc to bind", "ReadWriteMany",
+					"AIMArtifact base: exceeded quota: storage",
+				},
+			},
+			{
+				name:        "bound",
+				wantMessage: []string{"serving adapters from PVC old-pvc"},
+				denyMessage: []string{"to bind", "ReadWriteMany", "AIMArtifact base:"},
+			},
+		} {
+			h := Health(State{
+				AdapterDiskPVC:        "new-pvc",
+				AdapterDiskPVCUID:     "uid",
+				AdapterDiskPVCPending: tc.pending,
+				HeldAdapterDiskPVC:    "old-pvc",
+				ParentName:            "base",
+				ParentBlocker:         "exceeded quota: storage",
+			}, 1)
+			if h.State != constants.AIMStatusReady || h.Reason != ReasonStaging {
+				t.Errorf("%s: got state=%q reason=%q, want Ready/%s", tc.name, h.State, h.Reason, ReasonStaging)
+			}
+			for _, want := range tc.wantMessage {
+				if !strings.Contains(h.Message, want) {
+					t.Errorf("%s: message %q does not contain %q", tc.name, h.Message, want)
+				}
+			}
+			for _, deny := range tc.denyMessage {
+				if strings.Contains(h.Message, deny) {
+					t.Errorf("%s: message %q unexpectedly contains %q", tc.name, h.Message, deny)
+				}
+			}
+		}
+	})
 	t.Run("ready while staging once subtree exists", func(t *testing.T) {
 		st := State{
 			AdapterDiskPVC:    "pvc",
@@ -1308,6 +1353,228 @@ func TestFetchAndComposeReportAdapterDiskBlockers(t *testing.T) {
 					st.ParentBlocker, st.AdapterDiskPVCPending, tt.wantBlocker, tt.wantPending)
 			}
 		})
+	}
+}
+
+// While the resolved parent publishes no adapter disk PVC, the service keeps the
+// recorded one mounted. When that PVC belongs to another artifact, the service
+// stays Ready on it and says what the parent is waiting for.
+func TestFetchAndComposeReportParentWithoutAdapterDisk(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register core API: %v", err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register batch API: %v", err)
+	}
+	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register AIM API: %v", err)
+	}
+
+	newParent := func(disk bool, blocker string) *aimv1alpha1.AIMArtifact {
+		parent := modelParent("")
+		parent.UID = "replacement-uid"
+		if disk {
+			parent.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+		}
+		if blocker != "" {
+			parent.Status.Conditions = []metav1.Condition{{
+				Type:    controllerutils.ConditionTypeDependenciesReachable,
+				Status:  metav1.ConditionFalse,
+				Reason:  "Test",
+				Message: blocker,
+			}}
+		}
+		return parent
+	}
+	publishing := newParent(true, "")
+	publishing.Status.AdapterPersistentVolumeClaim = testOldAdapterPVC
+	previous := newParent(true, "")
+	previous.UID = "previous-uid"
+	partial := serviceWithAdapters("lora-a", "lora-b")
+	partial.Spec.AdapterMode = aimv1alpha1.AdapterModeDynamic
+	keptMounted := "Keeping previous adapter disk PVC " + testOldAdapterPVC + " mounted"
+	for _, tt := range []struct {
+		name         string
+		parent       *aimv1alpha1.AIMArtifact
+		recorded     string
+		service      *aimv1alpha2.AIMService
+		wantAwaiting bool
+		wantMessage  []string
+	}{
+		{
+			name:         "adapter disk PVC rejected",
+			parent:       newParent(true, "exceeded quota: storage"),
+			wantAwaiting: true,
+			wantMessage: []string{
+				keptMounted + " (1/1 adapter(s) staged). " +
+					"Waiting for base model AIMArtifact base to create its adapter disk PVC; " +
+					"AIMArtifact base: exceeded quota: storage",
+			},
+		},
+		{
+			name:         "no adapter disk declared yet",
+			parent:       newParent(false, ""),
+			wantAwaiting: true,
+			wantMessage:  []string{keptMounted, "Waiting for base model AIMArtifact base to get spec.adapterDisk"},
+		},
+		{
+			name:         "same-name parent recreated",
+			parent:       newParent(true, ""),
+			recorded:     aimartifact.GenerateAdapterPvcName(previous),
+			wantAwaiting: true,
+			wantMessage:  []string{"Keeping previous adapter disk PVC " + aimartifact.GenerateAdapterPvcName(previous) + " mounted"},
+		},
+		{
+			name:         "partially staged",
+			parent:       newParent(true, ""),
+			service:      partial,
+			wantAwaiting: true,
+			wantMessage:  []string{keptMounted + " (1/2 adapter(s) staged)"},
+		},
+		{
+			name:         "no adapters declared",
+			parent:       newParent(true, ""),
+			service:      dynamicService(),
+			wantAwaiting: true,
+			wantMessage:  []string{keptMounted + " (no adapters declared)"},
+		},
+		{
+			name:        "recorded PVC is the parent's own",
+			parent:      newParent(true, ""),
+			recorded:    aimartifact.GenerateAdapterPvcName(newParent(true, "")),
+			wantMessage: []string{"All 1 adapter(s) staged"},
+		},
+		{
+			name:        "parent publishes the recorded PVC",
+			parent:      publishing,
+			wantMessage: []string{"All 1 adapter(s) staged"},
+		},
+		{
+			name:        "parent not resolved",
+			wantMessage: []string{"All 1 adapter(s) staged"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			recorded := testOldAdapterPVC
+			if tt.recorded != "" {
+				recorded = tt.recorded
+			}
+			svc := tt.service
+			if svc == nil {
+				svc = serviceWithAdapters("lora-a")
+			}
+			svc.Status.AdapterDiskPersistentVolumeClaim = recorded
+			svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
+			svc.Status.AdapterSubtreeSyncKey = desiredAdapterKey(svc, recorded, testOldAdapterPVCUID)
+			if len(svc.Spec.Adapters) > 0 {
+				svc.Status.Adapters = []aimv1alpha1.AIMServiceAdapterStatus{statusAdapter("lora-a")}
+			}
+
+			objects := []client.Object{
+				adapterArtifact("lora-a", "base"),
+				adapterArtifact("lora-b", "base"),
+				&corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{Name: recorded, Namespace: "default", UID: types.UID(testOldAdapterPVCUID)},
+					Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+				},
+			}
+			var ref ParentRef
+			if tt.parent != nil {
+				objects = append(objects, tt.parent)
+				ref = ParentRef{Name: tt.parent.Name, UID: tt.parent.UID}
+			}
+			c := fakeclient.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+
+			st := Compose(svc, Fetch(context.Background(), c, svc, ref))
+			if st.AwaitingParentAdapterDisk != tt.wantAwaiting {
+				t.Errorf("AwaitingParentAdapterDisk = %v, want %v", st.AwaitingParentAdapterDisk, tt.wantAwaiting)
+			}
+			if st.MountedAdapterDiskPVC() != recorded || PreserveExistingMount(svc, st) || !st.Ready {
+				t.Fatalf("mounted = %q, preserve = %v, ready = %v; want the ISVC ready on %s",
+					st.MountedAdapterDiskPVC(), PreserveExistingMount(svc, st), st.Ready, recorded)
+			}
+			status := svc.Status.DeepCopy()
+			DecorateStatus(status, st)
+			if status.AdapterDiskPersistentVolumeClaim != recorded || status.AdapterDiskPersistentVolumeClaimUID != testOldAdapterPVCUID {
+				t.Errorf("recorded adapter disk = %s (%s), want %s (%s)", status.AdapterDiskPersistentVolumeClaim,
+					status.AdapterDiskPersistentVolumeClaimUID, recorded, testOldAdapterPVCUID)
+			}
+			health := Health(st, len(svc.Spec.Adapters))
+			wantReason := ReasonStaged
+			if tt.wantAwaiting {
+				wantReason = ReasonStaging
+			}
+			if health.State != constants.AIMStatusReady || health.Reason != wantReason {
+				t.Errorf("health = %s/%s, want Ready/%s", health.State, health.Reason, wantReason)
+			}
+			for _, want := range tt.wantMessage {
+				if !strings.Contains(health.Message, want) {
+					t.Errorf("health message %q does not contain %q", health.Message, want)
+				}
+			}
+		})
+	}
+}
+
+// A move to a parent's adapter disk PVC that stays Pending holds on the recorded
+// disk, and the service says the new PVC is unbound and why.
+func TestFetchAndComposeHoldsMoveToPendingAdapterDisk(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register core API: %v", err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register batch API: %v", err)
+	}
+	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register AIM API: %v", err)
+	}
+
+	svc := serviceWithAdapters("lora-a")
+	svc.Status.AdapterDiskPersistentVolumeClaim = testOldAdapterPVC
+	svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
+	svc.Status.AdapterSubtreeSyncKey = desiredAdapterKey(svc, testOldAdapterPVC, testOldAdapterPVCUID)
+	svc.Status.Adapters = []aimv1alpha1.AIMServiceAdapterStatus{statusAdapter("lora-a")}
+
+	parent := modelParent(testNewAdapterPVC)
+	parent.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+	parent.Status.Conditions = []metav1.Condition{{
+		Type:    controllerutils.ConditionTypeDependenciesReachable,
+		Status:  metav1.ConditionFalse,
+		Reason:  "Test",
+		Message: "waiting for adapter disk PVC to bind",
+	}}
+	c := fakeclient.NewClientBuilder().WithScheme(scheme).WithObjects(
+		parent,
+		adapterArtifact("lora-a", "base"),
+		&corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: testOldAdapterPVC, Namespace: "default", UID: types.UID(testOldAdapterPVCUID)},
+			Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+		},
+		&corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: testNewAdapterPVC, Namespace: "default", UID: types.UID(testNewAdapterPVCUID)},
+			Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+		},
+	).Build()
+
+	st := Compose(svc, Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name}))
+	if st.HeldAdapterDiskPVC != testOldAdapterPVC || !st.AdapterDiskPVCPending || st.MountedAdapterDiskPVC() != testOldAdapterPVC {
+		t.Fatalf("held = %q, pending = %v, mounted = %q; want the move held on %s with %s pending",
+			st.HeldAdapterDiskPVC, st.AdapterDiskPVCPending, st.MountedAdapterDiskPVC(), testOldAdapterPVC, testNewAdapterPVC)
+	}
+	health := Health(st, len(svc.Spec.Adapters))
+	if health.State != constants.AIMStatusReady || health.Reason != ReasonStaging {
+		t.Errorf("health = %s/%s, want Ready/%s", health.State, health.Reason, ReasonStaging)
+	}
+	for _, want := range []string{
+		"serving adapters from PVC " + testOldAdapterPVC,
+		"waiting for PVC " + testNewAdapterPVC + " to bind", "ReadWriteMany",
+		"AIMArtifact base: waiting for adapter disk PVC to bind",
+	} {
+		if !strings.Contains(health.Message, want) {
+			t.Errorf("health message %q does not contain %q", health.Message, want)
+		}
 	}
 }
 
