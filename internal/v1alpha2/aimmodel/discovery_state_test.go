@@ -40,22 +40,22 @@ import (
 )
 
 // runningDiscoveryJob returns inputs after one started attempt and the Job
-// that attempt created for image.
+// that attempt created for image, in the same whole second.
 func runningDiscoveryJob(image string) (DiscoveryInputs, *batchv1.Job) {
 	specHash := ComputeDiscoverySpecHash(image, nil, "", DiscoveryCommandVersion)
 	owner := metav1.OwnerReference{
 		APIVersion: "aim.eai.amd.com/v1alpha2", Kind: "AIMModel", Name: "dummy", UID: "model-uid", Controller: ptr.To(true),
 	}
+	attempt := metav1.NewTime(time.Now().Add(-time.Minute).Truncate(time.Second))
 	in := DiscoveryInputs{
 		Kind: DiscoveryKindAIMModel, ModelName: "dummy", ModelUID: "model-uid", Namespace: "team-a", Image: image, OwnerRef: owner,
-		CurrentState: &aimv1alpha1.ModelDiscoveryState{
-			Attempts: 1, LastAttemptTime: &metav1.Time{Time: time.Now().Add(-time.Minute)}, SpecHash: specHash,
-		},
+		CurrentState: &aimv1alpha1.ModelDiscoveryState{Attempts: 1, LastAttemptTime: &attempt, SpecHash: specHash},
 	}
 	job := BuildDiscoveryJob(DiscoveryJobSpec{
 		ModelName: "dummy", ModelUID: "model-uid", Namespace: "team-a", Image: image,
 		SpecHash: specHash, OwnerRef: owner, Kind: DiscoveryKindAIMModel,
 	})
+	job.CreationTimestamp = attempt
 	return in, job
 }
 
@@ -179,6 +179,27 @@ func TestDecideDiscovery_JobPastItsDeadlineBacksOff(t *testing.T) {
 	if next.DesiredJob != nil || next.Reason != reasonAwaitingDiscovery ||
 		next.RequeueAfter > backoff || next.RequeueAfter < backoff-time.Second || !strings.Contains(next.Message, deadlineMessage) {
 		t.Fatalf("next decision = %+v, want AwaitingDiscovery for about %v naming the deadline", next, backoff)
+	}
+}
+
+func TestDecideDiscovery_CountsAFailedJobOnce(t *testing.T) {
+	t.Parallel()
+
+	in, job := runningDiscoveryJob("docker.io/amdenterpriseai/aim-dummy:0.2.0")
+	job.Status.Conditions = []batchv1.JobCondition{{
+		Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "too many retries",
+	}}
+	fetch := DiscoveryFetch{Job: controllerutils.FetchResult[*batchv1.Job]{Value: job}}
+
+	first := DecideDiscovery(context.Background(), nil, in, fetch)
+	// The status write re-enqueues the model while the cache still has the deleted Job.
+	in.CurrentState = first.State
+	second := DecideDiscovery(context.Background(), nil, in, fetch)
+
+	if first.State.Attempts != 2 || second.State.Attempts != 2 ||
+		!second.State.LastAttemptTime.Equal(first.State.LastAttemptTime) {
+		t.Fatalf("attempts %d then %d (last attempt %v then %v), want the failure counted once",
+			first.State.Attempts, second.State.Attempts, first.State.LastAttemptTime, second.State.LastAttemptTime)
 	}
 }
 

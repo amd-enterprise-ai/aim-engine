@@ -191,9 +191,7 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 				if pullErr.Message != "" {
 					failure += ": " + pullErr.Message
 				}
-				nextState.Attempts++
-				nextState.LastAttemptTime = nowPtr()
-				nextState.LastFailureReason = failure
+				recordDiscoveryFailure(nextState, job, failure)
 				return DiscoveryDecision{
 					State:                nextState,
 					CompletedJobToDelete: job,
@@ -217,9 +215,7 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 			// Pod logs should be available. Parse them and produce a cache.
 			cm, parseErr := buildCacheFromJob(ctx, c, in, job, specHash)
 			if parseErr != nil {
-				nextState.Attempts++
-				nextState.LastAttemptTime = nowPtr()
-				nextState.LastFailureReason = "LogParseFailed"
+				recordDiscoveryFailure(nextState, job, "LogParseFailed")
 				logger.Error(parseErr, "failed to parse discovery logs", "job", job.Name)
 				return DiscoveryDecision{
 					State:                nextState,
@@ -257,9 +253,7 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 
 		// Job failed: record the reason, bump attempts, let backoff gate the retry.
 		reason := GetDiscoveryJobFailureReason(job)
-		nextState.Attempts++
-		nextState.LastAttemptTime = nowPtr()
-		nextState.LastFailureReason = reason
+		recordDiscoveryFailure(nextState, job, reason)
 		return DiscoveryDecision{
 			State:                nextState,
 			CompletedJobToDelete: job,
@@ -382,6 +376,19 @@ func buildCacheFromJob(ctx context.Context, c client.Client, in DiscoveryInputs,
 		return nil, err
 	}
 	return cm, nil
+}
+
+// recordDiscoveryFailure counts the failure of job toward the backoff once.
+// The status write re-enqueues the model, and a reconcile that still sees the
+// deleted Job must not count it again: counting moves LastAttemptTime past the
+// Job's creation. Both times are stored in whole seconds, so a Job created in
+// the same second as the attempt that started it still counts.
+func recordDiscoveryFailure(state *aimv1alpha1.ModelDiscoveryState, job *batchv1.Job, reason string) {
+	if state.LastAttemptTime == nil || !state.LastAttemptTime.After(job.CreationTimestamp.Time) {
+		state.Attempts++
+		state.LastAttemptTime = nowPtr()
+	}
+	state.LastFailureReason = reason
 }
 
 func cloneOrNewDiscoveryState(in *aimv1alpha1.ModelDiscoveryState) *aimv1alpha1.ModelDiscoveryState {
