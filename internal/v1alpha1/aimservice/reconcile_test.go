@@ -24,6 +24,7 @@ package aimservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -2076,6 +2077,7 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 		reason        string
 		generationLag bool
 		pods          *corev1.PodList
+		podsErr       error
 		wantState     constants.AIMStatus
 		wantReason    string
 		wantInMessage string
@@ -2134,6 +2136,16 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
 			wantInMessage: refusal,
 		},
+		// An active pod next to the error makes the test fail if the error is ignored.
+		{
+			name:          "a failed pod-list fetch still reports PodCreationFailed",
+			reason:        "FailedCreate",
+			pods:          podsInPhase(corev1.PodPending, false),
+			podsErr:       errors.New("pod list failed"),
+			wantState:     constants.AIMStatusFailed,
+			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
+			wantInMessage: refusal,
+		},
 		{
 			name:       "a predictor that is only starting is not a failure",
 			reason:     "MinimumReplicasUnavailable",
@@ -2150,7 +2162,7 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 			}
 			fetch := ServiceFetchResult{
 				inferenceService:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: isvc},
-				inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{Value: tt.pods},
+				inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{Value: tt.pods, Error: tt.podsErr},
 			}
 
 			health := fetch.getInferenceServiceHealth()
@@ -2166,6 +2178,46 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 				t.Errorf("errors = %v, want none: an error category would block applying a fixed spec", health.Errors)
 			}
 		})
+	}
+}
+
+func TestGetInferenceServiceHealth_ScaleToZeroWithFailedCreate(t *testing.T) {
+	const refusal = `pods "svc-predictor-6d8f-abcde" is forbidden: exceeded quota`
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: testNamespace},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			MinReplicas: ptr.To(int32(0)),
+			MaxReplicas: ptr.To(int32(3)),
+		},
+	}
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service:              service,
+			inferenceService:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: predictorNotReadyISVC("svc", "FailedCreate", refusal)},
+			inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{}},
+			hpa:                  controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{Value: hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled)},
+		},
+	}
+
+	isvcHealth := obs.getInferenceServiceHealth()
+	if isvcHealth.State != constants.AIMStatusFailed ||
+		isvcHealth.Reason != aimv1alpha1.AIMServiceReasonPodCreationFailed {
+		t.Fatalf("InferenceService = %s/%s, want Failed/PodCreationFailed", isvcHealth.State, isvcHealth.Reason)
+	}
+	if !strings.Contains(isvcHealth.Message, refusal) {
+		t.Errorf("InferenceService message = %q, want it to contain %q", isvcHealth.Message, refusal)
+	}
+
+	podsHealth, ok := inferenceServicePodsHealth(context.Background(), nil, service, obs.hpa, obs.inferenceServicePods)
+	if !ok || podsHealth.State != constants.AIMStatusReady ||
+		podsHealth.Reason != aimv1alpha1.AIMServiceReasonScaledToZero {
+		t.Errorf("InferenceServicePods = (%v, %s/%s), want (true, Ready/ScaledToZero)", ok, podsHealth.State, podsHealth.Reason)
+	}
+
+	hpaHealth := obs.getHPAHealth()
+	if hpaHealth.State != constants.AIMStatusReady ||
+		hpaHealth.Reason != aimv1alpha1.AIMServiceReasonScaledToZero {
+		t.Errorf("HPA = %s/%s, want Ready/ScaledToZero", hpaHealth.State, hpaHealth.Reason)
 	}
 }
 
