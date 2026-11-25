@@ -258,10 +258,11 @@ func buildDownloadJob(
 					RestartPolicy: corev1.RestartPolicyNever,
 					Tolerations:   aimruntimeconfig.Tolerations(runtimeConfigSpec),
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    ptr.To(int64(1000)), // kserve storage-initializer user
-						RunAsGroup:   ptr.To(int64(1000)),
-						FSGroup:      ptr.To(int64(1000)), // Ensures volume ownership matches user
-						RunAsNonRoot: ptr.To(true),
+						RunAsUser:      ptr.To(int64(1000)), // kserve storage-initializer user
+						RunAsGroup:     ptr.To(int64(1000)),
+						FSGroup:        ptr.To(int64(1000)), // Ensures volume ownership matches user
+						RunAsNonRoot:   ptr.To(true),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					ImagePullSecrets: mc.Spec.ImagePullSecrets,
 					Volumes:          volumes,
@@ -270,13 +271,10 @@ func buildDownloadJob(
 							Name:            "model-download",
 							Image:           downloadImage,
 							ImagePullPolicy: pullPolicyForImage(downloadImage),
-							SecurityContext: &corev1.SecurityContext{
-								RunAsUser:  ptr.To(int64(1000)),
-								RunAsGroup: ptr.To(int64(1000)),
-							},
-							Env:          s3Settings.Env,
-							Args:         []string{mc.Spec.SourceURI},
-							VolumeMounts: volumeMounts,
+							SecurityContext: utils.RestrictedContainerSecurityContext(),
+							Env:             s3Settings.Env,
+							Args:            []string{mc.Spec.SourceURI},
+							VolumeMounts:    volumeMounts,
 						},
 					},
 				},
@@ -352,9 +350,10 @@ func buildCheckSizeJob(
 					RestartPolicy: corev1.RestartPolicyNever,
 					Tolerations:   aimruntimeconfig.Tolerations(runtimeConfigSpec),
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    ptr.To(int64(1000)),
-						RunAsGroup:   ptr.To(int64(1000)),
-						RunAsNonRoot: ptr.To(true),
+						RunAsUser:      ptr.To(int64(1000)),
+						RunAsGroup:     ptr.To(int64(1000)),
+						RunAsNonRoot:   ptr.To(true),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					ImagePullSecrets: mc.Spec.ImagePullSecrets,
 					Volumes:          s3Settings.Volumes,
@@ -363,6 +362,7 @@ func buildCheckSizeJob(
 							Name:            "check-size",
 							Image:           downloadImage,
 							ImagePullPolicy: pullPolicyForImage(downloadImage),
+							SecurityContext: utils.RestrictedContainerSecurityContext(),
 							Command:         []string{"/check-size.sh"},
 							Args:            []string{mc.Spec.SourceURI},
 							Env:             s3Settings.Env,

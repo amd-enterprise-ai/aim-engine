@@ -39,6 +39,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	discoverylock "github.com/amd-enterprise-ai/aim-engine/internal/discovery/lock"
+	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
 )
 
 func TestBuildDiscoveryJob_HasRequiredLabelsAndSpec(t *testing.T) {
@@ -112,6 +113,28 @@ func TestBuildDiscoveryJob_HasRequiredLabelsAndSpec(t *testing.T) {
 	}
 	if podSpec.ServiceAccountName != "aim-discovery" {
 		t.Fatalf("serviceAccount = %q, want aim-discovery", podSpec.ServiceAccountName)
+	}
+}
+
+func TestBuildDiscoveryJob_PassesRestrictedPodSecurity(t *testing.T) {
+	t.Parallel()
+
+	job := BuildDiscoveryJob(DiscoveryJobSpec{
+		ModelName: "qwen",
+		Namespace: "team-a",
+		Image:     "docker.io/amdenterpriseai/aim-qwen:0.10.0",
+		SpecHash:  "abcdef1234567890",
+		Kind:      DiscoveryKindAIMModel,
+	})
+
+	podSpec := job.Spec.Template.Spec
+	if violations := testutil.RestrictedPodSecurityViolations(t, podSpec); len(violations) > 0 {
+		t.Errorf("discovery Job breaks Pod Security restricted: %q", violations)
+	}
+	// AIM images run as root by default. The kubelet refuses runAsNonRoot
+	// without a non-root UID, so the Job must set one.
+	if podSpec.SecurityContext == nil || podSpec.SecurityContext.RunAsUser == nil || *podSpec.SecurityContext.RunAsUser == 0 {
+		t.Errorf("pod security context = %#v, want a non-root runAsUser", podSpec.SecurityContext)
 	}
 }
 
