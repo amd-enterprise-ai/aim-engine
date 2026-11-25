@@ -1625,10 +1625,12 @@ func planProfileCache(
 	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
 
 	// Download-auth env, merged in increasing precedence:
-	//  1. profile caching.env  - namespace-scoped profiles only; nil for
-	//     cluster profiles (no caching field) and per-service overlays.
+	//  1. profile caching.env  - from the fetched namespace AIMProfile. For an
+	//     overlay that is the seed profile, as obs.profile is not switched to
+	//     the overlay; the overlay AIMProfile itself has no caching field.
+	//     Cluster profiles have no caching field either.
 	//  2. service caching.env  - scope-agnostic, per-service. This is the
-	//     path that reaches the download Job for cluster/overlay profiles.
+	//     only per-service path for cluster profiles.
 	// Service wins on conflicting names. Empty leaves the profile cache
 	// controller on its own defaults.
 	var cacheEnv []corev1.EnvVar

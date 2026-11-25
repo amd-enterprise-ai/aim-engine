@@ -1803,7 +1803,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `mode` _[AIMCachingMode](#aimcachingmode)_ | Mode controls when to use caching. Canonical values:<br />- Shared (default): reuse/create shared cache assets<br />- Dedicated: create service-owned dedicated cache assets<br />Legacy values are accepted and normalized:<br />- Always -> Shared<br />- Auto -> Shared<br />- Never -> Dedicated | Shared | Enum: [Dedicated Shared Auto Always Never] <br />Optional: \{\} |
-| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env supplies credentials for model downloads (for example a HuggingFace token via secretKeyRef). Unlike the inference container env, these variables reach only the model-download Job, so download-only secrets are never injected into the serving container. They are also reachable for cluster-scoped and overlay profiles, where the profile's own caching.env does not exist. Merged over the profile's caching.env (service wins). |  | Optional: \{\} |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env supplies credentials for model downloads (for example a HuggingFace token via secretKeyRef). Unlike the inference container env, these variables reach only the model download Jobs, so download-only secrets are never injected into the serving container. Merged over the AIMProfile or template caching.env (service wins); with spec.profileOverrides the AIMProfile is the seed profile. A cluster-scoped profile has no caching.env, so this is its only per-service download env. |  | Optional: \{\} |
 
 
 #### AIMServiceList

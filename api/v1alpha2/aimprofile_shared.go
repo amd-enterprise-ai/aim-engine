@@ -296,8 +296,10 @@ type AIMProfileCachingConfig struct {
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled,omitempty"`
 
-	// Env specifies environment variables for model download during caching.
-	// If not set, falls back to the profile's ContainerEnv.
+	// Env specifies environment variables for the model download Jobs of this
+	// profile's caches, not for the inference container. The AIMService
+	// spec.caching.env and the model source env win over it, and it wins over
+	// the runtime config spec.caching.env.
 	// +optional
 	// +listType=map
 	// +listMapKey=name

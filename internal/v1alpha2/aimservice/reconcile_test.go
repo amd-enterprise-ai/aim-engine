@@ -2782,9 +2782,9 @@ func TestPlanProfileCache_CreatesSharedCache(t *testing.T) {
 }
 
 // TestPlanProfileCache_ServiceCachingEnvReachesCache locks the regression fix:
-// for a cluster-scoped (or overlay) profile there is no profile caching.env, so
-// the service's spec.caching.env is the only credential source that reaches the
-// download Job. obs.profile.Value is nil here to model the cluster-scoped path.
+// a cluster-scoped profile has no caching.env, so the service's
+// spec.caching.env is the only credential source that reaches the download
+// Job. obs.profile.Value is nil here to model the cluster-scoped path.
 func TestPlanProfileCache_ServiceCachingEnvReachesCache(t *testing.T) {
 	token := corev1.EnvVar{
 		Name: "HF_TOKEN",
@@ -2873,6 +2873,89 @@ func TestPlanProfileCache_ServiceCachingEnvOverridesProfile(t *testing.T) {
 	}
 	if got["PROFILE_ONLY"] != "profile-only-val" {
 		t.Errorf("profile-only caching.env key must be preserved, got %q", got["PROFILE_ONLY"])
+	}
+}
+
+// TestPlanProfileCache_OverlayUsesSeedProfileCachingEnv pins that the cache of
+// a service overlay gets the caching.env of a namespace seed profile, under the
+// service spec.caching.env. The overlay AIMProfile itself has no caching
+// field, and a cluster seed has none either.
+func TestPlanProfileCache_OverlayUsesSeedProfileCachingEnv(t *testing.T) {
+	seedSpec := profileSpecWithModelSources()
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
+				ContainerEnv: []corev1.EnvVar{{Name: "HOME", Value: "/tmp"}},
+			},
+			Caching: &aimv1alpha1.AIMServiceCachingConfig{
+				Env: []corev1.EnvVar{{Name: "HF_TOKEN", Value: "from-service"}},
+			},
+		},
+	}
+	tests := []struct {
+		name  string
+		fetch ServiceFetchResult
+		want  map[string]string
+	}{
+		{
+			name: "namespace seed profile",
+			fetch: ServiceFetchResult{
+				service: service,
+				profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: &aimv1alpha2.AIMProfile{
+					ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
+					Spec: aimv1alpha2.AIMProfileSpec{
+						AIMProfileSpecCommon: *seedSpec,
+						Caching: &aimv1alpha2.AIMProfileCachingConfig{Env: []corev1.EnvVar{
+							{Name: "HF_TOKEN", Value: "from-profile"},
+							{Name: "HF_ENDPOINT", Value: "https://huggingface.example.com"},
+						}},
+					},
+				}},
+			},
+			want: map[string]string{
+				"HF_TOKEN":    "from-service",
+				"HF_ENDPOINT": "https://huggingface.example.com",
+			},
+		},
+		{
+			name: "cluster seed profile",
+			fetch: ServiceFetchResult{
+				service: service,
+				clusterProfile: controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{Value: &aimv1alpha2.AIMClusterProfile{
+					ObjectMeta: metav1.ObjectMeta{Name: testProfileA},
+					Spec:       aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: *seedSpec},
+				}},
+			},
+			want: map[string]string{"HF_TOKEN": "from-service"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obs := (&ProfileServiceReconciler{}).ComposeState(
+				context.Background(),
+				controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+				tt.fetch,
+			)
+			if obs.configErr != nil {
+				t.Fatalf("ComposeState: %v", obs.configErr)
+			}
+			if obs.desiredOverlayProfile == nil || obs.desiredOverlayProfile.Spec.Caching != nil {
+				t.Fatalf("want an overlay profile without a caching field, got %+v", obs.desiredOverlayProfile)
+			}
+
+			cache := planProfileCache(service, obs)
+			if cache == nil {
+				t.Fatalf("expected profile cache to be planned")
+			}
+			if cache.Spec.ProfileName != obs.desiredOverlayProfile.Name {
+				t.Errorf("cache profile = %q, want the overlay %q", cache.Spec.ProfileName, obs.desiredOverlayProfile.Name)
+			}
+			if got := envMap(cache.Spec.Env); !equality.Semantic.DeepEqual(got, tt.want) {
+				t.Errorf("cache env = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

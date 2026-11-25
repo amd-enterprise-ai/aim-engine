@@ -49,7 +49,14 @@ The cache and its artifacts persist independently of any single service. When a 
 The deduplication boundary is per-namespace:
 
 - The cache controller finds an existing shared `AIMProfileCache` for the same profile and reuses it (no new cache resource).
-- If a new cache is created, the artifact controller finds existing shared `AIMArtifact`s for the same `sourceUri` (+ storage class + downloader env) and reuses them. The artifact's `downloadFilter` must also select the same files as the model source's: an artifact with no filter serves a source with no filter, and equal filters match regardless of glob order. An artifact with `downloadFilter: {}` holds the whole repository and serves any source with the same `sourceUri`.
+- If a new cache is created, it reuses an existing shared `AIMArtifact` in the namespace for each model source instead of downloading it again. An artifact is reused when:
+    - its `sourceUri` is the model source's;
+    - its `downloadFilter` selects the same files as the model source's: an artifact with no filter serves a source with no filter, and equal filters match regardless of glob order. An artifact with `downloadFilter: {}` holds the whole repository and serves any source with the same `sourceUri`;
+    - it has the cache's storage class, when the cache sets one;
+    - it has an adapter disk, when the service uses adapters;
+    - for an `s3://` source, it uses the same runtime config as the cache.
+
+  Env doesn't affect reuse: an artifact downloaded with other credentials or downloader settings is reused as it is. The env only goes into the name of an artifact the cache creates. Among the matching artifacts the cache uses the one with the best status, even a `Failed` one (see [A download keeps failing after you add a credential](../admin/troubleshooting.md#a-download-keeps-failing-after-you-add-a-credential)).
 
 Result: multiple services that share a profile fan in onto a single set of `AIMArtifact`s, one download per artifact per namespace.
 
@@ -72,7 +79,7 @@ When an `AIMService` reaches the cache step in its reconcile pipeline:
 2. **Lookup or create cache.**
     - `Shared` mode: list shared `AIMProfileCache` objects in the namespace by profile name + scope. Reuse if one exists; otherwise create a new one with `mode: Shared` and no owner.
     - `Dedicated` mode: create a new `AIMProfileCache` owned by the service, with `mode: Dedicated`.
-3. **Lookup or create artifacts.** For each `modelSources[]` entry, the cache builds an `AIMArtifact` keyed on the source URI (and env / storage class). In shared mode the artifact controller reuses existing shared artifacts; in dedicated mode it always creates its own.
+3. **Lookup or create artifacts.** For each `modelSources[]` entry, a Shared cache reuses a matching shared artifact (see [Shared mode](#shared-mode)) or creates one; a Dedicated cache uses only artifacts it owns. A new artifact's name is derived from the source URI, env, storage class and download filter.
 4. **Wait for `Ready`.** The cache's `ArtifactsReady` condition flips `True` when every constituent artifact is `Ready`.
 5. **Mount.** The service mounts the underlying PVCs into the `InferenceService` pod spec.
 
@@ -327,13 +334,15 @@ One or more artifacts are still downloading or have failed. Drill down:
 
 ```bash
 kubectl get aimprofilecache -l aim.eai.amd.com/service.name=<service-name> -n <namespace>
-kubectl get aimartifact -l aim.eai.amd.com/profile-cache.name=<cache-name> -n <namespace>
-kubectl get aimartifact <name> -o jsonpath='{.status.download}' | jq
+kubectl get aimprofilecache <cache-name> -n <namespace> -o jsonpath='{.status.artifacts}'
+kubectl get aimartifact <name> -n <namespace> -o jsonpath='{.status.download}' | jq
 ```
+
+The `aim.eai.amd.com/service.name` label is only on caches the service created. A Shared cache it reuses is listed by `kubectl get aimprofilecache -n <namespace>` under its profile.
 
 Common causes:
 
-- Registry authentication missing or invalid → check the artifact `spec.env`, the runtime config `spec.caching.env` and any referenced secrets.
+- Registry authentication missing or invalid → check the artifact `spec.env`, the runtime config `spec.caching.env` and any referenced secrets. A credential added after the failure may not reach the artifact; see [A download keeps failing after you add a credential](../admin/troubleshooting.md#a-download-keeps-failing-after-you-add-a-credential).
 - Download size exceeds the artifact's declared `spec.size` → adjust.
 - Network instability → the protocol fallback chain should handle it; check `status.download.protocolSequence`.
 

@@ -525,9 +525,11 @@ Common causes:
 Check artifact download job logs:
 
 ```bash
-kubectl get jobs -l aim.eai.amd.com/artifact=<artifact-name> -n <namespace>
+kubectl get jobs -l aim.eai.amd.com/cache.name=<artifact-name> -n <namespace>
 kubectl logs job/<job-name> -n <namespace>
 ```
+
+If the download keeps failing after you add the credential, see [A download keeps failing after you add a credential](../admin/troubleshooting.md#a-download-keeps-failing-after-you-add-a-credential).
 
 ## Next Steps
 
