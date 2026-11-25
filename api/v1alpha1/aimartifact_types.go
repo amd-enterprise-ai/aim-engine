@@ -218,7 +218,7 @@ type AIMArtifactSpec struct {
 	// Env lists environment variables used when downloading the artifact.
 	// For a typed S3 connection, artifact-level env is restricted to bounded
 	// downloader tuning; configure proxy, transport, trust, and credential
-	// providers through the administrator-owned RuntimeConfig.
+	// providers in the administrator-owned runtime config spec.caching.env.
 	// +optional
 	// +listType=map
 	// +listMapKey=name

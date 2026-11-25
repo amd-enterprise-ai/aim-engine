@@ -174,10 +174,14 @@ type AIMServiceRuntimeConfig struct {
 	// +listType=atomic
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 
-	// Env specifies environment variables for inference containers.
-	// When set on AIMService, these take highest precedence in the merge hierarchy.
-	// When set on RuntimeConfig, these provide namespace/cluster-level defaults.
-	// Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env
+	// Env specifies environment variables for inference containers. On an
+	// AIMService they apply to that service; on a runtime config they set
+	// namespace or cluster defaults. Download Jobs don't read this field. Merge
+	// order (highest to lowest): AIMService spec.env > template env or
+	// AIMProfile containerEnv > AIMRuntimeConfig spec.env >
+	// AIMClusterRuntimeConfig spec.env. They don't override the operator-owned
+	// variables, and the AIM runtime applies the AIMProfile engineEnv over all
+	// of them. For download Jobs, use spec.caching.env.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -326,10 +330,10 @@ type AIMArtifactConfig struct {
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// S3 configures typed connection settings for AIMArtifacts whose sourceUri
-	// uses the s3:// scheme. RuntimeConfig env remains available for
-	// administrator-owned infrastructure settings, while artifact-level env is
-	// restricted to bounded downloader tuning. Typed fields take final
-	// precedence.
+	// uses the s3:// scheme. Typed fields take final precedence, and
+	// artifact-level env is restricted to bounded downloader tuning.
+	// Administrator-owned infrastructure settings, such as proxies, go in the
+	// runtime config spec.caching.env.
 	// +optional
 	S3 *S3ConnectionConfig `json:"s3,omitempty"`
 }
@@ -390,6 +394,12 @@ type AIMRuntimeConfigCommon struct {
 	// +optional
 	Artifact *AIMArtifactConfig `json:"artifact,omitempty"`
 
+	// Caching configures the download Jobs that fill model and adapter caches.
+	// This field only applies to RuntimeConfig/ClusterRuntimeConfig; an
+	// AIMService uses its own spec.caching.
+	// +optional
+	Caching *AIMRuntimeConfigCachingConfig `json:"caching,omitempty"`
+
 	// DEPRECATED: The embedded Hugging Face-to-S3 artifact cache has been
 	// removed. This field is retained temporarily for API compatibility and is
 	// no longer honored by the controller. Use direct s3:// model sources with
@@ -422,6 +432,24 @@ type AIMRuntimeConfigCommon struct {
 	// +kubebuilder:validation:Deprecated
 	// +kubebuilder:validation:DeprecatedMessage="Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version."
 	PVCHeadroomPercent *int32 `json:"pvcHeadroomPercent,omitempty"`
+}
+
+// AIMRuntimeConfigCachingConfig configures the download Jobs of a runtime
+// config. The name matches the AIMService spec.caching.env and the AIMProfile
+// caching.env: on every kind, caching.env reaches download Jobs only.
+type AIMRuntimeConfigCachingConfig struct {
+	// Env specifies environment variables for download Jobs only: model
+	// download, size check, adapter download and adapter subtree sync. They
+	// don't reach inference containers. The AIMRuntimeConfig value wins over
+	// the AIMClusterRuntimeConfig value for the same name. The AIMArtifact
+	// spec.env, built from the model source env, the AIMService
+	// spec.caching.env and the AIMProfile caching.env, wins over both. The CA
+	// trust env and, with a typed S3 connection, the S3 env that the operator
+	// sets win over all of them.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 type AIMRuntimeConfigLabelPropagationSpec struct {

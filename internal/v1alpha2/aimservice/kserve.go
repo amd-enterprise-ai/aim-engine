@@ -191,7 +191,8 @@ func buildInferenceServiceFromProfile(
 // (serving.OperatorOwnedEnvNames), the AIMService spec.env, the AIMProfile
 // containerEnv, then the runtime config spec.env (namespace over cluster). The
 // env added to the InferenceService after this (CA trust, a Dedicated cache,
-// adapters) stays above all of them.
+// adapters) stays above all of them. Download Jobs read the runtime config
+// spec.caching.env instead.
 //
 // A runtime config entry or a spec.env entry is left out when the name is
 // operator-owned, even when the operator leaves it unset, as it leaves

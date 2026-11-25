@@ -845,7 +845,9 @@ func runtimeConfigForAdapterStaging(
 
 	var adapterS3 *aimv1alpha1.S3ConnectionConfig
 	if adapterConfig != nil {
-		result.Env = utils.MergeEnvVars(result.Env, adapterConfig.Env)
+		result.Caching = &aimv1alpha1.AIMRuntimeConfigCachingConfig{
+			Env: utils.MergeEnvVars(aimruntimeconfig.CachingEnv(result), aimruntimeconfig.CachingEnv(adapterConfig)),
+		}
 		if adapterConfig.Artifact != nil {
 			adapterS3 = adapterConfig.Artifact.S3
 		}
@@ -893,9 +895,7 @@ func BuildSubtreeSyncJob(
 		{Name: "SERVICE_ID", Value: ServiceSubtreeID(service)},
 		{Name: "KEEP_ADAPTER_PATHS", Value: strings.Join(keepAdapterPaths(service), ",")},
 	}
-	if runtimeConfig != nil {
-		env = utils.MergeEnvVars(env, runtimeConfig.Env)
-	}
+	env = utils.MergeEnvVars(env, aimruntimeconfig.CachingEnv(runtimeConfig))
 
 	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
 	labels := map[string]string{
@@ -1003,10 +1003,7 @@ func BuildStagingJob(
 		{Name: "TMPDIR", Value: "/tmp/"},
 		{Name: "HF_HOME", Value: "/tmp/.hf"},
 	}
-	var runtimeEnv []corev1.EnvVar
-	if runtimeConfig != nil {
-		runtimeEnv = runtimeConfig.Env
-	}
+	runtimeCachingEnv := aimruntimeconfig.CachingEnv(runtimeConfig)
 	var s3Volumes []corev1.Volume
 	var s3VolumeMounts []corev1.VolumeMount
 	if strings.HasPrefix(ad.SourceURI, "s3://") {
@@ -1017,14 +1014,14 @@ func BuildStagingJob(
 		settings := aimartifact.ResolveS3PodSettings(
 			connection,
 			env,
-			runtimeEnv,
+			runtimeCachingEnv,
 			artifact.Spec.Env,
 		)
 		env = settings.Env
 		s3Volumes = settings.Volumes
 		s3VolumeMounts = settings.VolumeMounts
 	} else {
-		env = utils.MergeEnvVars(env, runtimeEnv)
+		env = utils.MergeEnvVars(env, runtimeCachingEnv)
 		// Adapter artifact env (auth tokens, AIM_DEBUG_* simulation switches) wins.
 		env = utils.MergeEnvVars(env, artifact.Spec.Env)
 	}
