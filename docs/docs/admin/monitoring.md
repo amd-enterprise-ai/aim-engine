@@ -114,6 +114,7 @@ Events use the condition's `reason` field as the event reason. Common event reas
 | `CacheReady` | Normal | Profile cache is populated |
 | `CacheFailed` | Warning | Cache download failed |
 | `RuntimeReady` | Normal | InferenceService is serving |
+| `PodCreationFailed` | Warning | The API server or an admission policy refuses the predictor pod. Emitted on every reconcile |
 | `InvalidImageReference` | Warning | Model image URI is invalid |
 | `PathTemplateInvalid` | Warning | Routing path template failed to resolve |
 
