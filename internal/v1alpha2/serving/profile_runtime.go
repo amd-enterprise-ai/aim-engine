@@ -293,10 +293,11 @@ func BuildProfileVolumeMount(aimId string) corev1.VolumeMount {
 // profile's engine, locate the projected profile and, when model caching is
 // active, redirect model loading to the PVC-backed local path.
 //
-// These vars are framework-owned: neither profile.ContainerEnv nor a consumer's
-// containerEnv overrides can override them. Consumers layer them on top of the
-// resolved profile's containerEnv, so AIM_* identity vars cannot be reshaped
-// from outside the controller.
+// These vars are framework-owned: neither the profile containerEnv, including a
+// consumer's containerEnv overrides, nor an AIMService or runtime config
+// spec.env overrides them (OperatorOwnedEnvNames). Consumers layer them on top of the resolved
+// profile's containerEnv, so AIM_* identity vars cannot be reshaped from
+// outside the controller.
 //
 // Callers pass the ProfileFilename of the profile so AIM_PROFILE_ID and the
 // colocated ConfigMap's data key are derived from the SAME value: the eager bare

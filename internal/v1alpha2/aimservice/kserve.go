@@ -129,7 +129,7 @@ func buildInferenceServiceFromProfile(
 		ModelFormat: servingv1beta1.ModelFormat{Name: serving.RuntimeModelFormat},
 		Runtime:     ptr.To(serving.RuntimeName(obs.profileName)),
 	}
-	model.Env = runtimeConfigEnv(service, obs.mergedRuntimeConfig.Value, obs.desiredProfileRuntime)
+	model.Env = runtimeConfigEnv(service, obs.mergedRuntimeConfig.Value, profileSpec, obs.desiredProfileRuntime)
 	if service.Spec.Resources != nil {
 		if obs.effectiveResources != nil {
 			model.Resources = *obs.effectiveResources.DeepCopy()
@@ -184,39 +184,108 @@ func buildInferenceServiceFromProfile(
 	return isvc
 }
 
-// runtimeConfigEnv returns the runtime config env with the service spec.env
-// merged over it, for the model container. KServe merges the model env over
-// the ServingRuntime container env by name, so a name that the ServingRuntime
-// sets (profile containerEnv or framework env) is left out and keeps the
-// profile value. Without a desired ServingRuntime nothing is added: the
-// InferenceService is planned only after it is current.
+// runtimeConfigEnv returns the runtime config env and the AIMService spec.env
+// for the model container. KServe merges the model env over the
+// ServingRuntime container env by name, which gives the inference container
+// this order, highest first: the operator-owned env
+// (serving.OperatorOwnedEnvNames), the AIMService spec.env, the AIMProfile
+// containerEnv, then the runtime config spec.env (namespace over cluster). The
+// env added to the InferenceService after this (CA trust, a Dedicated cache,
+// adapters) stays above all of them.
+//
+// A runtime config entry or a spec.env entry is left out when the name is
+// operator-owned, even when the operator leaves it unset, as it leaves
+// AIM_MODEL_ID unset for a profile without modelSources. A runtime config
+// entry is also left out when the ServingRuntime sets the name, and a
+// spec.env entry when the ServingRuntime sets the name and KServe can't
+// replace that entry with it (kserveReplacesEnvVar); the profile value stays
+// then. AIM_ENGINE_ARGS is merged per JSON key in the same order
+// (engineArgsOverProfile).
+//
+// Without a desired ServingRuntime nothing is added: the InferenceService is
+// planned only after it is current.
 func runtimeConfigEnv(
 	service *aimv1alpha1.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	profileSpec *aimv1alpha2.AIMProfileSpecCommon,
 	servingRuntime *kservev1alpha1.ServingRuntime,
 ) []corev1.EnvVar {
 	if servingRuntime == nil {
 		return nil
 	}
-	var merged []corev1.EnvVar
-	if runtimeConfig != nil {
-		merged = runtimeConfig.Env
-	}
-	merged = utils.MergeEnvVars(merged, service.Spec.Env, utils.EnvVarAIMEngineArgs)
-
-	runtimeNames := map[string]bool{}
+	runtimeEnv := map[string]corev1.EnvVar{}
 	for _, container := range servingRuntime.Spec.Containers {
 		for _, env := range container.Env {
-			runtimeNames[env.Name] = true
+			runtimeEnv[env.Name] = env
 		}
 	}
-	var env []corev1.EnvVar
-	for _, item := range merged {
-		if !runtimeNames[item.Name] {
-			env = append(env, item)
+	operatorOwned := serving.OperatorOwnedEnvNames(profileSpec)
+
+	var configEnv, configOnlyEnv []corev1.EnvVar
+	if runtimeConfig != nil {
+		configEnv = runtimeConfig.Env
+	}
+	for _, item := range configEnv {
+		if _, set := runtimeEnv[item.Name]; !set && !operatorOwned[item.Name] {
+			configOnlyEnv = append(configOnlyEnv, item)
+		}
+	}
+	var serviceEnv []corev1.EnvVar
+	for _, item := range service.Spec.Env {
+		runtimeItem, set := runtimeEnv[item.Name]
+		if operatorOwned[item.Name] || (set && !kserveReplacesEnvVar(runtimeItem, item)) {
+			continue
+		}
+		serviceEnv = append(serviceEnv, item)
+	}
+	env := utils.MergeEnvVars(configOnlyEnv, serviceEnv, utils.EnvVarAIMEngineArgs)
+
+	profileArgs, profileSetsArgs := runtimeEnv[utils.EnvVarAIMEngineArgs]
+	if profileSetsArgs && profileArgs.ValueFrom == nil && !operatorOwned[utils.EnvVarAIMEngineArgs] {
+		if args, ok := engineArgsOverProfile(configEnv, profileArgs.Value, serviceEnv); ok {
+			env = upsertEnvVars(env, []corev1.EnvVar{args})
 		}
 	}
 	return env
+}
+
+// kserveReplacesEnvVar reports whether KServe's merge of the InferenceService
+// entry over the ServingRuntime entry of the same name is sure to give the
+// InferenceService entry. KServe merges the two field by field, so only a
+// non-empty value replaces a value: a value and a valueFrom, or two kinds of
+// valueFrom, end up in one invalid entry, and an empty value leaves the
+// ServingRuntime value in place.
+func kserveReplacesEnvVar(runtimeItem, isvcItem corev1.EnvVar) bool {
+	return runtimeItem.ValueFrom == nil && isvcItem.ValueFrom == nil && isvcItem.Value != ""
+}
+
+// engineArgsOverProfile returns AIM_ENGINE_ARGS for a profile whose
+// containerEnv sets it: the runtime config value, then profileValue, then the
+// spec.env value, merged per JSON key with the later value winning. It reports
+// false when neither the runtime config nor spec.env sets AIM_ENGINE_ARGS, so
+// the ServingRuntime keeps the profile value.
+func engineArgsOverProfile(
+	configEnv []corev1.EnvVar,
+	profileValue string,
+	serviceEnv []corev1.EnvVar,
+) (corev1.EnvVar, bool) {
+	configValue, configSets := envVarValue(configEnv, utils.EnvVarAIMEngineArgs)
+	serviceValue, serviceSets := envVarValue(serviceEnv, utils.EnvVarAIMEngineArgs)
+	if !configSets && !serviceSets {
+		return corev1.EnvVar{}, false
+	}
+	value := utils.MergeJSONEnvVarValues(configValue, profileValue)
+	value = utils.MergeJSONEnvVarValues(value, serviceValue)
+	return corev1.EnvVar{Name: utils.EnvVarAIMEngineArgs, Value: value}, true
+}
+
+func envVarValue(env []corev1.EnvVar, name string) (string, bool) {
+	for _, item := range env {
+		if item.Name == name {
+			return item.Value, true
+		}
+	}
+	return "", false
 }
 
 func addRuntimeTrustOverlay(

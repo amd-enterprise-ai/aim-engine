@@ -234,6 +234,32 @@ func buildRuntimeEnv(
 	})
 }
 
+// OperatorOwnedEnvNames returns the env names that neither an AIMService
+// spec.env nor a runtime config spec.env sets: the AIM framework names (AIM_PROFILE_ID, AIM_ENGINE,
+// AIM_ID, AIM_MODEL_ID, AIM_CACHE_PATH) for every profile, even where
+// BuildFrameworkEnvVars leaves one unset, and for direct-vLLM profiles also
+// AIM_VLLM_MODEL, the offline guards and the engineEnv names. Every name that
+// buildRuntimeEnv sets over the profile containerEnv is in the set.
+func OperatorOwnedEnvNames(spec *aimv1alpha2.AIMProfileSpecCommon) map[string]bool {
+	names := map[string]bool{
+		constants.EnvAIMProfileID: true,
+		constants.EnvAIMEngine:    true,
+		constants.EnvAIMID:        true,
+		constants.EnvAIMModelID:   true,
+		constants.EnvAIMCachePath: true,
+	}
+	if !usesDirectVLLM(spec) {
+		return names
+	}
+	for name := range spec.EngineEnv {
+		names[name] = true
+	}
+	for _, name := range []string{constants.EnvAIMVLLMModel, "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"} {
+		names[name] = true
+	}
+	return names
+}
+
 func resolvedServedModelID(spec *aimv1alpha2.AIMProfileSpecCommon) string {
 	if spec.ModelId != "" {
 		return spec.ModelId
