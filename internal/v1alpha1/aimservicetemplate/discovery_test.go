@@ -37,6 +37,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
 )
 
 // ============================================================================
@@ -1446,5 +1447,19 @@ func TestBuildDiscoveryJob_Tolerations(t *testing.T) {
 	got := job.Spec.Template.Spec.Tolerations
 	if len(got) != 1 || got[0] != gpu {
 		t.Errorf("discovery Job tolerations = %v, want [%v]", got, gpu)
+	}
+}
+
+func TestBuildDiscoveryJob_PassesRestrictedPodSecurity(t *testing.T) {
+	job := BuildDiscoveryJob(DiscoveryJobSpec{
+		TemplateName:               "my-template",
+		Namespace:                  "default",
+		ModelID:                    "test-model",
+		Image:                      "ghcr.io/test/image:latest",
+		CustomProfileConfigMapName: "my-template-template-custom-profile",
+	})
+
+	if violations := testutil.RestrictedPodSecurityViolations(t, job.Spec.Template.Spec); len(violations) > 0 {
+		t.Errorf("discovery Job breaks Pod Security restricted: %q", violations)
 	}
 }
