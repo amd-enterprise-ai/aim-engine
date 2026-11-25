@@ -249,9 +249,11 @@ Controlled by the `AIM_DOWNLOADER_PROTOCOL` environment variable — a comma-sep
 
 Overrides apply at three layers (highest precedence first):
 
-1. **Per-artifact** via `AIMArtifact.spec.env`.
-2. **Per-namespace** via `AIMRuntimeConfig.spec.env`.
-3. **Cluster-wide** via `AIMClusterRuntimeConfig.spec.env`.
+1. **Per-artifact** via `AIMArtifact.spec.env`. An AIMService or AIMProfile sets it through `spec.caching.env`.
+2. **Per-namespace** via `AIMRuntimeConfig.spec.caching.env`.
+3. **Cluster-wide** via `AIMClusterRuntimeConfig.spec.caching.env`.
+
+The runtime config `spec.env` doesn't reach download Jobs. See [Download Job env](runtime-config.md#download-job-env) for the full order.
 
 #### Example: override per artifact
 
@@ -275,9 +277,10 @@ kind: AIMClusterRuntimeConfig
 metadata:
   name: default
 spec:
-  env:
-    - name: AIM_DOWNLOADER_PROTOCOL
-      value: "XET,XET,HTTP"
+  caching:
+    env:
+      - name: AIM_DOWNLOADER_PROTOCOL
+        value: "XET,XET,HTTP"
 ```
 
 ### Observing download status
@@ -330,7 +333,7 @@ kubectl get aimartifact <name> -o jsonpath='{.status.download}' | jq
 
 Common causes:
 
-- Registry authentication missing or invalid → check `spec.env` and any referenced secrets.
+- Registry authentication missing or invalid → check the artifact `spec.env`, the runtime config `spec.caching.env` and any referenced secrets.
 - Download size exceeds the artifact's declared `spec.size` → adjust.
 - Network instability → the protocol fallback chain should handle it; check `status.download.protocolSequence`.
 

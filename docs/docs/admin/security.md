@@ -83,17 +83,20 @@ To disable TLS for metrics (not recommended for production):
 
 ## Secrets Management
 
-Sensitive credentials (registry tokens, S3 keys) are managed through Kubernetes Secrets referenced in runtime configurations:
+Sensitive credentials (registry tokens, S3 keys) are managed through Kubernetes Secrets referenced in runtime configurations. Download credentials go in `spec.caching.env`, which reaches only the download Jobs:
 
 ```yaml
 spec:
-  env:
-    - name: HF_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: hf-credentials
-          key: token
+  caching:
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: hf-credentials
+            key: token
 ```
+
+A credential in the runtime config `spec.env` reaches the inference containers instead. See [Choosing where to set a variable](../reference/environment-variables.md#choosing-where-to-set-a-variable).
 
 The operator reads these references but never stores credential values in CRD status or logs.
 

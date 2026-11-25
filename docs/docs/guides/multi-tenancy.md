@@ -44,12 +44,13 @@ metadata:
   name: default
   namespace: ml-team-a
 spec:
-  env:
-    - name: HF_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: team-a-hf-token
-          key: token
+  caching:
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: team-a-hf-token
+            key: token
   routing:
     pathTemplate: "/team-a/{.metadata.name}"
 ```
@@ -63,7 +64,8 @@ Configuration is resolved with the most specific scope winning:
 | Model | `AIMModel` (namespace) → `AIMClusterModel` (cluster) |
 | Profile / Template | `AIMProfile` (namespace) → `AIMClusterProfile` (cluster) / `AIMServiceTemplate` → `AIMClusterServiceTemplate` |
 | Runtime config | `AIMRuntimeConfig` (namespace) → `AIMClusterRuntimeConfig` (cluster) |
-| Environment vars | Service → RuntimeConfig (namespace) → ClusterRuntimeConfig |
+| Inference container env | Service `spec.env` → Profile `containerEnv` → RuntimeConfig `spec.env` (namespace) → ClusterRuntimeConfig `spec.env` ([full order](../concepts/runtime-config.md#inference-container-env)) |
+| Download Job env | Service `spec.caching.env` → Profile `spec.caching.env` → RuntimeConfig `spec.caching.env` (namespace) → ClusterRuntimeConfig `spec.caching.env` ([full order](../concepts/runtime-config.md#download-job-env)) |
 
 ## Label Propagation
 
