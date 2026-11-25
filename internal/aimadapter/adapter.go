@@ -51,6 +51,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
@@ -920,18 +921,21 @@ func BuildSubtreeSyncJob(
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					RestartPolicy:    corev1.RestartPolicyNever,
+					Tolerations:      servicepolicy.InferenceTolerations(service, runtimeConfig),
 					ImagePullSecrets: service.Spec.ImagePullSecrets,
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    ptr.To(int64(1000)),
-						RunAsGroup:   ptr.To(int64(1000)),
-						RunAsNonRoot: ptr.To(true),
-						FSGroup:      ptr.To(int64(1000)),
+						RunAsUser:      ptr.To(int64(1000)),
+						RunAsGroup:     ptr.To(int64(1000)),
+						RunAsNonRoot:   ptr.To(true),
+						FSGroup:        ptr.To(int64(1000)),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{
 						{
 							Name:            "adapter-subtree-sync",
 							Image:           image,
 							ImagePullPolicy: aimartifact.PullPolicyForImage(image),
+							SecurityContext: utils.RestrictedContainerSecurityContext(),
 							Command:         []string{"/adapter-subtree-sync.sh"},
 							Env:             env,
 							VolumeMounts: []corev1.VolumeMount{
@@ -1051,18 +1055,21 @@ func BuildStagingJob(
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					RestartPolicy:    corev1.RestartPolicyNever,
+					Tolerations:      servicepolicy.InferenceTolerations(service, runtimeConfig),
 					ImagePullSecrets: service.Spec.ImagePullSecrets,
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    ptr.To(int64(1000)),
-						RunAsGroup:   ptr.To(int64(1000)),
-						RunAsNonRoot: ptr.To(true),
-						FSGroup:      ptr.To(int64(1000)),
+						RunAsUser:      ptr.To(int64(1000)),
+						RunAsGroup:     ptr.To(int64(1000)),
+						RunAsNonRoot:   ptr.To(true),
+						FSGroup:        ptr.To(int64(1000)),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{
 						{
 							Name:            "adapter-stage",
 							Image:           image,
 							ImagePullPolicy: aimartifact.PullPolicyForImage(image),
+							SecurityContext: utils.RestrictedContainerSecurityContext(),
 							Command:         []string{"/adapter-stage.sh"},
 							Args:            []string{ad.SourceURI},
 							Env:             env,

@@ -433,6 +433,68 @@ with the query's expected names and labels and must emit delta values rather
 than cumulative counter totals, because the activation trigger uses a fixed
 `operationOverTime=avg`.
 
+## Tolerations
+
+`spec.tolerations` adds tolerations to the pods of AIMService inference workloads and to the Jobs that prepare a model, so they can be scheduled onto tainted nodes, such as GPU nodes reserved for inference:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  tolerations:
+    - key: amd.com/gpu
+      operator: Exists
+      effect: NoSchedule
+```
+
+Each level replaces the list of the level below it as a whole; lists are not merged:
+
+```
+AIMService.spec.tolerations  >  namespace AIMRuntimeConfig  >  cluster AIMClusterRuntimeConfig
+```
+
+An empty list (`tolerations: []`) removes the inherited tolerations: on an AIMService it removes the runtime config's for that service, and on a namespace AIMRuntimeConfig it removes the cluster config's for that namespace. Clusters that enable the `ExtendedResourceToleration` admission plugin already give pods requesting `amd.com/gpu` or `nvidia.com/gpu` a toleration for a taint with that key, whatever this field says.
+
+The size check, download and discovery Jobs use the runtime config's list. One of these Jobs can serve several services, so an AIMService's list does not apply to them. The adapter staging Jobs use the same list as the service's inference pods, because they write to the adapter disk that the inference pods mount. If no node without the taint can run these Jobs, for example when all nodes are GPU nodes or the cache uses node-local storage, the model starts only when the runtime config tolerates the taint.
+
+A Job keeps the tolerations that it was created with. After you change the list, delete a `Pending` Job, and AIM Engine creates it again with the new list.
+
+Changing a runtime config's list restarts the inference pods of every service that inherits it, even when no pod would move to another node: the tolerations are part of each predictor's pod template, and a Deployment replaces its pods whenever that template changes. Services with their own `spec.tolerations` are not affected. If the rollout starts new pods before it stops the old ones, GPU services need free GPUs to complete it.
+
+## Security contexts
+
+`spec.podSecurityContext` sets the Pod security context of AIMService inference pods. `spec.securityContext` sets the security context of their inference container, `kserve-container`. If no level sets a value, AIM Engine does not set a security context, and the pods run as the image and the cluster defaults specify.
+
+Each level replaces the value of the level below it as a whole. The fields of the two values are not merged:
+
+```
+AIMService.spec  >  namespace AIMRuntimeConfig  >  cluster AIMClusterRuntimeConfig
+```
+
+An empty object (`{}`) also replaces the inherited value. For example, `securityContext: {}` on an AIMService removes the runtime config's container security context for that service. The two fields are independent: a service can set `podSecurityContext` and inherit `securityContext`.
+
+These fields apply only to the inference pods. They do not apply to the Jobs that prepare a model or stage adapters.
+
+AIM Engine refuses the values in these fields that the Pod Security Standard `baseline` forbids. The API server refuses an AIMService, AIMRuntimeConfig or AIMClusterRuntimeConfig that has one of these values:
+
+- `podSecurityContext.sysctls` with an entry. AIM Engine refuses all sysctls, also those that `baseline` allows.
+- `securityContext.privileged: true`.
+- `securityContext.capabilities.add` with an entry. AIM Engine refuses all added capabilities, also those that `baseline` allows.
+- `securityContext.procMount` with a value other than `Default`.
+- In both fields:
+  - `seccompProfile.type` or `appArmorProfile.type` with a value other than `RuntimeDefault` or `Localhost`.
+  - `windowsOptions.hostProcess: true`.
+  - `seLinuxOptions.type` with a value other than empty, `container_t`, `container_init_t`, `container_kvm_t` or `container_engine_t`.
+  - `seLinuxOptions.user` or `seLinuxOptions.role` with a value.
+
+For what these rules do not prevent, see the [warning in Team RBAC](../admin/security.md#team-rbac-security-contexts).
+
+Changing a runtime config's security context restarts the inference pods of every service that inherits it, because the security contexts are part of each predictor's pod template. Services that set their own value are not affected.
+
+To run inference pods in a namespace that enforces Pod Security `restricted`, see [Restricted Pod Security](../guides/restricted-pod-security.md).
+
 ## Environment variable overrides
 
 `spec.env` injects environment variables into managed workloads. Most commonly used to set the HuggingFace downloader fallback chain.

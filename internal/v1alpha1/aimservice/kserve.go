@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
@@ -251,6 +252,8 @@ func buildInferenceService(
 	// Build shared memory volume
 	dshmSizeLimit := resource.MustParse(constants.DefaultSharedMemorySize)
 
+	podSecurityContext, containerSecurityContext := servicepolicy.InferenceSecurityContexts(service, obs.mergedRuntimeConfig.Value)
+
 	inferenceService := &servingv1beta1.InferenceService{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: servingv1beta1.SchemeGroupVersion.String(),
@@ -279,6 +282,8 @@ func buildInferenceService(
 					ImagePullSecrets:   utils.CopyPullSecrets(service.Spec.ImagePullSecrets),
 					ServiceAccountName: service.Spec.ServiceAccountName,
 					PriorityClassName:  service.Spec.PriorityClassName,
+					Tolerations:        servicepolicy.InferenceTolerations(service, obs.mergedRuntimeConfig.Value),
+					SecurityContext:    podSecurityContext,
 					Containers: []corev1.Container{
 						{
 							Name:            constants.ContainerKServe,
@@ -286,6 +291,7 @@ func buildInferenceService(
 							ImagePullPolicy: utils.PullPolicyForImage(image),
 							Env:             envVars,
 							Resources:       resources,
+							SecurityContext: containerSecurityContext,
 							Ports: []corev1.ContainerPort{
 								{
 									ContainerPort: constants.DefaultHTTPPort,

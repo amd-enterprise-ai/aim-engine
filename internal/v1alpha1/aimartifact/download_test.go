@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
 )
 
 func TestResolveDownloadFilter(t *testing.T) {
@@ -191,6 +192,22 @@ func TestDownloadFilterEnvVars(t *testing.T) {
 				"AIM_HF_EXCLUDE": "*/*",
 			},
 		},
+		{
+			name: "trailing-slash directory globs select the directory's files",
+			filter: &aimv1alpha1.AIMDownloadFilter{
+				Include: []string{"vae/", "*.json"},
+				Exclude: []string{"original/"},
+			},
+			wantEnvs: map[string]string{
+				"AIM_HF_INCLUDE": "vae/*,*.json",
+				"AIM_HF_EXCLUDE": "original/*",
+			},
+		},
+		{
+			name:     "blank globs are dropped",
+			filter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{" *.json ", ""}, Exclude: []string{" "}},
+			wantEnvs: map[string]string{"AIM_HF_INCLUDE": "*.json"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -271,21 +288,38 @@ func TestBuildDownloadJobHasActiveDeadline(t *testing.T) {
 }
 
 func TestBothJobsGetSameFilterEnvVars(t *testing.T) {
-	mc := &aimv1alpha1.AIMArtifact{
-		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model"},
+	tests := []struct {
+		name   string
+		filter *aimv1alpha1.AIMDownloadFilter
+	}{
+		{name: "default filter", filter: nil},
+		{name: "declared filter", filter: &aimv1alpha1.AIMDownloadFilter{
+			Include: []string{"*.safetensors", "tokenizer/*"},
+			Exclude: []string{"*.bin"},
+		}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mc := &aimv1alpha1.AIMArtifact{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+				Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model", DownloadFilter: tt.filter},
+			}
 
-	checkJob := buildCheckSizeJob(mc, nil, false)
-	downloadJob := buildDownloadJob(mc, nil, 1000, false)
+			checkJob := buildCheckSizeJob(mc, nil, false)
+			downloadJob := buildDownloadJob(mc, nil, 1000, false)
 
-	checkEnv := envToMap(checkJob.Spec.Template.Spec.Containers[0].Env)
-	downloadEnv := envToMap(downloadJob.Spec.Template.Spec.Containers[0].Env)
+			checkEnv := envToMap(checkJob.Spec.Template.Spec.Containers[0].Env)
+			downloadEnv := envToMap(downloadJob.Spec.Template.Spec.Containers[0].Env)
 
-	for _, key := range []string{"AIM_HF_INCLUDE", "AIM_HF_EXCLUDE"} {
-		if checkEnv[key] != downloadEnv[key] {
-			t.Errorf("env %s differs: check-size=%q download=%q", key, checkEnv[key], downloadEnv[key])
-		}
+			for _, key := range []string{"AIM_HF_INCLUDE", "AIM_HF_EXCLUDE"} {
+				if checkEnv[key] != downloadEnv[key] {
+					t.Errorf("env %s differs: check-size=%q download=%q", key, checkEnv[key], downloadEnv[key])
+				}
+			}
+			if tt.filter != nil && downloadEnv["AIM_HF_INCLUDE"] == "" {
+				t.Error("declared include patterns did not reach the jobs")
+			}
+		})
 	}
 }
 
@@ -548,6 +582,60 @@ func assertSliceEqual(t *testing.T, name string, got, want []string) {
 	for i := range got {
 		if got[i] != want[i] {
 			t.Errorf("%s[%d]: got %q, want %q", name, i, got[i], want[i])
+		}
+	}
+}
+
+func TestJobsPassRestrictedPodSecurity(t *testing.T) {
+	// The CA bundle adds the trust init container; the S3 credentials add a
+	// Secret volume.
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{Name: "company-ca", Key: "ca.crt"},
+		Artifact: &aimv1alpha1.AIMArtifactConfig{
+			S3: &aimv1alpha1.S3ConnectionConfig{
+				Endpoint: "https://s3.example",
+				Auth: &aimv1alpha1.S3AuthConfig{
+					Mode:                 aimv1alpha1.S3AuthModeStatic,
+					CredentialsSecretRef: &aimv1alpha1.S3CredentialsSecretReference{Name: "s3-credentials"},
+				},
+			},
+		},
+	}
+
+	for _, sourceURI := range []string{"hf://org/model", "s3://bucket/model"} {
+		mc := &aimv1alpha1.AIMArtifact{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: sourceURI},
+		}
+		for name, job := range map[string]*batchv1.Job{
+			"check-size": buildCheckSizeJob(mc, config, true),
+			"download":   buildDownloadJob(mc, config, 1000, true),
+			"reaper":     buildAdapterReaperJob(mc, "adapter-pvc", nil, config),
+		} {
+			if violations := testutil.RestrictedPodSecurityViolations(t, job.Spec.Template.Spec); len(violations) > 0 {
+				t.Errorf("%s: %s Job breaks Pod Security restricted: %q", sourceURI, name, violations)
+			}
+		}
+	}
+}
+
+func TestJobsGetRuntimeConfigTolerations(t *testing.T) {
+	mc := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model"},
+	}
+	gpu := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	config.Tolerations = []corev1.Toleration{gpu}
+
+	for name, job := range map[string]*batchv1.Job{
+		"check-size": buildCheckSizeJob(mc, config, false),
+		"download":   buildDownloadJob(mc, config, 1000, false),
+		"reaper":     buildAdapterReaperJob(mc, "adapter-pvc", nil, config),
+	} {
+		got := job.Spec.Template.Spec.Tolerations
+		if len(got) != 1 || got[0] != gpu {
+			t.Errorf("%s Job tolerations = %v, want [%v]", name, got, gpu)
 		}
 	}
 }

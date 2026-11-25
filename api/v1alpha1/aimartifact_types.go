@@ -236,9 +236,8 @@ type AIMArtifactSpec struct {
 	// Overrides any filter set in the runtime config's storage.downloadFilter.
 	// When neither is set, subdirectory files are excluded by default (equivalent to exclude: ["*/*"]).
 	// To download all files including subdirectories, set this to an empty object: downloadFilter: {}.
-	// This field is immutable — to change the filter, recreate the artifact.
+	// This field is immutable, including adding or removing it — to change the filter, recreate the artifact.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="downloadFilter is immutable"
 	DownloadFilter *AIMDownloadFilter `json:"downloadFilter,omitempty"`
 
 	// ImagePullSecrets references secrets for pulling AIM container images.
@@ -430,6 +429,7 @@ func (s *AIMArtifactStatus) GetAIMStatus() constants.AIMStatus {
 // +kubebuilder:printcolumn:name="Attempt",type=string,JSONPath=`.status.download.attempt`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.type) || !oldSelf.hasValue() || !has(oldSelf.value().spec.type) || self.spec.type == oldSelf.value().spec.type",message="spec.type is immutable",optionalOldSelf=true
+// +kubebuilder:validation:XValidation:rule="has(self.spec.downloadFilter) == has(oldSelf.spec.downloadFilter) && (!has(self.spec.downloadFilter) || self.spec.downloadFilter == oldSelf.spec.downloadFilter)",message="spec.downloadFilter is immutable"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.type) || self.spec.type != 'adapter' || ((has(self.spec.parentArtifact) && !has(self.spec.compatibleWith)) || (!has(self.spec.parentArtifact) && has(self.spec.compatibleWith)))",message="exactly one of spec.parentArtifact or spec.compatibleWith is required when spec.type is adapter"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.type) || self.spec.type != 'adapter' || (has(self.spec.modelId) && size(self.spec.modelId) > 0)",message="spec.modelId is required when spec.type is adapter"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.parentArtifact) || (has(self.spec.type) && self.spec.type == 'adapter')",message="spec.parentArtifact is only allowed when spec.type is adapter"

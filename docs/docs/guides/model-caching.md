@@ -100,7 +100,43 @@ flat model repositories, but repository layouts such as Diffusers commonly
 store required transformer, VAE, text-encoder, scheduler, and tokenizer files
 under nested directories.
 
-Set an explicitly empty filter to download all files:
+An AIM image can declare the filter its model needs in its profile YAML
+(`download_filter`, see
+[Projected profile YAML compatibility](../concepts/profiles.md#projected-profile-yaml-compatibility)).
+Discovered profiles carry that declaration onto their model source, so no
+configuration is needed for those images. Only v1alpha2 profile discovery reads
+the declaration: v1alpha1 `AIMServiceTemplate` discovery records each model's
+name, source, and size, so a template discovered from the same image gets no
+filter and needs the runtime config filter below. v1alpha1 services also run the
+image's own profile, which keeps the declaration, and aim-runtime does not
+recognize a cache AIM Engine downloaded: at startup it downloads the declared
+files into the cache volume itself, which needs network access from the serving
+pod.
+
+A declared filter takes precedence over the runtime config's
+`storage.downloadFilter`, including a namespace or cluster `default` set to
+download everything. The declaration states the files the image needs, and the
+artifact records the filter it was downloaded with, which reuse depends on. The
+runtime config filter applies only to model sources that declare nothing. To keep
+more files than an image declares, pre-create an artifact with
+`downloadFilter: {}` for its source, as described below.
+
+A glob ending in `/` selects every file under that directory: `vae/` is
+equivalent to `vae/*`.
+
+A derivation that replaces `overrides.modelSources`, such as a
+[fine-tune](fine-tuned-models.md), does not inherit the source profile's filter;
+see [Overrides](../concepts/profilesets.md#overrides).
+
+An artifact created with `downloadFilter: {}` holds the whole repository. A
+shared profile cache reuses it for any model source with the same `sourceURI`,
+whatever filter that source declares, so pre-creating one shares a complete
+copy across profiles.
+
+For images that do not declare a filter, set an explicitly empty filter to
+download all files. If the image later declares a filter, artifacts downloaded
+this way are downloaded again; see
+[Upgrading](../admin/upgrading.md#download-filters-declared-by-aim-images).
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1

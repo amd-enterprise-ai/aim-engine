@@ -280,18 +280,21 @@ func buildAdapterReaperJob(
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					RestartPolicy:    corev1.RestartPolicyNever,
+					Tolerations:      aimruntimeconfig.Tolerations(runtimeConfig),
 					ImagePullSecrets: mc.Spec.ImagePullSecrets,
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    ptr.To(int64(1000)),
-						RunAsGroup:   ptr.To(int64(1000)),
-						RunAsNonRoot: ptr.To(true),
-						FSGroup:      ptr.To(int64(1000)),
+						RunAsUser:      ptr.To(int64(1000)),
+						RunAsGroup:     ptr.To(int64(1000)),
+						RunAsNonRoot:   ptr.To(true),
+						FSGroup:        ptr.To(int64(1000)),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{
 						{
 							Name:            "adapter-reap",
 							Image:           image,
 							ImagePullPolicy: pullPolicyForImage(image),
+							SecurityContext: utils.RestrictedContainerSecurityContext(),
 							Command:         []string{"/adapter-reap.sh"},
 							Env: []corev1.EnvVar{
 								{Name: "ADAPTER_PVC_ROOT", Value: constants.AIMAdapterPVCRoot},

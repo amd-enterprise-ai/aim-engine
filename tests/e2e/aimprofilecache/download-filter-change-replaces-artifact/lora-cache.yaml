@@ -1,0 +1,12 @@
+# The cache an adapter-serving AIMService creates for filter-change-lora. Declared
+# directly so the test does not depend on a deployable service: requiresAdapterDisk
+# is the only part of that service the shared artifact reacts to.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileCache
+metadata:
+  name: filter-change-lora-cache
+spec:
+  profileName: filter-change-lora
+  profileScope: Namespace
+  mode: Shared
+  requiresAdapterDisk: true

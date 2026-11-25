@@ -40,6 +40,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
 )
 
 const (
@@ -1692,5 +1693,59 @@ func TestDecorateStatusMirrorsObservations(t *testing.T) {
 	}
 	if status.Adapters[1].LastError != ReasonNotFound {
 		t.Errorf("adapter b lastError = %q, want %s", status.Adapters[1].LastError, ReasonNotFound)
+	}
+}
+
+func TestAdapterJobsPassRestrictedPodSecurity(t *testing.T) {
+	// The CA bundle adds the trust init container to the staging Job.
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{Name: "company-ca", Key: "ca.crt"},
+	}
+	ad := Observation{
+		Name: "lora-a", AdapterPath: "lora-a", ModelID: "org/adapter",
+		BaseModelID: "org/base", SourceURI: "hf://org/lora-a",
+	}
+	svc := serviceWithAdapters("lora-a")
+
+	for name, job := range map[string]*batchv1.Job{
+		"staging":      BuildStagingJob(svc, adapterArtifact("lora-a", "base"), testAdapterPVC, testAdapterPVCUID, ad, config, true),
+		"subtree-sync": BuildSubtreeSyncJob(svc, modelParent(testAdapterPVC), testAdapterPVC, testAdapterPVCUID, config),
+	} {
+		if violations := testutil.RestrictedPodSecurityViolations(t, job.Spec.Template.Spec); len(violations) > 0 {
+			t.Errorf("%s Job breaks Pod Security restricted: %q", name, violations)
+		}
+	}
+}
+
+func TestAdapterJobsUseInferenceTolerations(t *testing.T) {
+	runtimeToleration := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	serviceToleration := corev1.Toleration{Key: "dedicated", Operator: corev1.TolerationOpEqual, Value: "inference", Effect: corev1.TaintEffectNoSchedule}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	config.Tolerations = []corev1.Toleration{runtimeToleration}
+	ad := Observation{
+		Name: "lora-a", AdapterPath: "lora-a", ModelID: "org/adapter",
+		BaseModelID: "org/base", SourceURI: "hf://org/lora-a",
+	}
+
+	tests := []struct {
+		name               string
+		serviceTolerations []corev1.Toleration
+		want               corev1.Toleration
+	}{
+		{name: "runtime config", want: runtimeToleration},
+		{name: "service list replaces runtime config", serviceTolerations: []corev1.Toleration{serviceToleration}, want: serviceToleration},
+	}
+	for _, tt := range tests {
+		svc := serviceWithAdapters("lora-a")
+		svc.Spec.Tolerations = tt.serviceTolerations
+		for name, job := range map[string]*batchv1.Job{
+			"staging":      BuildStagingJob(svc, adapterArtifact("lora-a", "base"), testAdapterPVC, testAdapterPVCUID, ad, config),
+			"subtree-sync": BuildSubtreeSyncJob(svc, modelParent(testAdapterPVC), testAdapterPVC, testAdapterPVCUID, config),
+		} {
+			got := job.Spec.Template.Spec.Tolerations
+			if len(got) != 1 || got[0] != tt.want {
+				t.Errorf("%s: %s Job tolerations = %v, want [%v]", tt.name, name, got, tt.want)
+			}
+		}
 	}
 }

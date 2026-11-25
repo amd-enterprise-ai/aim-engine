@@ -26,8 +26,10 @@ package aimruntimeconfig
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -724,5 +726,94 @@ func TestMergeRuntimeConfigs_AdditionalCABundleNamespacePrecedence(t *testing.T)
 	}
 	if got := merged.AdditionalCABundleRef.Key; got != "bundle.pem" {
 		t.Errorf("key = %q, want bundle.pem", got)
+	}
+}
+
+func TestMergeRuntimeConfigs_TolerationsNamespacePrecedence(t *testing.T) {
+	gpuTaint := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	poolTaint := corev1.Toleration{Key: "pool", Operator: corev1.TolerationOpEqual, Value: "inference", Effect: corev1.TaintEffectNoSchedule}
+	withTolerations := func(tolerations []corev1.Toleration) *aimv1alpha1.AIMRuntimeConfigCommon {
+		config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+		config.Tolerations = tolerations
+		return config
+	}
+	cluster := withTolerations([]corev1.Toleration{gpuTaint, poolTaint})
+
+	tests := []struct {
+		name      string
+		namespace []corev1.Toleration
+		want      []corev1.Toleration
+	}{
+		{name: "unset keeps cluster's", namespace: nil, want: []corev1.Toleration{gpuTaint, poolTaint}},
+		{name: "list replaces cluster's", namespace: []corev1.Toleration{poolTaint}, want: []corev1.Toleration{poolTaint}},
+		{name: "empty list removes cluster's", namespace: []corev1.Toleration{}, want: []corev1.Toleration{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			merged := mergeRuntimeConfigs(withTolerations(tt.namespace), cluster)
+			if !reflect.DeepEqual(merged.Tolerations, tt.want) {
+				t.Errorf("tolerations = %v, want %v", merged.Tolerations, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeRuntimeConfigs_SecurityContextsNamespacePrecedence(t *testing.T) {
+	newCluster := func() *aimv1alpha1.AIMRuntimeConfigCommon {
+		config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+		config.PodSecurityContext = &corev1.PodSecurityContext{
+			RunAsNonRoot:       ptr.To(true),
+			FSGroup:            ptr.To(int64(1000)),
+			SupplementalGroups: []int64{44, 110},
+		}
+		config.SecurityContext = &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr.To(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		}
+		return config
+	}
+	namespacePod := &corev1.PodSecurityContext{RunAsUser: ptr.To(int64(2000))}
+	namespaceContainer := &corev1.SecurityContext{ReadOnlyRootFilesystem: ptr.To(true)}
+
+	tests := []struct {
+		name               string
+		namespacePod       *corev1.PodSecurityContext
+		namespaceContainer *corev1.SecurityContext
+		wantPod            *corev1.PodSecurityContext
+		wantContainer      *corev1.SecurityContext
+	}{
+		{
+			name:          "unset keeps cluster's",
+			wantPod:       newCluster().PodSecurityContext,
+			wantContainer: newCluster().SecurityContext,
+		},
+		{
+			name:               "set object replaces cluster's without merging fields",
+			namespacePod:       namespacePod,
+			namespaceContainer: namespaceContainer,
+			wantPod:            namespacePod,
+			wantContainer:      namespaceContainer,
+		},
+		{
+			name:               "empty object replaces cluster's",
+			namespacePod:       &corev1.PodSecurityContext{},
+			namespaceContainer: &corev1.SecurityContext{},
+			wantPod:            &corev1.PodSecurityContext{},
+			wantContainer:      &corev1.SecurityContext{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := &aimv1alpha1.AIMRuntimeConfigCommon{}
+			namespace.PodSecurityContext = tt.namespacePod
+			namespace.SecurityContext = tt.namespaceContainer
+			merged := mergeRuntimeConfigs(namespace, newCluster())
+			if !reflect.DeepEqual(merged.PodSecurityContext, tt.wantPod) {
+				t.Errorf("podSecurityContext = %v, want %v", merged.PodSecurityContext, tt.wantPod)
+			}
+			if !reflect.DeepEqual(merged.SecurityContext, tt.wantContainer) {
+				t.Errorf("securityContext = %v, want %v", merged.SecurityContext, tt.wantContainer)
+			}
+		})
 	}
 }

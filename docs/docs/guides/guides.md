@@ -18,4 +18,5 @@ Task-oriented walkthroughs for common workflows.
 - [Routing and Ingress](routing-and-ingress.md) — Gateway API patterns and path templates
 - [Private Registries](private-registries.md) — Authentication for HuggingFace, S3, and OCI
 - [Multi-Tenancy](multi-tenancy.md) — Namespace isolation patterns
+- [Restricted Pod Security](restricted-pod-security.md): Run inference pods as non-root under Pod Security `restricted`
 - [Bring Your Own KServe](bring-your-own-kserve.md) — Reference AIM-projected runtimes from your own InferenceService

@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -1334,6 +1335,71 @@ func TestBuildInferenceServiceFromProfile_ServiceAccountPrecedence(t *testing.T)
 	isvc = buildInferenceServiceFromProfile(service, obs)
 	if got := isvc.Spec.Predictor.ServiceAccountName; got != "service-sa" {
 		t.Fatalf("service account override = %q, want service-sa", got)
+	}
+}
+
+func TestBuildInferenceServiceFromProfile_Tolerations(t *testing.T) {
+	gpuTaint := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+	}
+	obs := ServiceObservation{
+		resolvedProfileSpec:   sampleProfileSpec(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+		profileName:           testProfileA,
+		isvcName:              "service-isvc",
+	}
+	if got := buildInferenceServiceFromProfile(service, obs).Spec.Predictor.Tolerations; got != nil {
+		t.Fatalf("tolerations without configuration = %v, want none", got)
+	}
+
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.Tolerations = []corev1.Toleration{gpuTaint}
+	obs.mergedRuntimeConfig = controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig}
+	got := buildInferenceServiceFromProfile(service, obs).Spec.Predictor.Tolerations
+	if len(got) != 1 || got[0] != gpuTaint {
+		t.Fatalf("tolerations from the runtime config = %v, want [%v]", got, gpuTaint)
+	}
+}
+
+// The container security context goes on the model overlay, which KServe
+// merges into the kserve-container of the referenced ServingRuntime.
+func TestBuildInferenceServiceFromProfile_SecurityContexts(t *testing.T) {
+	configPod := &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), SupplementalGroups: []int64{44, 110}}
+	configContainer := &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false)}
+	serviceContainer := &corev1.SecurityContext{}
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+	}
+	obs := ServiceObservation{
+		resolvedProfileSpec:   sampleProfileSpec(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+		profileName:           testProfileA,
+		isvcName:              "service-isvc",
+	}
+	predictor := buildInferenceServiceFromProfile(service, obs).Spec.Predictor
+	if predictor.SecurityContext != nil || predictor.Model.SecurityContext != nil {
+		t.Fatalf("security contexts without configuration = %v, %v, want none",
+			predictor.SecurityContext, predictor.Model.SecurityContext)
+	}
+
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.PodSecurityContext = configPod
+	runtimeConfig.SecurityContext = configContainer
+	obs.mergedRuntimeConfig = controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig}
+	predictor = buildInferenceServiceFromProfile(service, obs).Spec.Predictor
+	if !reflect.DeepEqual(predictor.SecurityContext, configPod) {
+		t.Fatalf("pod security context from the runtime config = %v, want %v", predictor.SecurityContext, configPod)
+	}
+	if !reflect.DeepEqual(predictor.Model.SecurityContext, configContainer) {
+		t.Fatalf("container security context from the runtime config = %v, want %v",
+			predictor.Model.SecurityContext, configContainer)
+	}
+
+	service.Spec.SecurityContext = serviceContainer
+	predictor = buildInferenceServiceFromProfile(service, obs).Spec.Predictor
+	if !reflect.DeepEqual(predictor.Model.SecurityContext, serviceContainer) {
+		t.Fatalf("service container security context = %v, want %v", predictor.Model.SecurityContext, serviceContainer)
 	}
 }
 

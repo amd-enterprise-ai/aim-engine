@@ -148,9 +148,8 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 		legacyFetch := r.legacy().FetchRemoteState(ctx, c, controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModel]{Object: result.legacyModel})
 		result.legacyFetch = &legacyFetch
 	}
-	if model.Spec.ModelID != "" {
-		result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, "")
-	}
+	// Profile generation and the discovery Job tolerations use the runtime config.
+	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, "")
 	// See ModelReconciler.FetchRemoteState for why custom / fine-tuned models
 	// skip native discovery — their image is typically a base image without
 	// AIM_ID / model-specific profiles, and readiness is owned by the legacy
@@ -165,6 +164,7 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 			Image:            model.Spec.Image,
 			ImagePullSecrets: model.Spec.ImagePullSecrets,
 			ServiceAccount:   model.Spec.ServiceAccountName,
+			Tolerations:      aimruntimeconfig.Tolerations(result.runtimeConfig.Value),
 			OwnerRef:         ownerReferenceForClusterModel(model),
 			CurrentState:     model.Status.Discovery,
 			Clientset:        r.Clientset,

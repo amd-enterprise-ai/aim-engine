@@ -157,6 +157,21 @@ func mergeRuntimeConfigs(priority, base *aimv1alpha1.AIMRuntimeConfigCommon) *ai
 		merged.Artifact.S3 = priority.Artifact.S3.DeepCopy()
 	}
 
+	// The generic merge skips empty slices, so an explicit empty namespace
+	// list would otherwise keep the cluster's tolerations.
+	if priority.Tolerations != nil {
+		merged.Tolerations = priority.Tolerations
+	}
+
+	// A namespace security context replaces the cluster's as a whole. The
+	// generic merge would combine their fields, and skips an empty object.
+	if priority.PodSecurityContext != nil {
+		merged.PodSecurityContext = priority.PodSecurityContext
+	}
+	if priority.SecurityContext != nil {
+		merged.SecurityContext = priority.SecurityContext
+	}
+
 	return &merged
 }
 
