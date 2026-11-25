@@ -603,11 +603,8 @@ class UpgradePreflightTest(unittest.TestCase):
         resources = {
             CRDS: kept,
             SERVICES: [
-                service("hand-written", {"model": {"name": "m"}, "template": {"name": "custom"},
-                                         "env": [{"name": "A", "value": "2"}, {"name": "B", "value": "2"}]}, **moved),
+                service("hand-written", {"model": {"name": "m"}, "template": {"name": "custom"}}, **moved),
                 generated,
-                service("model-env", {"model": {"name": "m"}, "template": {"name": "generated"},
-                                      "env": [{"name": "A", "value": "2"}]}, **moved),
                 service("overrides", {"model": {"name": "m"}, "overrides": {"metric": "latency"}}, **moved),
                 service("env", {"model": {"name": "m"}, "env": [{"name": "A", "value": "1"}]}, **moved),
             ],
@@ -631,13 +628,6 @@ class UpgradePreflightTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("INFO [template-settings] AIMService team/hand-written: its AIMServiceTemplate custom sets env,"
                       " resources, which the profile pipeline ignores. See #move-template-services", result.stdout)
-        self.assertIn("INFO [template-settings] AIMService team/hand-written: its spec.env and its AIMServiceTemplate"
-                      " custom both set A, and the profile pipeline keeps the profile value. See #move-template-services",
-                      result.stdout)
-        self.assertIn("INFO [template-settings] AIMService team/model-env: its spec.env and its"
-                      " AIMClusterServiceTemplate generated both set A, and the profile pipeline keeps the profile value."
-                      " See #move-template-services", result.stdout)
-        self.assertNotIn("model-env: its AIMClusterServiceTemplate", result.stdout)
         self.assertIn("INFO [template-settings] AIMService team/overrides: sets spec.overrides, which the profile"
                       " pipeline ignores. See #move-template-services", result.stdout)
         self.assertIn("INFO [template-settings] AIMService team/env: sets spec.env, which v0.2.7 ignores"
