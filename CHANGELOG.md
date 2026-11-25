@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Missing runtime lineage now reports `BaseImageUnresolved` instead of the misleading `InvalidProfileOverrides`, while existing ProfileSet and AIMService resources remain untouched.
 - ProfileSet controllers no longer requeue every set for RuntimeConfig status-only updates.
 - Service overlay profiles now record canonical runtime lineage consistently in both `spec.baseImageRef` and the `aim.eai.amd.com/base-image` annotation, while `spec.image` remains the mapped deployment reference.
+- **The Jobs that the operator creates pass the Pod Security Standard `restricted`.** A namespace that enforces `restricted` refused them. The size check, download, discovery and adapter Jobs now set the `RuntimeDefault` seccomp profile, and each of their containers sets `allowPrivilegeEscalation: false` and drops all capabilities. The `AIMModel` and `AIMClusterModel` discovery Job no longer runs the model image as root; it runs as UID 65532, like the `AIMServiceTemplate` discovery Job. **OpenShift users: before you upgrade, grant the built-in `nonroot-v2` SCC to the service accounts that run these Jobs**, for example `default` in the model namespace and in the operator namespace. Without it, `anyuid` refuses the Jobs because they set a seccomp profile, and the default restricted SCC refuses their fixed UIDs. See `docs/docs/admin/upgrading.md`.
 
 ## [0.2.7] - 2026-10-08
 

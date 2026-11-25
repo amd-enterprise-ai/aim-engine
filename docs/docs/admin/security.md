@@ -16,6 +16,17 @@ The operator runs with restrictive security defaults:
 
 These are configured in the Helm chart and can be adjusted via `manager.podSecurityContext` and `manager.securityContext` values.
 
+### Operator Jobs
+
+The Jobs that the operator creates meet the Kubernetes [Pod Security Standard `restricted`](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted), so a namespace that enforces it admits them. These are the size check, download, discovery, adapter staging, adapter subtree sync and adapter reclaim Jobs. Each Job Pod runs as a non-root user with the `RuntimeDefault` seccomp profile. Each container, including the CA bundle init container, sets `allowPrivilegeEscalation: false` and drops all capabilities.
+
+| Job | User |
+|-----|------|
+| Size check, download and adapter Jobs | UID and GID 1000 |
+| `AIMModel`, `AIMClusterModel`, `AIMServiceTemplate` and `AIMClusterServiceTemplate` discovery | UID 65532 |
+
+The discovery Jobs run the model image and read its profile files, so these files must be readable by UID 65532. The inference pods are not part of this list.
+
 ## RBAC
 
 ### Operator Permissions

@@ -673,15 +673,30 @@ the profile-based reconciler, so no pipeline annotation is needed. Applying
 the file once is valid; the service remains pending until profile discovery
 produces a deployable profile.
 
-On this OpenShift release, the artifact check-size/download Jobs and the
-generated predictor use the `aim-models/default` service account with UID 1000.
-The default restricted SCC rejects that UID. Review the policy with the
-cluster administrator, then grant `anyuid` only to this namespace-local account
-for the release being tested before applying the model:
+On this OpenShift release, the generated predictor uses the
+`aim-models/default` service account with UID 1000. The default restricted SCC
+rejects that UID, so the predictor needs `anyuid`.
+
+The artifact check-size and download Jobs use the same account and UID, and
+they also set the `RuntimeDefault` seccomp profile. The built-in `anyuid` SCC
+does not allow a seccomp profile, so these Jobs need the built-in `nonroot-v2`
+SCC. The same grant covers the adapter staging, subtree sync and reclaim Jobs,
+which use the same account and UID when a service uses adapters. The
+`AIMClusterModel` discovery Job runs in the operator namespace
+`aim-system` as UID 65532. It uses the model's `spec.serviceAccountName`; the
+sample does not set it, so the Job uses the `default` service account and also
+needs `nonroot-v2`.
+
+Review the policy with the cluster administrator, then grant these SCCs only to
+these namespace-local accounts for the release being tested before applying
+the model:
 
 ```bash
+oc adm policy add-scc-to-user nonroot-v2 -z default -n aim-models
 oc adm policy add-scc-to-user anyuid -z default -n aim-models
-oc get rolebinding system:openshift:scc:anyuid -n aim-models
+oc adm policy add-scc-to-user nonroot-v2 -z default -n aim-system
+oc get rolebinding system:openshift:scc:nonroot-v2 system:openshift:scc:anyuid -n aim-models
+oc get rolebinding system:openshift:scc:nonroot-v2 -n aim-system
 ```
 
 Use an approved custom SCC instead when cluster policy forbids `anyuid`. Check
@@ -969,11 +984,13 @@ oc adm policy remove-scc-from-user privileged \
   -z "$DETECTOR_SA" -n aim-system
 ```
 
-If you granted `anyuid` to the model namespace for this test, remove that
-namespace-local grant after the AIM workloads have stopped:
+If you granted `anyuid` and `nonroot-v2` for this test, remove these
+namespace-local grants after the AIM workloads have stopped:
 
 ```bash
 oc adm policy remove-scc-from-user anyuid -z default -n aim-models
+oc adm policy remove-scc-from-user nonroot-v2 -z default -n aim-models
+oc adm policy remove-scc-from-user nonroot-v2 -z default -n aim-system
 ```
 
 If you applied `detector-scc-rolebinding.yaml` instead of the script, remove
