@@ -647,16 +647,27 @@ Carry each setting over:
 | Template, service or model field | Where it goes on v0.2.7 |
 |---|---|
 | template `resources`, `runtimeConfigName`, `imagePullSecrets`, `serviceAccountName` | the same fields on the AIMService |
-| template `caching.env` | the AIMService's `spec.caching.env` |
+| template `caching.env` | the AIMService's `spec.caching.env`, or the hand-written AIMProfile's `spec.caching.env` |
 | template `customProfile.engineArgs`, `customProfile.envVars` and `env` | a hand-written AIMProfile's `spec.engineArgs`, `spec.engineEnv` and `spec.containerEnv`, selected with `spec.profile.name` |
+| download variables, such as `HF_TOKEN` or `AIM_DOWNLOADER_PROTOCOL`, in the template `env` or the service `spec.env` | the AIMService's `spec.caching.env`, or for the template `env` the hand-written AIMProfile's `spec.caching.env` |
 | service `spec.overrides` (metric, precision, hardware) | `spec.profile.selector` (`metric`, `precision`, `acceleratorModel`, `acceleratorCount`) |
 | model `spec.env` | the model's `spec.profiles.overrides.containerEnv` for every derived profile, or an AIMService's `spec.profileOverrides.containerEnv` for one service |
 | model `spec.resources` | the AIMService's or the AIMProfile's `spec.resources` |
 
+A template cache downloads with the template `env` and the service `spec.env`
+as well as the `caching.env` fields. A profile cache uses the AIMProfile's and
+the AIMService's `spec.caching.env` and the model source `env` instead, so a
+download variable left in the template `env` or the service `spec.env` doesn't
+reach the downloads of a moved service. That matters when its profile
+cache downloads the weights, as a Dedicated one does (see
+[Cache outcomes](#cache-outcomes)). Keep a variable in `spec.containerEnv` as
+well if the inference container needs it.
+
 On v0.2.7, a moved service runs without its own `spec.env` and the `spec.env`
 of its AIMRuntimeConfig and AIMClusterRuntimeConfig. If the service needs them,
 set them in `spec.profileOverrides.containerEnv`. That creates an overlay
-profile, whose cache downloads the weights again.
+profile. With a Dedicated cache, the overlay profile's cache downloads the
+weights again.
 
 The preflight prints an `INFO [template-settings]` line for each service whose
 hand-written template sets `customProfile`, `env` or `resources`, or that sets
@@ -737,8 +748,11 @@ Moving a service creates an AIMProfileCache for it. What happens to the cached
 weights depends on the mode of its template cache:
 
 - **Shared**: the profile cache adopts the existing AIMArtifact, so nothing is
-  downloaded again. This needs the same model source URI, caching environment
-  and storage class as the template cache.
+  downloaded again. It adopts an artifact with the same model source URI,
+  whatever env the artifact was downloaded with. If the profile cache sets a
+  storage class, the artifact must have it; a service with adapters needs an
+  artifact with an adapter disk; and for an `s3://` source the artifact must use
+  the same runtime config.
 - **Dedicated**: the template cache owns its artifact, so the profile cache
   downloads the weights again. Both copies use storage until you delete the
   template cache. The preflight's `dedicated-template-caches` lines list these
