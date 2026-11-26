@@ -46,11 +46,19 @@ import (
 // disk launches a reaper Job to reclaim subtrees of deleted services.
 const AdapterReclaimInterval = 15 * time.Minute
 
+// adapterReaperMinAge is the reaper's grace guard: it never removes a subtree
+// modified more recently, so a subtree created after its keep-list snapshot
+// survives.
+const adapterReaperMinAge = 2 * AdapterReclaimInterval
+
 // adapterReaperJobActiveDeadlineSeconds bounds a reaper run, including time
 // spent Pending. The reaper Job has a fixed name and is only created when
 // absent, so a run that never finishes would block every later reclaim; on
 // expiry the Job fails, its TTL removes it, and a later cycle starts a new one.
-const adapterReaperJobActiveDeadlineSeconds = int64(60 * 60)
+// It must stay below adapterReaperMinAge with a margin for clock skew between
+// nodes and the storage server: a run starting later than the grace period
+// after its keep-list snapshot could delete a subtree created after it.
+const adapterReaperJobActiveDeadlineSeconds = int64(20 * 60)
 
 // isAdapter reports whether an artifact is a LoRA adapter definition.
 func isAdapter(mc *aimv1alpha1.AIMArtifact) bool {
@@ -306,10 +314,7 @@ func buildAdapterReaperJob(
 							Env: []corev1.EnvVar{
 								{Name: "ADAPTER_PVC_ROOT", Value: constants.AIMAdapterPVCRoot},
 								{Name: "KEEP_SERVICE_IDS", Value: strings.Join(keepServiceIDs, ",")},
-								// Grace guard: never reap a subtree younger than 2x the
-								// reclaim interval, so a stale keep-list can't delete a
-								// freshly-created subtree.
-								{Name: "MIN_AGE_SECONDS", Value: strconv.Itoa(int(2 * AdapterReclaimInterval.Seconds()))},
+								{Name: "MIN_AGE_SECONDS", Value: strconv.Itoa(int(adapterReaperMinAge.Seconds()))},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{

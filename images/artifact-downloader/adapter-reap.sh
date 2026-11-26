@@ -39,7 +39,9 @@
 # in that gap could be absent from KEEP. The MIN_AGE_SECONDS grace guard is the
 # real safety net: it refuses to delete recently-touched subtrees regardless of
 # keep-list freshness, so a stale/empty list leaves garbage (reclaimed next pass)
-# instead of deleting a live, mounted subtree.
+# instead of deleting a live, mounted subtree. The controller sets the Job's
+# active deadline well below MIN_AGE_SECONDS, so a subtree created after the
+# snapshot is always younger than the grace period when this runs.
 
 set -eu
 

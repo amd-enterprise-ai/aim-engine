@@ -179,9 +179,21 @@ declared set and resolved adapter-disk PVC, and
 `spec.adapters` re-runs the sync to prune removed adapters; replacing a base
 artifact with a new UID-derived adapter PVC re-runs the sync and staging on the
 new disk. The InferenceService keeps mounting the previous disk until every
-adapter whose `AIMArtifact` is `Ready` is staged on the new one, unless the
-previous PVC is gone; until then the `AdaptersReady` message names both PVCs and
-`status.adapters` describes the new disk. While the new base model `AIMArtifact`
+adapter staged there is also staged on the new one, unless the previous PVC is
+gone. Until then:
+
+- `status.adapters` describes the previous disk, which the service still
+  serves from.
+- The `AdaptersReady` message names both PVCs, counts the adapters staged on
+  the new disk, and names any adapter whose staging failed there. An adapter
+  that fails on the new disk keeps the service on the previous one. To move
+  without it, remove it from `spec.adapters` or delete the previous base model
+  `AIMArtifact`.
+- An adapter added to `spec.adapters` is staged on both disks.
+- An adapter removed from `spec.adapters` stays on the previous disk, and the
+  runtime can still load it, until the move completes.
+
+While the new base model `AIMArtifact`
 has no adapter disk PVC yet, the service keeps the previous disk mounted, and
 the `AdaptersReady` message says what that `AIMArtifact` is waiting for,
 including its `DependenciesReachable` message, such as a `ResourceQuota`

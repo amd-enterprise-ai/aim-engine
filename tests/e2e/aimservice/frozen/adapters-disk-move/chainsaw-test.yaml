@@ -78,6 +78,7 @@ spec:
     - name: Freeze the profile cache on the first base artifact
       try:
         - script:
+            timeout: 60s
             env:
               - name: NAMESPACE
                 value: ($namespace)
@@ -169,6 +170,7 @@ spec:
     - name: Point the frozen profile cache at the second base artifact
       try:
         - script:
+            timeout: 60s
             env:
               - name: NAMESPACE
                 value: ($namespace)

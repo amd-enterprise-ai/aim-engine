@@ -1622,8 +1622,8 @@ func TestComposeKeepsStagedAdapterAfterStagingJobCleanup(t *testing.T) {
 }
 
 // A move to another adapter disk keeps the InferenceService on the recorded disk
-// until every adapter that can be staged is Downloaded on the new one, unless
-// the recorded disk is gone.
+// until every adapter Downloaded there is Downloaded on the new one, unless the
+// recorded disk is gone.
 func TestComposeHoldsAdapterDiskMoveUntilStaged(t *testing.T) {
 	running := func(name string) *batchv1.Job {
 		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
@@ -1633,9 +1633,11 @@ func TestComposeHoldsAdapterDiskMoveUntilStaged(t *testing.T) {
 		service      *aimv1alpha2.AIMService
 		jobs         map[string]*batchv1.Job
 		unreadyB     bool
+		unserved     string
 		recordedGone bool
 		syncing      bool
 		wantHeld     bool
+		wantMessage  string
 	}{
 		{name: "subtree sync on the new disk running", service: serviceWithAdapters("lora-a", "lora-b"), syncing: true, wantHeld: true},
 		{name: "nothing staged on the new disk", service: serviceWithAdapters("lora-a", "lora-b"), wantHeld: true},
@@ -1646,6 +1648,17 @@ func TestComposeHoldsAdapterDiskMoveUntilStaged(t *testing.T) {
 		{
 			name: "staging failed on the new disk", service: serviceWithAdapters("lora-a", "lora-b"),
 			jobs: map[string]*batchv1.Job{"lora-a": succeededJob("a"), "lora-b": failedJob("b", "BackoffLimitExceeded", "")}, wantHeld: true,
+			wantMessage: "staging failed on PVC " + testNewAdapterPVC + " for lora-b",
+		},
+		{
+			name:    "staging failed on the new disk for an adapter the recorded disk does not serve",
+			service: serviceWithAdapters("lora-a", "lora-b"), unserved: "lora-b",
+			jobs: map[string]*batchv1.Job{"lora-a": succeededJob("a"), "lora-b": failedJob("b", "BackoffLimitExceeded", "")},
+		},
+		{
+			name:    "an adapter not yet staged on the recorded disk does not hold the move",
+			service: serviceWithAdapters("lora-a", "lora-b"), unserved: "lora-b",
+			jobs: map[string]*batchv1.Job{"lora-a": succeededJob("a"), "lora-b": running("b")},
 		},
 		{
 			name: "every adapter staged", service: serviceWithAdapters("lora-a", "lora-b"),
@@ -1664,7 +1677,9 @@ func TestComposeHoldsAdapterDiskMoveUntilStaged(t *testing.T) {
 			svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
 			svc.Status.AdapterSubtreeSyncKey = desiredAdapterKey(svc, testOldAdapterPVC, testOldAdapterPVCUID)
 			for i := range svc.Spec.Adapters {
-				svc.Status.Adapters = append(svc.Status.Adapters, statusAdapter(svc.Spec.Adapters[i].Name))
+				if name := svc.Spec.Adapters[i].Name; name != tt.unserved {
+					svc.Status.Adapters = append(svc.Status.Adapters, statusAdapter(name))
+				}
 			}
 			artifacts := map[string]*aimv1alpha1.AIMArtifact{}
 			for i := range svc.Spec.Adapters {
@@ -1702,7 +1717,89 @@ func TestComposeHoldsAdapterDiskMoveUntilStaged(t *testing.T) {
 				health.Reason != ReasonStaging || !strings.Contains(health.Message, "serving adapters from PVC old-pvc")) {
 				t.Errorf("health = %s/%s: %q, want Ready/%s naming old-pvc", health.State, health.Reason, health.Message, ReasonStaging)
 			}
+			if health := Health(st, len(svc.Spec.Adapters)); tt.wantMessage != "" && !strings.Contains(health.Message, tt.wantMessage) {
+				t.Errorf("health message %q does not contain %q", health.Message, tt.wantMessage)
+			}
 		})
+	}
+}
+
+// An adapter added while a move is held is staged on the mounted disk as well as
+// the new one, and status.adapters describes the mounted disk. When the service
+// later falls back to the recorded PVC, the adapter staged only on the new disk
+// is not reported Downloaded there and is staged onto it.
+func TestHeldMoveStagesAddedAdapterOnMountedDisk(t *testing.T) {
+	svc := serviceWithAdapters("lora-a", "lora-b")
+	svc.Status.AdapterDiskPersistentVolumeClaim = testOldAdapterPVC
+	svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
+	svc.Status.AdapterSubtreeSyncKey = desiredAdapterKey(serviceWithAdapters("lora-a"), testOldAdapterPVC, testOldAdapterPVCUID)
+	svc.Status.Adapters = []aimv1alpha1.AIMServiceAdapterStatus{statusAdapter("lora-a")}
+	artifacts := map[string]*aimv1alpha1.AIMArtifact{
+		"lora-a": adapterArtifact("lora-a", "base"),
+		"lora-b": adapterArtifact("lora-b", "base"),
+	}
+	running := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "default"}}
+	stagingOn := func(plan controllerutils.PlanResult, pvc, uid string) bool {
+		name := StagingJobName(svc, "lora-b", pvc, uid)
+		return slices.ContainsFunc(plan.GetToApply(), func(obj client.Object) bool { return obj.GetName() == name })
+	}
+	stateOf := func(status *aimv1alpha1.AIMServiceStatus, name string) aimv1alpha1.AIMAdapterState {
+		for _, ad := range status.Adapters {
+			if ad.Name == name {
+				return ad.State
+			}
+		}
+		return ""
+	}
+
+	// lora-a is still staging on the new disk, so the move stays held.
+	deps := depsWith(modelParent(testNewAdapterPVC), artifacts)
+	deps.AdapterDiskPVCUID = testNewAdapterPVCUID
+	deps = withSyncedSubtree(deps, svc)
+	deps.StagingJobs["lora-a"] = controllerutils.FetchResult[*batchv1.Job]{Value: running}
+	st := Compose(svc, deps)
+	if st.HeldAdapterDiskPVC != testOldAdapterPVC || st.HeldAdapterDiskPVCUID != testOldAdapterPVCUID {
+		t.Fatalf("held = %q (%q), want %s (%s)", st.HeldAdapterDiskPVC, st.HeldAdapterDiskPVCUID,
+			testOldAdapterPVC, testOldAdapterPVCUID)
+	}
+	var plan controllerutils.PlanResult
+	Plan(&plan, svc, deps, st, nil)
+	if !stagingOn(plan, testNewAdapterPVC, testNewAdapterPVCUID) || !stagingOn(plan, testOldAdapterPVC, testOldAdapterPVCUID) {
+		t.Errorf("lora-b staged on new disk = %v, on mounted disk = %v; want both",
+			stagingOn(plan, testNewAdapterPVC, testNewAdapterPVCUID), stagingOn(plan, testOldAdapterPVC, testOldAdapterPVCUID))
+	}
+
+	// lora-b lands on the new disk only; status keeps describing the mounted disk.
+	deps.StagingJobs["lora-b"] = controllerutils.FetchResult[*batchv1.Job]{Value: succeededJob("b")}
+	st = Compose(svc, deps)
+	DecorateStatus(&svc.Status, st)
+	if got := stateOf(&svc.Status, "lora-a"); got != aimv1alpha1.AdapterStateDownloaded {
+		t.Errorf("lora-a = %q on the mounted disk, want Downloaded", got)
+	}
+	if got := stateOf(&svc.Status, "lora-b"); got == aimv1alpha1.AdapterStateDownloaded {
+		t.Fatalf("lora-b reported Downloaded on the mounted disk, where it was never staged")
+	}
+	if svc.Status.AdapterDiskPersistentVolumeClaim != testOldAdapterPVC {
+		t.Fatalf("recorded adapter disk = %q, want %s while held", svc.Status.AdapterDiskPersistentVolumeClaim, testOldAdapterPVC)
+	}
+
+	// The parent stops publishing the new PVC, so the service resolves the recorded one.
+	fallback := depsWith(modelParent(""), artifacts)
+	fallback.AdapterDiskPVC = testOldAdapterPVC
+	fallback.AdapterDiskPVCUID = testOldAdapterPVCUID
+	st = Compose(svc, fallback)
+	if st.StorageBindingChanged || st.HeldAdapterDiskPVC != "" {
+		t.Fatalf("changed = %v, held = %q; want the recorded binding resolved", st.StorageBindingChanged, st.HeldAdapterDiskPVC)
+	}
+	for _, ad := range st.Adapters {
+		if ad.Name == "lora-b" && ad.State == aimv1alpha1.AdapterStateDownloaded {
+			t.Fatalf("lora-b reported Downloaded on the recorded disk after the fallback")
+		}
+	}
+	plan = controllerutils.PlanResult{}
+	Plan(&plan, svc, fallback, st, nil)
+	if !stagingOn(plan, testOldAdapterPVC, testOldAdapterPVCUID) {
+		t.Errorf("lora-b not staged onto the recorded disk after the fallback")
 	}
 }
 
@@ -1739,14 +1836,111 @@ func TestFetchDetectsRecordedAdapterDiskGone(t *testing.T) {
 			svc.Status.AdapterDiskPersistentVolumeClaim = testOldAdapterPVC
 			svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
 			parent := modelParent(testNewAdapterPVC)
-			objects := []client.Object{parent, pvc(testNewAdapterPVC, testNewAdapterPVCUID)}
+			recordedJob := succeededJob(StagingJobName(svc, "lora-a", testOldAdapterPVC, testOldAdapterPVCUID))
+			objects := []client.Object{parent, pvc(testNewAdapterPVC, testNewAdapterPVCUID), recordedJob}
 			if tt.recorded != nil {
 				objects = append(objects, tt.recorded)
 			}
 			c := fakeclient.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 
-			if got := Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name}).RecordedAdapterDiskGone; got != tt.want {
-				t.Errorf("RecordedAdapterDiskGone = %v, want %v", got, tt.want)
+			deps := Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name})
+			if deps.RecordedAdapterDiskGone != tt.want {
+				t.Errorf("RecordedAdapterDiskGone = %v, want %v", deps.RecordedAdapterDiskGone, tt.want)
+			}
+			job, fetched := deps.RecordedStagingJobs["lora-a"]
+			if wantFetched := !tt.want; fetched != wantFetched || (fetched && !jobPresent(job)) {
+				t.Errorf("recorded-disk staging Job fetched = %v (present %v), want %v", fetched, jobPresent(job), wantFetched)
+			}
+		})
+	}
+}
+
+// The staging Jobs of a removed adapter are deleted on both disks of a held move,
+// so a re-added adapter is staged again after the subtree sync prunes its files.
+func TestPlanDeletesStagingJobsOfRemovedAdapters(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register core API: %v", err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register batch API: %v", err)
+	}
+	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register AIM API: %v", err)
+	}
+	pvc := func(name, uid string) *corev1.PersistentVolumeClaim {
+		return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(uid)}}
+	}
+	svc := serviceWithAdapters("lora-a")
+	svc.Status.AdapterDiskPersistentVolumeClaim = testOldAdapterPVC
+	svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
+	removed := statusAdapter("lora-b")
+	removed.State = aimv1alpha1.AdapterStateDeleting
+	svc.Status.Adapters = []aimv1alpha1.AIMServiceAdapterStatus{statusAdapter("lora-a"), removed}
+	parent := modelParent(testNewAdapterPVC)
+	declaredJob := StagingJobName(svc, "lora-a", testNewAdapterPVC, testNewAdapterPVCUID)
+	removedNew := StagingJobName(svc, "lora-b", testNewAdapterPVC, testNewAdapterPVCUID)
+	removedOld := StagingJobName(svc, "lora-b", testOldAdapterPVC, testOldAdapterPVCUID)
+	c := fakeclient.NewClientBuilder().WithScheme(scheme).WithObjects(
+		parent,
+		pvc(testNewAdapterPVC, testNewAdapterPVCUID),
+		pvc(testOldAdapterPVC, testOldAdapterPVCUID),
+		succeededJob(declaredJob),
+		succeededJob(removedNew),
+		succeededJob(removedOld),
+	).Build()
+
+	deps := Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name})
+	var plan controllerutils.PlanResult
+	Plan(&plan, svc, deps, Compose(svc, deps), nil)
+
+	var deleted []string
+	for _, obj := range plan.GetToDelete() {
+		deleted = append(deleted, obj.GetName())
+	}
+	slices.Sort(deleted)
+	want := []string{removedNew, removedOld}
+	slices.Sort(want)
+	if !slices.Equal(deleted, want) {
+		t.Errorf("deleted = %v, want %v", deleted, want)
+	}
+}
+
+// A re-added adapter whose previous staging Job is still being deleted waits for
+// a fresh Job; an adapter status records as staged stays Downloaded meanwhile.
+func TestComposeIgnoresStagingJobBeingDeleted(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		recorded  bool
+		wantState aimv1alpha1.AIMAdapterState
+	}{
+		{name: "re-added after its files were pruned", wantState: aimv1alpha1.AdapterStatePending},
+		{name: "staged, Job deleted by its TTL", recorded: true, wantState: aimv1alpha1.AdapterStateDownloaded},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := serviceWithAdapters("lora-a")
+			svc.Status.AdapterDiskPersistentVolumeClaim = testAdapterPVC
+			svc.Status.AdapterDiskPersistentVolumeClaimUID = testAdapterPVCUID
+			svc.Status.AdapterSubtreeSyncKey = desiredAdapterKey(svc, testAdapterPVC, testAdapterPVCUID)
+			if tt.recorded {
+				svc.Status.Adapters = []aimv1alpha1.AIMServiceAdapterStatus{statusAdapter("lora-a")}
+			}
+			deps := depsWith(modelParent(testAdapterPVC), map[string]*aimv1alpha1.AIMArtifact{
+				"lora-a": adapterArtifact("lora-a", "base"),
+			})
+			staging := StagingJobName(svc, "lora-a", testAdapterPVC, testAdapterPVCUID)
+			job := succeededJob(staging)
+			job.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+			deps.StagingJobs["lora-a"] = controllerutils.FetchResult[*batchv1.Job]{Value: job}
+
+			st := Compose(svc, deps)
+			if got := st.Adapters[0].State; got != tt.wantState {
+				t.Fatalf("adapter state = %q, want %q", got, tt.wantState)
+			}
+			var plan controllerutils.PlanResult
+			Plan(&plan, svc, deps, st, nil)
+			if slices.ContainsFunc(plan.GetToApply(), func(obj client.Object) bool { return obj.GetName() == staging }) {
+				t.Error("staging Job planned while the previous one is being deleted")
 			}
 		})
 	}
