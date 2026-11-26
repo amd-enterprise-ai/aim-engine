@@ -356,9 +356,10 @@ type AIMArtifactConfig struct {
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// DownloadJobResources replaces the CPU and memory of the model download
-	// container (default: requests 500m, 1Gi; limits 4, 8Gi). Set requests and
-	// limits: a LimitRange default limit below a request makes the API server
-	// refuse the Pod.
+	// container (default: requests 500m CPU and 1Gi memory, limit 8Gi memory,
+	// no CPU limit). A namespace LimitRange adds its default limit for each
+	// limit that is not set, and the API server refuses the Pod when such a
+	// limit is lower than a request.
 	// +optional
 	DownloadJobResources *corev1.ResourceRequirements `json:"downloadJobResources,omitempty"`
 

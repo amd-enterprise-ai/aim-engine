@@ -288,10 +288,10 @@ func buildDownloadJob(
 }
 
 // resolveDownloadJobResources returns the runtime config's download Job
-// resources, or the default. The default sets requests and limits for CPU and
-// memory, so a namespace LimitRange cannot add a default limit that is lower
-// than a request. The memory limit leaves room for the parallel S3 and Hugging
-// Face transfers and the page cache of the files that they write.
+// resources, or the default. The default has no CPU limit, because a CPU limit
+// throttles the download also when the node has free CPU. The memory limit
+// leaves room for the parallel S3 and Hugging Face transfers and the page cache
+// of the files that they write.
 func resolveDownloadJobResources(runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) corev1.ResourceRequirements {
 	if runtimeConfigSpec != nil && runtimeConfigSpec.Artifact != nil && runtimeConfigSpec.Artifact.DownloadJobResources != nil {
 		return *runtimeConfigSpec.Artifact.DownloadJobResources.DeepCopy()
@@ -302,7 +302,6 @@ func resolveDownloadJobResources(runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfig
 			corev1.ResourceMemory: resource.MustParse("1Gi"),
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("4"),
 			corev1.ResourceMemory: resource.MustParse("8Gi"),
 		},
 	}

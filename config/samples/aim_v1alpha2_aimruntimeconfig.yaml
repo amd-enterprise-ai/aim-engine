@@ -12,7 +12,6 @@ spec:
         cpu: "1"
         memory: 2Gi
       limits:
-        cpu: "8"
         memory: 16Gi
     s3:
       endpoint: https://s3.example.com

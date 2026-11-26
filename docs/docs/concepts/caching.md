@@ -338,9 +338,11 @@ By default, the container of the model download Job has these CPU and memory val
 | | CPU | Memory |
 |---|---|---|
 | Requests | `500m` | `1Gi` |
-| Limits | `4` | `8Gi` |
+| Limits | none | `8Gi` |
 
 The memory limit leaves room for the parallel transfers of the downloader and for the page cache of the files that it writes, because the page cache counts toward the memory limit of the container.
+
+The default has no CPU limit, because a CPU limit throttles the download also when the node has free CPU. A namespace `LimitRange` with a default CPU limit (`default.cpu`, or `max.cpu` when `default.cpu` is not set) adds that limit to the container. Kubernetes has no value that means "no limit" and overrides this default. When the default CPU limit is lower than the CPU request of `500m`, the API server refuses the Pod, and the download Job shows the refusal in its events (`kubectl describe job`).
 
 To change the values, set `spec.artifact.downloadJobResources` in an `AIMClusterRuntimeConfig` or a namespace `AIMRuntimeConfig`. The value replaces the default as a whole, and the value of a namespace runtime config replaces the value of the cluster runtime config as a whole. With the Helm chart, set it in `clusterRuntimeConfig.spec`.
 
@@ -356,11 +358,10 @@ spec:
         cpu: "1"
         memory: 2Gi
       limits:
-        cpu: "8"
         memory: 16Gi
 ```
 
-Set requests and limits for both CPU and memory. A namespace `LimitRange` adds its default for each request or limit that the container does not set, and the API server refuses the Pod when such a default limit is lower than a request. For example, with `requests.cpu: "1"` and no CPU limit, a `LimitRange` with a default CPU limit of `500m` makes the API server refuse the Pod. The `max` values of a `LimitRange` and a `ResourceQuota` in the namespace also apply to these values.
+A namespace `LimitRange` adds its default for each request or limit that the container does not set, and the API server refuses the Pod when such a default limit is lower than a request. For example, with `requests.cpu: "1"` and no CPU limit, a `LimitRange` with a default CPU limit of `500m` makes the API server refuse the Pod. To give the download more CPU than the default CPU limit of the `LimitRange`, set `limits.cpu` in `downloadJobResources`, or raise the default. The `max` values of a `LimitRange` and a `ResourceQuota` in the namespace also apply to these values.
 
 An empty value (`downloadJobResources: {}`) sets no resources. The namespace `LimitRange`, if there is one, then decides.
 

@@ -307,7 +307,6 @@ func TestBuildDownloadJobDefaultResources(t *testing.T) {
 			corev1.ResourceMemory: resource.MustParse("1Gi"),
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("4"),
 			corev1.ResourceMemory: resource.MustParse("8Gi"),
 		},
 	}

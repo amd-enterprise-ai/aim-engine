@@ -105,9 +105,8 @@ spec:
                   downloadJobResources:
                     description: |-
                       DownloadJobResources replaces the CPU and memory of the model download
-                      container (default: requests 500m, 1Gi; limits 4, 8Gi). Set requests and
-                      limits: a LimitRange default limit below a request makes the API server
-                      refuse the Pod.
+                      container (default: requests 500m CPU and 1Gi memory, limit 8Gi memory,
+                      no CPU limit).
                     properties:
                       claims:
                         description: |-
@@ -2001,9 +2000,8 @@ spec:
                   downloadJobResources:
                     description: |-
                       DownloadJobResources replaces the CPU and memory of the model download
-                      container (default: requests 500m, 1Gi; limits 4, 8Gi). Set requests and
-                      limits: a LimitRange default limit below a request makes the API server
-                      refuse the Pod.
+                      container (default: requests 500m CPU and 1Gi memory, limit 8Gi memory,
+                      no CPU limit).
                     properties:
                       claims:
                         description: |-
