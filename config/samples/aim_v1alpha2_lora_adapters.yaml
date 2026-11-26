@@ -18,7 +18,7 @@
 #    sample standalone; normally an adapter-enabled profile cache creates or
 #    updates the model artifact and requests the adapter disk automatically.
 #    The artifact provisions two PVCs: model cache and shared RWX adapter disk.
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMArtifact
 metadata:
   labels:
@@ -35,7 +35,7 @@ spec:
 ---
 # 2. A shared, pre-authored adapter logically compatible with the canonical
 #    base model ID. It is not owned by this concrete AIMArtifact.
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMArtifact
 metadata:
   labels:

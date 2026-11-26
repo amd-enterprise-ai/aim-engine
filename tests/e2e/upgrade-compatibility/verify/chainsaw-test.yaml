@@ -157,3 +157,25 @@ spec:
                   aim.eai.amd.com/service: upgrade-cluster-service
               status:
                 status: Ready
+
+    # AIMArtifact, AIMRuntimeConfig, AIMClusterRuntimeConfig and
+    # AIMClusterModelSource are served at v1alpha1 and v1alpha2. Objects
+    # created by the baseline stay stored at v1alpha1.
+    - name: Kept kinds stay stored at v1alpha1 and served at both versions
+      try:
+        - script:
+            content: |
+              set -eu
+              for resource in aimartifacts aimruntimeconfigs aimclusterruntimeconfigs aimclustermodelsources; do
+                stored=$(kubectl get crd "${resource}.aim.eai.amd.com" -o jsonpath='{.status.storedVersions}')
+                if [ "$stored" != '["v1alpha1"]' ]; then
+                  echo "ERROR: ${resource} storedVersions is $stored, want [\"v1alpha1\"]"
+                  exit 1
+                fi
+                served=$(kubectl get crd "${resource}.aim.eai.amd.com" -o json \
+                  | jq -r '[.spec.versions[] | select(.served) | .name] | sort | join(" ")')
+                if [ "$served" != "v1alpha1 v1alpha2" ]; then
+                  echo "ERROR: ${resource} serves '$served', want 'v1alpha1 v1alpha2'"
+                  exit 1
+                fi
+              done

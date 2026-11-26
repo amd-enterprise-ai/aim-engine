@@ -1,5 +1,7 @@
 {{- if .Values.clusterRuntimeConfig.enable }}
-apiVersion: aim.eai.amd.com/v1alpha1
+# Fixed version. Helm matches this object by group, kind and name, so an
+# upgrade updates it in place. The CRDs must already serve v1alpha2.
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: {{ .Values.clusterRuntimeConfig.name }}

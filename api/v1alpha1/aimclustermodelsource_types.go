@@ -35,6 +35,8 @@ const DefaultSyncInterval = 1 * time.Hour
 // AIMClusterModelSource automatically discovers and syncs AI model images from container registries.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="AIMClusterModelSource v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"
 // +kubebuilder:resource:scope=Cluster,shortName=aimclsrc,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Models",type=integer,JSONPath=`.status.discoveredModels`

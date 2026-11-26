@@ -179,7 +179,7 @@ Use a separate profile set or derived model to select and transform an image mod
 `AIMClusterModelSource` discovers official AIM images from a container registry and creates an `AIMClusterModel` for each match.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: amd-models
@@ -194,13 +194,8 @@ spec:
   maxModels: 500
 ```
 
-The discovered `AIMClusterModel` resources are then reconciled the same way as manually applied image-based models. Registry-discovered images are written through the v1alpha2 API with `spec.image` set.
+The discovered `AIMClusterModel` resources are then reconciled the same way as manually applied image-based models. Registry-discovered images and entries declared under `spec.models` are written as v1alpha2 `AIMClusterModel` resources.
 
-:::{admonition} v1alpha1 source resource
-:class: note
-
-`AIMClusterModelSource` itself remains under `v1alpha1`. It creates both registry-discovered images and the entries declared under `spec.models` as v1alpha2 `AIMClusterModel` resources.
-:::
 ### Selecting images
 
 Use `images` for simple explicit lists, or `filters` for per-image controls:

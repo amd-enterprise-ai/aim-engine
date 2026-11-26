@@ -79,6 +79,9 @@ record_named aimservices "${namespace}" upgrade-cluster-service
 record_selected aimprofilecaches "${namespace}" 'aim.eai.amd.com/service=upgrade-namespace-service'
 record_selected aimprofilecaches "${namespace}" 'aim.eai.amd.com/service=upgrade-cluster-service'
 
+# Chart-managed default. An upgrade updates it in place; this UID must not change.
+record_named aimclusterruntimeconfigs - default
+
 record_named aimclusterprofiles - upgrade-cluster-source
 record_named aimclustermodels - upgrade-cluster-model
 record_selected aimclusterprofilesets - \

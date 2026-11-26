@@ -158,7 +158,7 @@ Provide the activation query through the default RuntimeConfig to apply it to
 all AIMServices that do not select another `runtimeConfigName`:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default

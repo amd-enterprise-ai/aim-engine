@@ -5,7 +5,7 @@ AIM Engine uses persistent volumes for model caching. This guide covers storage 
 :::{admonition} API versions
 :class: note
 
-`AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources. Their storage fields (`spec.storage`, `spec.artifactStorageQuota`, `spec.artifact.defaultRetentionPriority`) apply to the v1alpha2 AIMServices and profile caches that use them.
+`AIMRuntimeConfig` / `AIMClusterRuntimeConfig` examples use `aim.eai.amd.com/v1alpha2`. Their storage fields (`spec.storage`, `spec.artifactStorageQuota`, `spec.artifact.defaultRetentionPriority`) apply to the v1alpha2 AIMServices and profile caches that use them.
 :::
 ## Requirements
 
@@ -20,7 +20,7 @@ Model caching requires `ReadWriteMany` (RWX) persistent volumes so that multiple
 Set the default storage class for all AIM PVCs via cluster runtime configuration:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -36,7 +36,7 @@ Without this setting, AIM Engine uses the cluster's default storage class.
 AIM Engine sizes PVCs based on discovered model sizes plus a configurable headroom percentage. This accounts for filesystem overhead and temporary files during downloads.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -90,7 +90,7 @@ This limits the total allocated PVC storage for all AIMArtifacts in that namespa
 Configure default namespace limits and a cluster-wide cap via `AIMClusterRuntimeConfig`:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -119,7 +119,7 @@ Lower `retentionPriority` values are evicted first. Among equal priorities, the 
 To make all artifacts evictable by default without setting `retentionPriority` on each one:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
