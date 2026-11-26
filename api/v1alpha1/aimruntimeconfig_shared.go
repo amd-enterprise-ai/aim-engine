@@ -203,11 +203,11 @@ type AIMServiceRuntimeConfig struct {
 	// Env specifies environment variables for inference containers. On an
 	// AIMService they apply to that service; on a runtime config they set
 	// namespace or cluster defaults. Download Jobs don't read this field. Merge
-	// order (highest to lowest): AIMService spec.env > template env or
-	// AIMProfile containerEnv > AIMRuntimeConfig spec.env >
-	// AIMClusterRuntimeConfig spec.env. They don't override the operator-owned
-	// variables, and the AIM runtime applies the AIMProfile engineEnv over all
-	// of them. For download Jobs, use spec.caching.env.
+	// order (highest to lowest): AIMService spec.env > AIMProfile containerEnv
+	// > AIMRuntimeConfig spec.env > AIMClusterRuntimeConfig spec.env. They
+	// don't override the operator-owned variables, and the AIM runtime applies
+	// the AIMProfile engineEnv over all of them. For download Jobs, use
+	// spec.caching.env.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
