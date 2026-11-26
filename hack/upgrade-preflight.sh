@@ -159,7 +159,7 @@ check_operator_upgraded() {
   while IFS=$'\t' read -r object image; do
     version="$(image_version "${image}")"
     if [[ -n "${version}" ]] && version_at_least "${minimum_version}" "${version}"; then
-      report operator-upgraded 4-upgrade-the-operator "${object}: runs v${version} on the new CRDs, upgrade it"
+      report operator-upgraded 5-upgrade-the-operator "${object}: runs v${version} on the new CRDs, upgrade it"
     fi
   done <<<"${images}"
 }

@@ -107,9 +107,9 @@ bash upgrade-preflight.sh &&
 This deletes the template CRDs. See
 [Remove the template CRDs](#remove-the-template-crds) first.
 
-Upgrade the operator right after the CRDs, with only step 3 in between. The
-running v0.2.7 pod survives the CRDs upgrade, but a restarted v0.2.7 pod can't
-run on the new CRDs: it exits about every two minutes on
+Upgrade the operator right after the CRDs, with only steps 3 and 4 in between.
+The running v0.2.7 pod survives the CRDs upgrade, but a restarted v0.2.7 pod
+can't run on the new CRDs: it exits about every two minutes on
 `Could not wait for Cache to sync`, and reports Ready in between.
 
 Wait for the CRDs to become established:

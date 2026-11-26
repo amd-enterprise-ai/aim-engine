@@ -583,7 +583,7 @@ jobs:
       - name: Upgrade operator
         run: |
           if [[ "${{ matrix.crds_install }}" == helm ]]; then
-            # The command of docs/docs/admin/upgrading.md#4-upgrade-the-operator.
+            # The command of docs/docs/admin/upgrading.md#5-upgrade-the-operator.
             # --reuse-values keeps the baseline image, so set the one built in this run.
             helm upgrade aim-engine dist/chart \
               --namespace aim-system \

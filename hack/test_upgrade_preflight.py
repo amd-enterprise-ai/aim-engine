@@ -503,7 +503,7 @@ class UpgradePreflightTest(unittest.TestCase):
         cases = {
             "v0.2.7 operator": ({"deployments": [operator("docker.io/amdenterpriseai/aim-engine:v0.2.7")]},
                                 "operator-upgraded", "Deployment aim-system/aim-engine-controller-manager",
-                                "4-upgrade-the-operator"),
+                                "5-upgrade-the-operator"),
             "template object left": ({TEMPLATE_CACHES: [item("AIMTemplateCache", "cache")]},
                                      "template-objects", "AIMTemplateCache team/cache", "delete-template-objects"),
         }
