@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: download-env-split
+spec:
+  profile:
+    name: test-download-env-split
+  runtimeConfigName: download-env-split
+  caching:
+    mode: Shared
+  replicas: 1

@@ -216,7 +216,7 @@ For platform-managed fine-tunes that should be visible across namespaces, use `A
 Most fine-tune sources are gated. Provide pull credentials via either:
 
 - A per-source `env` entry on `overrides.modelSources[].env` (HuggingFace `HF_TOKEN`, S3 keys, OCI registry secrets, etc.), or
-- A namespace `AIMRuntimeConfig` that injects the credential into every downloader job in the namespace.
+- A namespace `AIMRuntimeConfig` whose `spec.caching.env` injects the credential into every download Job in the namespace.
 
 See [Private Registries](private-registries.md) for the full credential model and the recommended secret layout.
 

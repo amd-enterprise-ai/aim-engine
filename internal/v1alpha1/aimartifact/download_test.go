@@ -639,3 +639,49 @@ func TestJobsGetRuntimeConfigTolerations(t *testing.T) {
 		}
 	}
 }
+
+func TestJobsReadOnlyRuntimeConfigCachingEnv(t *testing.T) {
+	mc := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			SourceURI: "hf://org/model",
+			Env:       []corev1.EnvVar{{Name: "HF_TOKEN", Value: "artifact-token"}},
+		},
+	}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+			Env: []corev1.EnvVar{
+				{Name: "INFERENCE_ONLY", Value: "1"},
+				{Name: "HTTPS_PROXY", Value: "http://inference-proxy:3128"},
+			},
+		},
+		Caching: &aimv1alpha1.AIMRuntimeConfigCachingConfig{
+			Env: []corev1.EnvVar{
+				{Name: "HTTPS_PROXY", Value: "http://download-proxy:3128"},
+				{Name: "HF_TOKEN", Value: "runtime-config-token"},
+			},
+		},
+	}
+
+	for name, job := range map[string]*batchv1.Job{
+		"check-size": buildCheckSizeJob(mc, config, false),
+		"download":   buildDownloadJob(mc, config, 1000, false),
+	} {
+		env := envToMap(job.Spec.Template.Spec.Containers[0].Env)
+		if env["HTTPS_PROXY"] != "http://download-proxy:3128" {
+			t.Errorf("%s Job HTTPS_PROXY = %q, want the runtime config spec.caching.env value", name, env["HTTPS_PROXY"])
+		}
+		if env["HF_TOKEN"] != "artifact-token" {
+			t.Errorf("%s Job HF_TOKEN = %q, want the AIMArtifact spec.env value", name, env["HF_TOKEN"])
+		}
+		if _, set := env["INFERENCE_ONLY"]; set {
+			t.Errorf("%s Job has INFERENCE_ONLY from the runtime config spec.env", name)
+		}
+	}
+
+	config.Caching.Env = append(config.Caching.Env, corev1.EnvVar{Name: "AIM_DOWNLOADER_PROTOCOL", Value: "HTTP"})
+	env := envToMap(buildDownloadJob(mc, config, 1000, false).Spec.Template.Spec.Containers[0].Env)
+	if env["AIM_DOWNLOADER_PROTOCOL"] != "HTTP" {
+		t.Errorf("AIM_DOWNLOADER_PROTOCOL = %q, want the runtime config spec.caching.env value over the default", env["AIM_DOWNLOADER_PROTOCOL"])
+	}
+}

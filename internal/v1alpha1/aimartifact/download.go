@@ -185,13 +185,9 @@ func buildDownloadJob(
 		}
 	}
 
-	// Get env vars from runtime config, or empty slice if nil
-	var runtimeEnv []corev1.EnvVar
-	if runtimeConfigSpec != nil {
-		runtimeEnv = runtimeConfigSpec.Env
-	}
-
-	// Merge env vars with precedence: mc.Spec.Env > runtimeConfigSpec.Env > filter > defaults
+	// Merge env vars with precedence: mc.Spec.Env > runtime config
+	// spec.caching.env > filter > defaults. The runtime config spec.env is for
+	// inference containers and doesn't reach this Job.
 	defaultEnv := []corev1.EnvVar{
 		{Name: "AIM_DOWNLOADER_PROTOCOL", Value: "XET,HF_TRANSFER"},
 		{Name: "TMPDIR", Value: "/tmp/"},
@@ -210,7 +206,7 @@ func buildDownloadJob(
 	s3Settings := ResolveS3PodSettings(
 		s3Connection,
 		defaultEnv,
-		runtimeEnv,
+		aimruntimeconfig.CachingEnv(runtimeConfigSpec),
 		mc.Spec.Env,
 	)
 
@@ -308,16 +304,13 @@ func buildCheckSizeJob(
 		}
 	}
 
-	// Get auth env vars from runtime config and spec, plus download filter
-	var runtimeEnv []corev1.EnvVar
-	if runtimeConfigSpec != nil {
-		runtimeEnv = runtimeConfigSpec.Env
-	}
+	// Auth env comes from the runtime config spec.caching.env and the artifact
+	// spec.env, over the download filter env.
 	filterEnv := downloadFilterEnvVars(resolveDownloadFilter(mc, runtimeConfigSpec))
 	s3Settings := ResolveS3PodSettings(
 		s3Connection,
 		filterEnv,
-		runtimeEnv,
+		aimruntimeconfig.CachingEnv(runtimeConfigSpec),
 		mc.Spec.Env,
 	)
 

@@ -3,7 +3,8 @@ kind: AIMRuntimeConfig
 metadata:
   name: cache-cleanup-fail-config
 spec:
-  # This env var causes the download script to fail immediately
-  env:
-    - name: AIM_DEBUG_CAUSE_FAILURE
-      value: "true"
+  caching:
+    # This env var causes the download script to fail immediately
+    env:
+      - name: AIM_DEBUG_CAUSE_FAILURE
+        value: "true"

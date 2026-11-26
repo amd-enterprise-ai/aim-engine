@@ -1,0 +1,26 @@
+# Namespace AIMProfile with containerEnv and an hf:// model source, without
+# accelerator fields so it reaches Ready in any cluster. The image is a
+# placeholder: the test checks the env KServe renders, not a serving pod.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: test-inference-env-order
+spec:
+  aimId: test/inference-env-order
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  primary: true
+  image: registry.example.com/aim-cpu-base:0.12.0
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # The download is simulated, so the PVC only needs to provision.
+      size: 1Gi
+  containerEnv:
+    - name: SHARED_RC_PROFILE
+      value: profile
+    - name: SHARED_PROFILE_SVC
+      value: profile

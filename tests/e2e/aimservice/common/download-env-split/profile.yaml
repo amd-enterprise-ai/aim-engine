@@ -1,0 +1,22 @@
+# Namespace AIMProfile with an hf:// model source and no accelerator fields, so
+# it reaches Ready in any cluster. The image is a placeholder: the test checks
+# the env that the download Job and the predictor Deployment get, not a
+# serving pod.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: test-download-env-split
+spec:
+  aimId: test/download-env-split
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  primary: true
+  image: registry.example.com/aim-cpu-base:0.12.0
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # The download is simulated, so the PVC only needs to provision.
+      size: 1Gi

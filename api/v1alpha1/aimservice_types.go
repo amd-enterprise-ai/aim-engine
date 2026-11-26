@@ -239,10 +239,12 @@ type AIMServiceCachingConfig struct {
 
 	// Env supplies credentials for model downloads (for example a HuggingFace
 	// token via secretKeyRef). Unlike the inference container env, these
-	// variables reach only the model-download Job, so download-only secrets are
-	// never injected into the serving container. They are also reachable for
-	// cluster-scoped and overlay profiles, where the profile's own caching.env
-	// does not exist. Merged over the profile's caching.env (service wins).
+	// variables reach only the model download Jobs, so download-only secrets
+	// are never injected into the serving container. Merged over the
+	// AIMProfile or template caching.env (service wins); with
+	// spec.profileOverrides the AIMProfile is the seed profile. A
+	// cluster-scoped profile has no caching.env, so this is its only
+	// per-service download env.
 	// +optional
 	// +listType=map
 	// +listMapKey=name

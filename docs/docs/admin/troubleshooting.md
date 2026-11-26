@@ -125,7 +125,7 @@ kubectl get aimtemplatecache -n <namespace>
 kubectl get aimartifact -n <namespace>
 
 # Check download job
-kubectl get jobs -l aim.eai.amd.com/artifact=<artifact-name> -n <namespace>
+kubectl get jobs -l aim.eai.amd.com/cache.name=<artifact-name>,aim.eai.amd.com/component=download -n <namespace>
 kubectl logs job/<job-name> -n <namespace>
 ```
 
@@ -135,6 +135,33 @@ Common causes:
 - **Download failure** — Network issues, authentication errors, or protocol incompatibility
 - **Verification failure** — Files missing or corrupt after download. The downloader automatically retries with a clean state. Check the download job logs for details on which files failed verification
 - **PVC binding failure** — Storage class doesn't support `ReadWriteMany`
+
+### A download keeps failing after you add a credential
+
+A `Failed` artifact retries on its own. Its failed Job is removed after it finishes, 5 minutes later for the size check (`aim.eai.amd.com/component=check-size`) and 10 minutes later for the download, and AIM Engine then starts a new one. Each new Job reads the runtime config `spec.caching.env` as it is at that moment, so a credential such as `HF_TOKEN` added there is used by the next retry. To retry at once, delete the failed Job:
+
+```bash
+kubectl get aimartifact -n <namespace>
+kubectl get jobs -l aim.eai.amd.com/cache.name=<artifact-name> -n <namespace>
+kubectl delete job <job-name> -n <namespace>
+```
+
+A credential added to the AIMService or AIMProfile `spec.caching.env`, or to a model source `env`, doesn't reach an existing artifact:
+
+- The artifact's `spec.env` is set when the artifact is created.
+- A cache uses a matching artifact for the same source whatever its env and status, a `Failed` one included (see [Shared mode](../concepts/caching.md#shared-mode)).
+- An AIMService doesn't change the env of an `AIMProfileCache` that already exists, and a Shared cache can have been created by another service that uses the same profile.
+
+To download again with the new env, find the cache and the artifacts it uses, delete the cache, then delete the `Failed` artifact if it is still there:
+
+```bash
+kubectl get aimprofilecache -n <namespace>
+kubectl get aimprofilecache <cache-name> -n <namespace> -o jsonpath='{.status.artifacts}'
+kubectl delete aimprofilecache <cache-name> -n <namespace>
+kubectl delete aimartifact <artifact-name> -n <namespace>
+```
+
+Deleting a cache also deletes the artifacts it created that aren't `Ready`; an artifact it reused from another cache stays until you delete it. An artifact has no finalizer, and deleting it removes its PVC and Jobs. The AIMService then creates a new cache with its current `spec.caching.env`, and the cache creates a new artifact. A cache that an AIMProfile owns (`spec.caching.enabled`) is recreated by the AIMProfile with its current `spec.caching.env`. Don't delete a `Ready` artifact this way: services may be serving from it.
 
 ### Routing Not Working
 

@@ -1,0 +1,121 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: download env split in the profile pipeline (v1alpha2)
+#
+# A runtime config's spec.caching.env reaches the download Job and its spec.env
+# doesn't. Its spec.env reaches the inference container and its
+# spec.caching.env doesn't.
+#
+# spec.env sets AIM_DEBUG_CAUSE_FAILURE, which fails any download Job that gets
+# it, so the AIMArtifact reaches Ready only if download Jobs ignore spec.env.
+# spec.caching.env puts the download into simulation mode.
+#
+# Pod readiness is not asserted: the placeholder image never pulls. The
+# predictor Deployment is where KServe has merged the env sources.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-download-env-split
+spec:
+  timeouts:
+    assert: 180s
+    # AIMProfileCache -> AIMArtifact -> PVC finalizers can make namespace
+    # teardown exceed the 60s default.
+    cleanup: 240s
+  steps:
+    - name: Create the runtime config and the profile
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-download-env-split
+              status:
+                status: Ready
+
+    - name: Create the service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the artifact downloads although spec.env sets the failure switch
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                labels:
+                  aim.eai.amd.com/profile.name: test-download-env-split
+              status:
+                status: Ready
+
+    - name: Assert the download Job gets spec.caching.env and not spec.env
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              JOBS=$(kubectl get jobs -n "$NAMESPACE" -l aim.eai.amd.com/component=download -o json)
+              COUNT=$(echo "$JOBS" | jq '.items | length')
+              if [ "$COUNT" != 1 ]; then
+                echo "ERROR: expected 1 download Job, found $COUNT"
+                exit 1
+              fi
+              ENV=$(echo "$JOBS" | jq -c '[.items[0].spec.template.spec.containers[]?
+                | select(.name == "model-download") | .env[]? | {(.name): .value}] | add // {}')
+              echo "download Job env: $ENV"
+
+              fail=0
+              check() {
+                if ! echo "$ENV" | jq -e "$1" >/dev/null; then
+                  echo "ERROR: $2"
+                  fail=1
+                fi
+              }
+              check '.DOWNLOAD_ONLY == "1"' "DOWNLOAD_ONLY from spec.caching.env is missing"
+              check '.AIM_DEBUG_SIMULATE_HF_DOWNLOAD == "1"' "AIM_DEBUG_SIMULATE_HF_DOWNLOAD from spec.caching.env is missing"
+              check 'has("INFERENCE_ONLY") | not' "INFERENCE_ONLY from spec.env reached the download Job"
+              check 'has("AIM_DEBUG_CAUSE_FAILURE") | not' "AIM_DEBUG_CAUSE_FAILURE from spec.env reached the download Job"
+              exit $fail
+
+    - name: Wait for the predictor Deployment
+      try:
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: download-env-split
+                  component: predictor
+
+    - name: Assert the inference container gets spec.env and not spec.caching.env
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              DEPLOY=$(kubectl get deployment -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=download-env-split,component=predictor -o json)
+              ENV=$(echo "$DEPLOY" | jq -c '[.items[0].spec.template.spec.containers[]?
+                | select(.name == "kserve-container") | .env[]? | {(.name): .value}] | add // {}')
+              echo "kserve-container env: $ENV"
+
+              fail=0
+              check() {
+                if ! echo "$ENV" | jq -e "$1" >/dev/null; then
+                  echo "ERROR: $2"
+                  fail=1
+                fi
+              }
+              check '.INFERENCE_ONLY == "1"' "INFERENCE_ONLY from spec.env is missing"
+              check 'has("DOWNLOAD_ONLY") | not' "DOWNLOAD_ONLY from spec.caching.env reached the inference container"
+              check 'has("AIM_DEBUG_SIMULATE_HF_DOWNLOAD") | not' "AIM_DEBUG_SIMULATE_HF_DOWNLOAD from spec.caching.env reached the inference container"
+              exit $fail

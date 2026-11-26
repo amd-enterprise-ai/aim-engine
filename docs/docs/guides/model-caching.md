@@ -63,7 +63,7 @@ For HuggingFace models (`hf://` sources), AIM Engine tries download protocols in
 
 The default order is `XET,HF_TRANSFER`. If a protocol fails, the downloader cleans up incomplete files and tries the next one.
 
-Override the protocol order via runtime configuration:
+Override the protocol order via the runtime config `spec.caching.env`, which reaches the download Jobs:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -72,9 +72,10 @@ metadata:
   name: default
   namespace: ml-team
 spec:
-  env:
-    - name: AIM_DOWNLOADER_PROTOCOL
-      value: "HF_TRANSFER,HTTP"
+  caching:
+    env:
+      - name: AIM_DOWNLOADER_PROTOCOL
+        value: "HF_TRANSFER,HTTP"
 ```
 
 ## Storage Sizing

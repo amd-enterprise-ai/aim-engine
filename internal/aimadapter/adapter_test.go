@@ -41,6 +41,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 )
 
 const (
@@ -1152,7 +1153,7 @@ func TestBuildStagingJobUsesTypedAdapterS3Connection(t *testing.T) {
 		SourceURI:   artifact.Spec.SourceURI,
 	}
 	config := &aimv1alpha1.AIMRuntimeConfigCommon{
-		AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+		Caching: &aimv1alpha1.AIMRuntimeConfigCachingConfig{
 			Env: []corev1.EnvVar{
 				{Name: "HTTPS_PROXY", Value: "http://admin-proxy:8080"},
 				{Name: "AWS_PROFILE", Value: "admin-profile"},
@@ -1204,10 +1205,10 @@ func TestBuildStagingJobUsesTypedAdapterS3Connection(t *testing.T) {
 		t.Errorf("AWS_CA_BUNDLE = %q, want mounted CA path", env["AWS_CA_BUNDLE"])
 	}
 	if env["HTTPS_PROXY"] != "http://admin-proxy:8080" {
-		t.Errorf("HTTPS_PROXY = %q, want administrator RuntimeConfig proxy", env["HTTPS_PROXY"])
+		t.Errorf("HTTPS_PROXY = %q, want administrator runtime config caching proxy", env["HTTPS_PROXY"])
 	}
 	if env["AWS_PROFILE"] != "admin-profile" {
-		t.Errorf("AWS_PROFILE = %q, want administrator RuntimeConfig profile", env["AWS_PROFILE"])
+		t.Errorf("AWS_PROFILE = %q, want administrator runtime config caching profile", env["AWS_PROFILE"])
 	}
 	if env["AIM_S3_LOG_LEVEL"] != "DEBUG" {
 		t.Errorf("AIM_S3_LOG_LEVEL = %q, want safe artifact tuning", env["AIM_S3_LOG_LEVEL"])
@@ -1229,8 +1230,11 @@ func TestBuildStagingJobUsesTypedAdapterS3Connection(t *testing.T) {
 
 func TestRuntimeConfigForAdapterStagingUsesAdapterS3TrustBoundary(t *testing.T) {
 	serviceConfig := &aimv1alpha1.AIMRuntimeConfigCommon{
-		AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
-			Env: []corev1.EnvVar{{Name: "SERVICE_ENV", Value: "preserved"}},
+		Caching: &aimv1alpha1.AIMRuntimeConfigCachingConfig{
+			Env: []corev1.EnvVar{
+				{Name: "SERVICE_ENV", Value: "preserved"},
+				{Name: "SERVICE_ONLY", Value: "kept"},
+			},
 		},
 		Artifact: &aimv1alpha1.AIMArtifactConfig{
 			ModelDownloadImage: "service-image",
@@ -1240,7 +1244,7 @@ func TestRuntimeConfigForAdapterStagingUsesAdapterS3TrustBoundary(t *testing.T) 
 		},
 	}
 	adapterConfig := &aimv1alpha1.AIMRuntimeConfigCommon{
-		AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+		Caching: &aimv1alpha1.AIMRuntimeConfigCachingConfig{
 			Env: []corev1.EnvVar{
 				{Name: "SERVICE_ENV", Value: "adapter-wins"},
 				{Name: "HTTPS_PROXY", Value: "http://adapter-proxy:8080"},
@@ -1263,14 +1267,21 @@ func TestRuntimeConfigForAdapterStagingUsesAdapterS3TrustBoundary(t *testing.T) 
 	if got.Artifact.ModelDownloadImage != "service-image" {
 		t.Errorf("modelDownloadImage = %q, want service setting", got.Artifact.ModelDownloadImage)
 	}
-	if envMap(got.Env)["SERVICE_ENV"] != "adapter-wins" {
-		t.Error("adapter RuntimeConfig env did not take precedence")
+	cachingEnv := envMap(aimruntimeconfig.CachingEnv(got))
+	if cachingEnv["SERVICE_ENV"] != "adapter-wins" {
+		t.Error("adapter runtime config caching env did not take precedence")
 	}
-	if envMap(got.Env)["HTTPS_PROXY"] != "http://adapter-proxy:8080" {
-		t.Error("adapter RuntimeConfig proxy was not preserved")
+	if cachingEnv["HTTPS_PROXY"] != "http://adapter-proxy:8080" {
+		t.Error("adapter runtime config caching proxy was not preserved")
+	}
+	if cachingEnv["SERVICE_ONLY"] != "kept" {
+		t.Error("service runtime config caching env was dropped")
 	}
 	if serviceConfig.Artifact.S3.Endpoint != "https://service-s3.example" {
 		t.Error("service runtime config was mutated")
+	}
+	if envMap(serviceConfig.Caching.Env)["SERVICE_ENV"] != "preserved" {
+		t.Error("service runtime config caching env was mutated")
 	}
 }
 
@@ -1746,6 +1757,35 @@ func TestAdapterJobsUseInferenceTolerations(t *testing.T) {
 			if len(got) != 1 || got[0] != tt.want {
 				t.Errorf("%s: %s Job tolerations = %v, want [%v]", tt.name, name, got, tt.want)
 			}
+		}
+	}
+}
+
+func TestAdapterJobsReadOnlyRuntimeConfigCachingEnv(t *testing.T) {
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+			Env: []corev1.EnvVar{{Name: "INFERENCE_ONLY", Value: "1"}},
+		},
+		Caching: &aimv1alpha1.AIMRuntimeConfigCachingConfig{
+			Env: []corev1.EnvVar{{Name: "HTTPS_PROXY", Value: "http://download-proxy:3128"}},
+		},
+	}
+	ad := Observation{
+		Name: "lora-a", AdapterPath: "lora-a", ModelID: "org/adapter",
+		BaseModelID: "org/base", SourceURI: "hf://org/lora-a",
+	}
+	svc := serviceWithAdapters("lora-a")
+
+	for name, job := range map[string]*batchv1.Job{
+		"staging":      BuildStagingJob(svc, adapterArtifact("lora-a", "base"), testAdapterPVC, testAdapterPVCUID, ad, config),
+		"subtree-sync": BuildSubtreeSyncJob(svc, modelParent(testAdapterPVC), testAdapterPVC, testAdapterPVCUID, config),
+	} {
+		env := envMap(job.Spec.Template.Spec.Containers[0].Env)
+		if env["HTTPS_PROXY"] != "http://download-proxy:3128" {
+			t.Errorf("%s Job HTTPS_PROXY = %q, want the runtime config spec.caching.env value", name, env["HTTPS_PROXY"])
+		}
+		if _, set := env["INFERENCE_ONLY"]; set {
+			t.Errorf("%s Job has INFERENCE_ONLY from the runtime config spec.env", name)
 		}
 	}
 }

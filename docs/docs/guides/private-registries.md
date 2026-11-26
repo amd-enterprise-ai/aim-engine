@@ -130,7 +130,7 @@ spec:
 
 ## HuggingFace Authentication
 
-For models sourced from private HuggingFace repositories (`hf://` URLs), provide a token via environment variables in the runtime configuration:
+For models sourced from private HuggingFace repositories (`hf://` URLs), provide a token to the download Jobs through the runtime config `spec.caching.env`:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -139,13 +139,18 @@ metadata:
   name: default
   namespace: ml-team
 spec:
-  env:
-    - name: HF_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: hf-credentials
-          key: token
+  caching:
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: hf-credentials
+            key: token
 ```
+
+The same entry in an AIMService or AIMProfile `spec.caching.env` scopes the token to that service's or profile's downloads.
+
+A model with `modelSources` is served from the downloaded weights, so the inference container normally doesn't need the token. A model without `modelSources` isn't cached: the engine downloads it when the inference container starts. Then, or when the engine fetches other files from the Hub at startup, the token must also be in the inference container env, for example in the AIMService or runtime config `spec.env`.
 
 Create the secret:
 
@@ -446,7 +451,8 @@ signing, and TLS. The downloader also recognises these optional environment
 variables for legacy configuration and transfer tuning:
 
 When a typed S3 connection is active, transport, proxy, trust, and credential
-provider variables must come from the administrator-owned RuntimeConfig.
+provider variables must come from the administrator-owned runtime config
+`spec.caching.env`.
 Artifact-level `spec.env` accepts only the bounded `AIM_S3_LOG_LEVEL`,
 `AIM_S3_MAX_WORKERS`, `AIM_S3_MAX_CONCURRENCY`, and
 `AIM_S3_MULTIPART_CHUNKSIZE_MB` tuning variables. Other artifact variables are
@@ -495,13 +501,7 @@ event, and should only be used briefly while diagnosing a certificate problem.
 
 ## Credential Scope
 
-Environment variables from runtime configurations are merged in this order (highest to lowest priority):
-
-1. `AIMService.spec.env` — per-service
-2. `AIMRuntimeConfig.spec.env` — per-namespace
-3. `AIMClusterRuntimeConfig.spec.env` — cluster-wide
-
-This allows you to set cluster-wide defaults (e.g., HuggingFace token) and override per namespace or service when needed.
+Download credentials are merged from the most specific source to the cluster default: the model source `env`, then the AIMService `spec.caching.env`, then the AIMProfile `spec.caching.env`, then the `AIMRuntimeConfig` `spec.caching.env`, then the `AIMClusterRuntimeConfig` `spec.caching.env`. This lets you set a cluster-wide default, such as a HuggingFace token, and override it per namespace, profile or service. See [Download Job env](../concepts/runtime-config.md#download-job-env) for the full order, including the env that AIM Engine sets and the v1alpha1 template pipeline.
 
 ## Troubleshooting
 
@@ -525,9 +525,11 @@ Common causes:
 Check artifact download job logs:
 
 ```bash
-kubectl get jobs -l aim.eai.amd.com/artifact=<artifact-name> -n <namespace>
+kubectl get jobs -l aim.eai.amd.com/cache.name=<artifact-name> -n <namespace>
 kubectl logs job/<job-name> -n <namespace>
 ```
+
+If the download keeps failing after you add the credential, see [A download keeps failing after you add a credential](../admin/troubleshooting.md#a-download-keeps-failing-after-you-add-a-credential).
 
 ## Next Steps
 

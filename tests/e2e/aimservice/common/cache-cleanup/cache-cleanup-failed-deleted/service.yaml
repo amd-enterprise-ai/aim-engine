@@ -1,5 +1,6 @@
 # Service using model.image with caching enabled
-# Uses runtime config with AIM_DEBUG_CAUSE_FAILURE to trigger download failure
+# Uses a runtime config whose spec.caching.env sets AIM_DEBUG_CAUSE_FAILURE to
+# trigger download failure
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:

@@ -476,6 +476,42 @@ func TestComposeState_SelectsBestStatus(t *testing.T) {
 	}
 }
 
+// TestComposeState_AdoptsFailedArtifactWhateverEnv pins that a Shared cache
+// adopts a Failed artifact for the same source when it is the only candidate,
+// even though the cache env differs from the artifact env. The cache then
+// plans nothing, so a credential added to the cache env afterwards doesn't
+// reach the artifact and doesn't start a new one.
+func TestComposeState_AdoptsFailedArtifactWhateverEnv(t *testing.T) {
+	r := &ProfileCacheReconciler{}
+	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
+	pc.Spec.Env = []corev1.EnvVar{{Name: "HF_TOKEN", Value: "added-later"}}
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
+		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
+	})
+	failedArtifact := makeArtifact("artifact-failed", "hf://org/model-a", "org/model-a", constants.AIMStatusFailed, "")
+
+	fetch := ProfileCacheFetchResult{
+		profileCache: pc,
+		profile:      controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
+		artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
+			Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{failedArtifact}},
+		},
+	}
+	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}
+	obs := r.ComposeState(context.Background(), reconcileCtx, fetch)
+
+	if got := obs.BestArtifacts["org/model-a"].Name; got != "artifact-failed" {
+		t.Fatalf("best artifact = %q, want the Failed artifact-failed", got)
+	}
+	if len(obs.MissingCaches) != 0 {
+		t.Errorf("missing caches = %v, want none", obs.MissingCaches)
+	}
+	result := r.PlanResources(context.Background(), reconcileCtx, obs)
+	if n := len(result.GetToApply()) + len(result.GetToApplyWithoutOwnerRef()); n != 0 {
+		t.Errorf("planned %d artifacts, want none", n)
+	}
+}
+
 func TestComposeState_NoProfileResolved(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc-missing", "missing-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")

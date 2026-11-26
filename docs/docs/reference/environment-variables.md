@@ -1,6 +1,19 @@
 # Environment Variables
 
-Environment variables used by the AIM Engine operator and artifact downloader.
+Environment variables used by the AIM Engine operator, the artifact downloader and inference containers.
+
+## Choosing where to set a variable
+
+Pick the field by what the variable is for and which workloads should get it:
+
+- **A pod setting for one service**, such as a proxy, a log level or `HOME`: the AIMService `spec.env`. It wins over the AIMProfile `containerEnv` and the runtime configs. It can't change the operator-owned variables or the profile `engineEnv`, and in the profile pipeline it doesn't reach download Jobs. For a name that the profile `containerEnv` also sets, use a literal value (see [the rules](../concepts/runtime-config.md#inference-container-env)).
+- **Engine tuning for one service**: `spec.profileOverrides.engineEnv`. This creates an overlay profile. With a Shared cache the overlay reuses the downloaded weights; with a Dedicated cache it downloads them again.
+- **Defaults for every service in a namespace or the cluster**: the `spec.env` of the `AIMRuntimeConfig` or `AIMClusterRuntimeConfig`.
+- **Download credentials and downloader settings**, such as `HF_TOKEN` or `AIM_DOWNLOADER_PROTOCOL`: `spec.caching.env` on the AIMService, the AIMProfile or the runtime config. These reach only download Jobs. A model without `modelSources` isn't cached: the engine downloads it when the inference container starts, so a gated model then needs `HF_TOKEN` in `spec.env` too (see [HuggingFace Authentication](../guides/private-registries.md#huggingface-authentication)).
+- **For profile authors**: put engine tuning in `engineEnv`. It takes literal values. The AIM runtime applies it over all pod env, checks its `VLLM_*` names against the variables vLLM knows and, on CPU, scales its `OMP_*` values to the detected cores. Put pod settings in `containerEnv`. It can use `secretKeyRef`, and it holds the AIM runtime's own `AIM_*` settings. The AIM runtime reads those once at startup, before it applies `engineEnv`, so an `AIM_*` name in `engineEnv` doesn't change the AIM runtime; it only reaches the engine.
+- **Variable names stay as they are.** vLLM gets the whole pod env, so a variable needs no prefix to reach it. The field you choose decides which value wins.
+
+The full orders are in [Inference container env](../concepts/runtime-config.md#inference-container-env) and [Download Job env](../concepts/runtime-config.md#download-job-env).
 
 ## Operator Environment Variables
 
@@ -11,7 +24,7 @@ Environment variables used by the AIM Engine operator and artifact downloader.
 
 ## Artifact Downloader Variables
 
-These are set automatically by the operator on download jobs.
+These are set automatically by the operator on download jobs. To override one, or to add a credential such as `HF_TOKEN`, use `spec.caching.env` (see [Download Job env](../concepts/runtime-config.md#download-job-env)).
 
 ### Download Configuration
 
@@ -71,7 +84,7 @@ For typed S3 connections, `AIMArtifact.spec.env` accepts only
 `AIM_S3_LOG_LEVEL`, `AIM_S3_MAX_WORKERS`, `AIM_S3_MAX_CONCURRENCY`, and
 `AIM_S3_MULTIPART_CHUNKSIZE_MB`, with bounded literal values. Proxy, transport,
 trust, process, and credential-provider variables must be configured in the
-administrator-owned RuntimeConfig. `AIM_S3_LOG_LEVEL` affects only downloader
+administrator-owned runtime config `spec.caching.env`. `AIM_S3_LOG_LEVEL` affects only downloader
 package logs; AWS SDK and HTTP wire loggers remain at `WARNING`.
 
 ## Inference Container Variables
@@ -88,39 +101,28 @@ These are set on inference containers by the operator. The "Source" column lists
 | `AIM_METRIC` | Profile / Template | Optimization metric (`latency` or `throughput`). |
 | `AIM_PRECISION` | Profile / Template | Model precision (e.g., `fp16`, `fp8`). |
 | `AIM_MODEL_ID` | Profile / Template | Model identifier for custom models (base container deployments). Mutually exclusive with `AIM_ID`. |
-| `AIM_ENGINE_ARGS` | Merged | JSON-encoded engine arguments. v1alpha2: merged from service `profileOverrides.engineArgs`, profile `engineArgs`, runtime config, and profile defaults. v1alpha1: merged from service, template, runtime config, and profile. |
+| `AIM_ENGINE_ARGS` | Merged | JSON-encoded engine arguments. v1alpha2: merged key by key from the AIMService `spec.env`, the profile `containerEnv` and the runtime config `spec.env`; the AIM runtime merges the result over the profile `engineArgs`, including `profileOverrides.engineArgs`. Direct NVIDIA vLLM profiles don't read it. v1alpha1: merged from service, template, and runtime config; the AIM runtime merges it over the selected profile's engine arguments. |
 | `AIM_ADAPTER_MAX_RANK` | Adapter controller | Static mode: inferred from the largest declared adapter rank. Dynamic mode: `AIMService.spec.adapterRuntime.maxRank`, then namespace/cluster RuntimeConfig, then default `32`. |
 
 ### Environment Variable Merge Order
-
-For variables that are not framework-owned, the most specific value wins:
 
 :::{admonition} Framework-owned v1alpha2 variables
 :class: important
 
 `AIM_ENGINE`, `AIM_PROFILE_ID`, `AIM_ID`, `AIM_MODEL_ID`, and
-`AIM_CACHE_PATH` are assembled from the resolved profile and cache state after
-normal environment merging. Values with those names in service or profile
-`containerEnv` do not override the operator-managed values. Configure the
-corresponding profile fields instead.
+`AIM_CACHE_PATH` are set from the resolved profile and cache state. AIM Engine
+ignores these names in the AIMService `spec.env` and the runtime config
+`spec.env`, and the values it sets win over the profile `containerEnv`,
+including `spec.profileOverrides.containerEnv`. Configure the corresponding
+profile fields instead.
 :::
 
-::::{tab-set}
-:::{tab-item} v1alpha2
-1. `AIMService.spec.env` (highest priority)
-2. `AIMService.spec.profileOverrides.engineEnv` / `containerEnv` (overlay on top of the resolved profile)
-3. Resolved `AIMProfile` / `AIMClusterProfile` env (`spec.engineEnv`, `spec.containerEnv`, plus profile-derived vars such as metric/precision)
-4. Merged runtime config env (`AIMRuntimeConfig.spec.env` overriding `AIMClusterRuntimeConfig.spec.env`)
-5. Operator defaults (lowest priority)
-:::
+An inference container gets its env at two levels:
 
-:::{tab-item} v1alpha1 (legacy)
-1. `AIMService.spec.env` (highest priority)
-2. `AIMServiceTemplate.spec.env` (plus template-derived vars such as metric/precision/profile)
-3. Merged runtime config env (`AIMRuntimeConfig.spec.env` overriding `AIMClusterRuntimeConfig.spec.env`)
-4. Operator defaults (lowest priority)
-:::
-::::
+- **Engine process.** For a profile that runs the AIM runtime, the AIM runtime applies the AIMProfile `engineEnv`, including `spec.profileOverrides.engineEnv`, over all pod env before it starts the engine.
+- **Pod env.** The env that AIM Engine sets wins, then the AIMService `spec.env`, then the AIMProfile `containerEnv`, then the `AIMRuntimeConfig` `spec.env`, then the `AIMClusterRuntimeConfig` `spec.env`.
+
+[Inference container env](../concepts/runtime-config.md#inference-container-env) gives the full order, the entries that AIM Engine leaves out, how `AIM_ENGINE_ARGS` is merged, and how direct NVIDIA vLLM profiles and the v1alpha1 template pipeline differ. Download Jobs get their env from other fields, in the order given in [Download Job env](../concepts/runtime-config.md#download-job-env).
 
 ## Next Steps
 

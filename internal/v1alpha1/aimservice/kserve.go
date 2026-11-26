@@ -411,7 +411,8 @@ func resolvedModelId(templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon) str
 // Precedence order (highest to lowest):
 // 1. Service.Spec.Env (user-specified on service)
 // 2. Template.Spec.Env
-// 3. Runtime config env vars
+// 3. Runtime config spec.env (AIMRuntimeConfig over AIMClusterRuntimeConfig);
+// download Jobs read the runtime config spec.caching.env instead
 // 4. System defaults
 func buildMergedEnvVars(
 	service *aimv1alpha1.AIMService,

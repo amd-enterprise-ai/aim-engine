@@ -1,0 +1,210 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: env order in the inference container (v1alpha2)
+#
+# Env from the runtime config spec.env, the AIMProfile containerEnv and the
+# AIMService spec.env reaches the inference container in this order, highest
+# first: operator-owned names, AIMService spec.env, AIMProfile containerEnv,
+# runtime config spec.env. The test reads the env from the kserve-container of
+# the predictor Deployment, where KServe has merged the InferenceService env
+# over the ServingRuntime env.
+#
+# | Variable           | Set in                       | Expected in container |
+# | RC_ONLY            | runtime config               | rc                    |
+# | SVC_ONLY           | service                      | svc                   |
+# | SHARED_RC_PROFILE  | runtime config and profile   | profile               |
+# | SHARED_PROFILE_SVC | profile and service          | svc                   |
+# | AIM_PROFILE_ID     | service (another value)      | the operator's value  |
+#
+# The service and runtime config env go on the InferenceService only, so the
+# AIMProfile and its ServingRuntime don't change, and editing the service
+# spec.env doesn't recreate the AIMProfileCache or the AIMArtifact.
+#
+# Pod readiness is not asserted: the placeholder image never pulls. The
+# runtime config spec.caching.env puts the download into simulation mode.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-inference-env-order
+spec:
+  timeouts:
+    assert: 180s
+    # AIMProfileCache -> AIMArtifact -> PVC finalizers can make namespace
+    # teardown exceed the 60s default.
+    cleanup: 240s
+  steps:
+    - name: Create the runtime config and the profile
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-inference-env-order
+              status:
+                status: Ready
+
+    - name: Create the service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Wait for the profile cache and the predictor Deployment
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: inference-env-order
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: inference-env-order
+                  component: predictor
+
+    - name: Assert the env order in the rendered inference container
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              RUNTIME=$(kubectl get inferenceservice -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=inference-env-order \
+                -o jsonpath='{.items[0].spec.predictor.model.runtime}')
+              CONTAINER_ENV=$(kubectl get deployment -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=inference-env-order,component=predictor -o json \
+                | jq -c '[.items[0].spec.template.spec.containers[]? | select(.name == "kserve-container") | .env[]?]')
+              ENV=$(echo "$CONTAINER_ENV" | jq -c 'map({(.name): .value}) | add // {}')
+              SR_PROFILE_ID=$(kubectl get servingruntime -n "$NAMESPACE" "$RUNTIME" -o json \
+                | jq -r '.spec.containers[]? | select(.name == "kserve-container") | .env[]?
+                  | select(.name == "AIM_PROFILE_ID") | .value')
+              echo "ServingRuntime $RUNTIME AIM_PROFILE_ID: $SR_PROFILE_ID"
+              echo "kserve-container env: $ENV"
+
+              fail=0
+              check() {
+                if ! echo "$ENV" | jq -e "$1" >/dev/null; then
+                  echo "ERROR: $2"
+                  fail=1
+                fi
+              }
+              check '.RC_ONLY == "rc"' "RC_ONLY: expected the runtime config value rc"
+              check '.SVC_ONLY == "svc"' "SVC_ONLY: expected the service value svc"
+              check '.SHARED_RC_PROFILE == "profile"' "SHARED_RC_PROFILE: the profile containerEnv must win over the runtime config spec.env"
+              check '.SHARED_PROFILE_SVC == "svc"' "SHARED_PROFILE_SVC: the service spec.env must win over the profile containerEnv"
+              if [ -z "$SR_PROFILE_ID" ] || [ "$SR_PROFILE_ID" = from-service ]; then
+                echo "ERROR: the ServingRuntime must carry the operator's AIM_PROFILE_ID, got '$SR_PROFILE_ID'"
+                fail=1
+              fi
+              check ".AIM_PROFILE_ID == \"$SR_PROFILE_ID\"" "AIM_PROFILE_ID: expected the operator's value $SR_PROFILE_ID, not the service value"
+              COUNT=$(echo "$CONTAINER_ENV" | jq '[.[] | select(.name == "AIM_PROFILE_ID")] | length')
+              if [ "$COUNT" != 1 ]; then
+                echo "ERROR: expected one AIM_PROFILE_ID entry, found $COUNT"
+                fail=1
+              fi
+              exit $fail
+
+    - name: Assert the profile and its ServingRuntime don't get the service or runtime config env
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              RUNTIME=$(kubectl get inferenceservice -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=inference-env-order \
+                -o jsonpath='{.items[0].spec.predictor.model.runtime}')
+              PROFILE=$(kubectl get aimprofiles.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                test-inference-env-order -o json)
+              RUNTIME_JSON=$(kubectl get servingruntime -n "$NAMESPACE" "$RUNTIME" -o json)
+
+              fail=0
+              for name in RC_ONLY SVC_ONLY; do
+                if echo "$PROFILE" | grep -q "$name"; then
+                  echo "ERROR: the AIMProfile contains $name"
+                  fail=1
+                fi
+                if echo "$RUNTIME_JSON" | grep -q "$name"; then
+                  echo "ERROR: the ServingRuntime $RUNTIME contains $name"
+                  fail=1
+                fi
+              done
+              SR_SHARED=$(echo "$RUNTIME_JSON" | jq -r '.spec.containers[]? | select(.name == "kserve-container")
+                | .env[]? | select(.name == "SHARED_PROFILE_SVC") | .value')
+              if [ "$SR_SHARED" != profile ]; then
+                echo "ERROR: the ServingRuntime must keep the profile value of SHARED_PROFILE_SVC, got '$SR_SHARED'"
+                fail=1
+              fi
+              exit $fail
+
+    - name: Edit the service env and assert the cache and artifact stay
+      try:
+        - script:
+            timeout: 180s
+            content: |
+              set -eu
+              PCS=$(kubectl get aimprofilecaches.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" -o json)
+              ARTS=$(kubectl get aimartifacts.v1alpha1.aim.eai.amd.com -n "$NAMESPACE" -o json)
+              if [ "$(echo "$PCS" | jq '.items | length')" != 1 ] || [ "$(echo "$ARTS" | jq '.items | length')" != 1 ]; then
+                echo "ERROR: expected one AIMProfileCache and one AIMArtifact before the edit"
+                kubectl get aimprofilecaches,aimartifacts -n "$NAMESPACE"
+                exit 1
+              fi
+              PC_NAME=$(echo "$PCS" | jq -r '.items[0].metadata.name')
+              PC_UID=$(echo "$PCS" | jq -r '.items[0].metadata.uid')
+              ART_NAME=$(echo "$ARTS" | jq -r '.items[0].metadata.name')
+              ART_UID=$(echo "$ARTS" | jq -r '.items[0].metadata.uid')
+              echo "before: AIMProfileCache $PC_NAME ($PC_UID), AIMArtifact $ART_NAME ($ART_UID)"
+
+              kubectl patch aimservices.v1alpha2.aim.eai.amd.com inference-env-order -n "$NAMESPACE" --type=merge -p '{
+                "spec": {"env": [
+                  {"name": "SVC_ONLY", "value": "svc-updated"},
+                  {"name": "SHARED_PROFILE_SVC", "value": "svc"},
+                  {"name": "AIM_PROFILE_ID", "value": "from-service"}
+                ]}
+              }'
+
+              updated=""
+              for _ in $(seq 1 50); do
+                updated=$(kubectl get deployment -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/service=inference-env-order,component=predictor -o json \
+                  | jq -r '.items[0].spec.template.spec.containers[]? | select(.name == "kserve-container")
+                    | .env[]? | select(.name == "SVC_ONLY") | .value')
+                [ "$updated" = svc-updated ] && break
+                sleep 3
+              done
+              if [ "$updated" != svc-updated ]; then
+                echo "ERROR: the predictor Deployment did not get SVC_ONLY=svc-updated (got '$updated')"
+                exit 1
+              fi
+              echo "predictor Deployment has SVC_ONLY=svc-updated"
+
+              fail=0
+              if [ "$(kubectl get aimprofilecaches.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" -o json | jq '.items | length')" != 1 ] \
+                || [ "$(kubectl get aimartifacts.v1alpha1.aim.eai.amd.com -n "$NAMESPACE" -o json | jq '.items | length')" != 1 ]; then
+                echo "ERROR: the edit created another AIMProfileCache or AIMArtifact"
+                kubectl get aimprofilecaches,aimartifacts -n "$NAMESPACE"
+                fail=1
+              fi
+              NEW_PC_UID=$(kubectl get aimprofilecaches.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" "$PC_NAME" -o jsonpath='{.metadata.uid}')
+              NEW_ART_UID=$(kubectl get aimartifacts.v1alpha1.aim.eai.amd.com -n "$NAMESPACE" "$ART_NAME" -o jsonpath='{.metadata.uid}')
+              if [ "$NEW_PC_UID" != "$PC_UID" ]; then
+                echo "ERROR: AIMProfileCache $PC_NAME was recreated ($PC_UID -> $NEW_PC_UID)"
+                fail=1
+              fi
+              if [ "$NEW_ART_UID" != "$ART_UID" ]; then
+                echo "ERROR: AIMArtifact $ART_NAME was recreated ($ART_UID -> $NEW_ART_UID)"
+                fail=1
+              fi
+              exit $fail
