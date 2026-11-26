@@ -31,13 +31,13 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -102,11 +102,11 @@ func (r *AIMArtifactReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Adapter artifacts are cascade-deleted with their parent model artifact, so
 	// ensure the owner reference is in place before reconciling.
 	if model.Spec.Type == aimv1alpha1.ArtifactTypeAdapter {
-		updated, err := r.ensureAdapterParentOwnerRef(ctx, &model)
+		added, err := r.ensureAdapterParentOwnerRef(ctx, &model)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if updated {
+		if added {
 			// The owner-ref Update re-triggers reconciliation; let it run fresh.
 			return ctrl.Result{}, nil
 		}
@@ -213,7 +213,11 @@ func downloadJobPodPredicate() predicate.Predicate {
 
 // ensureAdapterParentOwnerRef sets an owner reference from a type=adapter artifact
 // to its parent model artifact so Kubernetes-native cascade reclaims the adapter
-// when the parent is deleted. Returns true when an update was performed.
+// when the parent is deleted. The reference names aim.eai.amd.com/v1alpha2; an
+// existing v1alpha1 reference is rewritten in place. Returns true when it added
+// the reference.
+//
+// Remove the v1alpha1 rewrite in the release that deletes the v1alpha1 entries.
 func (r *AIMArtifactReconciler) ensureAdapterParentOwnerRef(ctx context.Context, adapter *aimv1alpha1.AIMArtifact) (bool, error) {
 	if adapter.Spec.ParentArtifact == "" {
 		return false, nil
@@ -228,16 +232,20 @@ func (r *AIMArtifactReconciler) ensureAdapterParentOwnerRef(ctx context.Context,
 		return false, err
 	}
 
-	// Already owned by this parent?
 	for _, ref := range adapter.GetOwnerReferences() {
-		if ref.UID == parent.UID {
-			return false, nil
+		if ref.UID == parent.GetUID() {
+			return false, controllerutils.RewriteV1alpha1OwnerReference(ctx, r.Client, adapter, parent.GetUID())
 		}
 	}
 
-	if err := controllerutil.SetOwnerReference(&parent, adapter, r.Scheme); err != nil {
-		return false, err
-	}
+	// controller and blockOwnerDeletion stay unset. Background garbage collection
+	// follows the owner reference without either flag.
+	adapter.SetOwnerReferences(append(adapter.GetOwnerReferences(), metav1.OwnerReference{
+		APIVersion: aimv1alpha2.GroupVersion.String(),
+		Kind:       "AIMArtifact",
+		Name:       parent.GetName(),
+		UID:        parent.GetUID(),
+	}))
 	if err := r.Update(ctx, adapter); err != nil {
 		return false, err
 	}

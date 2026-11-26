@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Records the UID and owner references of the v0.2.7 lane's services, their
-# InferenceServices, profile caches and artifacts, its models, the profiles its
-# models produce with their primary flag, the predictor pods of the service
+# InferenceServices, profile caches, artifacts and PVCs, its models, the profiles
+# its models produce with their primary flag, the predictor pods of the service
 # moved by aim-template-migration, and the chart-managed AIMClusterRuntimeConfig.
 # The lane records them after that move and before and after the upgrade, and
 # diffs the files.
@@ -27,7 +27,7 @@ primaries() {
 
 mkdir -p "$(dirname "${output}")"
 {
-  for resource in aimservices inferenceservices aimprofilecaches aimartifacts aimmodels; do
+  for resource in aimservices inferenceservices aimprofilecaches aimartifacts aimmodels pvc; do
     kubectl get "${resource}" -n "${namespace}" -o json | identities
   done
   kubectl get pods -n "${namespace}" \

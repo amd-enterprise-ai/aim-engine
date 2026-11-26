@@ -1096,6 +1096,18 @@ them, and expect Dedicated caches to download again. Do the steps at the start
 of [Rollback](#rollback) first; v0.2.7 otherwise moves services back to the
 template pipeline, creates templates again and stops reconciling some models.
 
+This release rewrites the owner references of artifact PVCs, adapter
+AIMArtifacts and discovered AIMClusterModels to v1alpha2 AIMArtifact and
+AIMClusterModelSource. v0.2.7's CRDs don't serve that version, so after the
+rollback Kubernetes can't resolve those owners. The children stay, and v0.2.7
+logs `no matches for kind "AIMArtifact" in version "aim.eai.amd.com/v1alpha2"`
+for events on such a PVC; the error is harmless. Deleting such an AIMArtifact
+or AIMClusterModelSource on v0.2.7 leaves its children behind. Upgrading again
+removes them, or delete them by hand: the PVCs carry the
+`aim.eai.amd.com/cache.name` label, adapters name their parent in
+`spec.parentArtifact`, and discovered models carry the
+`aim.eai.amd.com/model-source` label.
+
 ## Next Steps
 
 - [Installation Reference](installation.md) — Full installation options
