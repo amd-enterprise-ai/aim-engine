@@ -17,7 +17,7 @@ Two fields set the security contexts of the inference pods: `spec.podSecurityCon
 Set `spec.podSecurityContext` and `spec.securityContext`, for example in the runtime config `default` of the namespace. AIM Engine uses the runtime config `default` for each service in the namespace that does not set `runtimeConfigName`:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default

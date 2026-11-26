@@ -433,7 +433,7 @@ than cumulative counter totals, because the activation trigger uses a fixed
 `spec.tolerations` adds tolerations to the pods of AIMService inference workloads and to the Jobs that prepare a model, so they can be scheduled onto tainted nodes, such as GPU nodes reserved for inference:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default

@@ -174,7 +174,7 @@ After updating the CRDs but before upgrading the operator:
 2. Copy each download setting into the `spec.caching.env` of the same runtime config. The operator before the upgrade doesn't read `spec.caching.env`, so the copy doesn't change running downloads:
 
    ```yaml
-   apiVersion: aim.eai.amd.com/v1alpha1
+   apiVersion: aim.eai.amd.com/v1alpha2
    kind: AIMRuntimeConfig
    metadata:
      name: default
