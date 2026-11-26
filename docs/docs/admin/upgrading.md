@@ -169,6 +169,8 @@ After updating the CRDs but before upgrading the operator:
      jq -r '.items[] | select(.spec.env != null) | [.metadata.namespace, .metadata.name, ([.spec.env[].name] | join(","))] | @tsv'
    ```
 
+   The [upgrade preflight](#run-the-upgrade-preflight) names the download variables among them in `runtime-config-download-env` lines. Before the CRD update these are `INFO` lines. After it, each variable that `spec.caching.env` doesn't set yet is a `FAIL` line, and the preflight passes once you have copied them all.
+
 2. Copy each download setting into the `spec.caching.env` of the same runtime config. The operator before the upgrade doesn't read `spec.caching.env`, so the copy doesn't change running downloads:
 
    ```yaml
@@ -572,10 +574,16 @@ section of this guide that fixes it:
 | `template-objects` | An AIMServiceTemplate, AIMClusterServiceTemplate or AIMTemplateCache exists | [Delete template objects](#delete-template-objects) |
 | `template-finalizers` | An AIMService or AIMTemplateCache has a template cleanup finalizer | [Delete template objects](#delete-template-objects) |
 | `stale-owner-references` | An InferenceService, HTTPRoute, ScaledObject, PVC, Job, ConfigMap, AIMArtifact, AIMProfile, AIMProfileCache or AIMModel is owned by a v1alpha1 AIMService, AIMModel, AIMClusterModel or template object. Each line ends with the `kubectl patch` command that fixes the reference | [Remove stale v1alpha1 owner references](#remove-stale-v1alpha1-owner-references) |
+| `runtime-config-download-env` | After the CRD update, the `spec.env` of an AIMRuntimeConfig or AIMClusterRuntimeConfig sets a download variable that its `spec.caching.env` doesn't: `HF_TOKEN`, `HF_ENDPOINT`, an `AIM_DOWNLOADER_*`, `AIM_S3_*` or `AWS_*` variable, or `HTTP_PROXY`, `HTTPS_PROXY` or `NO_PROXY` in upper or lower case. Before the CRD update, each of these names is an `INFO` line | [Move download settings to `spec.caching.env`](#4-move-download-settings-to-speccachingenv) |
 
 `INFO` lines list Dedicated template caches with their sizes (see
-[Cache outcomes](#cache-outcomes)), and services and models whose settings the
-move drops (see [Move template services](#move-template-services)). `MANUAL` lines name what the script can't
+[Cache outcomes](#cache-outcomes)), services and models whose settings the
+move drops (see [Move template services](#move-template-services)), and the
+download variables in a runtime config `spec.env` (see
+[Move download settings to `spec.caching.env`](#4-move-download-settings-to-speccachingenv)). After the
+CRD update, they also list the download variables that both `spec.env` and
+`spec.caching.env` set: remove those from `spec.env` unless inference
+containers need them. `MANUAL` lines name what the script can't
 check and you confirm by hand: the operator version when it can't be read (see
 [Minimum version](#minimum-version)), and v1alpha1 manifests outside the
 cluster (see [Update v1alpha1 manifests](#update-v1alpha1-manifests)). They
@@ -590,9 +598,10 @@ AIMService, AIMModel or AIMClusterModel owner references still block.
 
 Once the new CRDs are applied, the AIMService CRD no longer serves v1alpha1.
 The preflight then only fails while the operator still runs v0.2.7 or older
-(`operator-upgraded`), or while template objects are left
-(`template-objects`). Otherwise it prints a single `Already upgraded` line and
-exits 0.
+(`operator-upgraded`), while template objects are left (`template-objects`),
+or while a runtime config `spec.env` sets a download variable that its
+`spec.caching.env` doesn't (`runtime-config-download-env`). Otherwise it ends
+with an `Already upgraded` line and exits 0.
 
 ### Move template services
 

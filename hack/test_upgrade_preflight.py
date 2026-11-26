@@ -80,6 +80,8 @@ API_RESOURCES = [
     "aimartifacts.aim.eai.amd.com",
     "aimprofiles.aim.eai.amd.com",
     "aimprofilecaches.aim.eai.amd.com",
+    "aimruntimeconfigs.aim.eai.amd.com",
+    "aimclusterruntimeconfigs.aim.eai.amd.com",
 ]
 
 SERVICES = "aimservices.aim.eai.amd.com"
@@ -88,6 +90,9 @@ CLUSTER_MODELS = "aimclustermodels.aim.eai.amd.com"
 TEMPLATE_CACHES = "aimtemplatecaches.aim.eai.amd.com"
 TEMPLATE_CRDS = ["aimservicetemplates.aim.eai.amd.com", "aimclusterservicetemplates.aim.eai.amd.com", TEMPLATE_CACHES]
 ARTIFACTS = "aimartifacts.aim.eai.amd.com"
+RUNTIME_CONFIGS = "aimruntimeconfigs.aim.eai.amd.com"
+CLUSTER_RUNTIME_CONFIGS = "aimclusterruntimeconfigs.aim.eai.amd.com"
+MOVE_DOWNLOAD_SETTINGS = "4-move-download-settings-to-speccachingenv"
 INFERENCE_SERVICES = "inferenceservices.serving.kserve.io"
 PODS = "pods"
 CRDS = "customresourcedefinitions"
@@ -144,6 +149,16 @@ def crd(name, served=("v1alpha1",), annotations=None):
     versions = [{"name": version, "served": version in served} for version in ("v1alpha1", "v1alpha2")]
     return item("CustomResourceDefinition", name, namespace=None, spec={"versions": versions},
                 metadata={"annotations": annotations or {}})
+
+
+def runtime_config(name, env=(), caching_env=None, namespace="team"):
+    spec = {}
+    if env:
+        spec["env"] = [{"name": n, "value": "v"} for n in env]
+    if caching_env is not None:
+        spec["caching"] = {"env": [{"name": n, "value": "v"} for n in caching_env]}
+    kind = "AIMRuntimeConfig" if namespace else "AIMClusterRuntimeConfig"
+    return item(kind, name, namespace=namespace, spec=spec)
 
 
 def pod(name, claim, phase="Running", namespace="team"):
@@ -471,6 +486,8 @@ class UpgradePreflightTest(unittest.TestCase):
             "jobs.batch": ["stale-owner-references"],
             PODS: ["template-pipeline-services"],
             ARTIFACTS: ["template-pipeline-services", "stale-owner-references", "dedicated-template-caches"],
+            RUNTIME_CONFIGS: ["runtime-config-download-env"],
+            CLUSTER_RUNTIME_CONFIGS: ["runtime-config-download-env"],
         }
         for resource, checks in cases.items():
             with self.subTest(resource):
@@ -513,6 +530,64 @@ class UpgradePreflightTest(unittest.TestCase):
 
                 self.assert_fails(result, check, obj, section)
                 self.assertNotIn("Already upgraded", result.stdout)
+
+    def test_lists_runtime_config_download_env_before_the_crd_update(self):
+        resources = {
+            CLUSTER_RUNTIME_CONFIGS: [runtime_config("default", env=["HF_TOKEN", "LOG_LEVEL", "https_proxy"],
+                                                     namespace=None)],
+            RUNTIME_CONFIGS: [runtime_config("default", env=["AWS_ACCESS_KEY_ID", "AIM_DOWNLOADER_PROTOCOL"]),
+                              runtime_config("no-env")],
+        }
+
+        result = self.run_preflight(resources)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        lines = [line for line in result.stdout.splitlines() if "[runtime-config-download-env]" in line]
+        self.assertEqual(lines, [
+            f"INFO [runtime-config-download-env] AIMRuntimeConfig team/default: spec.env sets {name}, which the"
+            " download Jobs of the new operator do not read; copy it to spec.caching.env after the CRD update."
+            f" See #{MOVE_DOWNLOAD_SETTINGS}"
+            for name in ("AWS_ACCESS_KEY_ID", "AIM_DOWNLOADER_PROTOCOL")
+        ] + [
+            f"INFO [runtime-config-download-env] AIMClusterRuntimeConfig default: spec.env sets {name}, which the"
+            " download Jobs of the new operator do not read; copy it to spec.caching.env after the CRD update."
+            f" See #{MOVE_DOWNLOAD_SETTINGS}"
+            for name in ("HF_TOKEN", "https_proxy")
+        ])
+
+    def test_an_upgraded_cluster_fails_for_download_env_only_in_spec_env(self):
+        upgraded = {CRDS: [crd(SERVICES, served=("v1alpha2",))],
+                    "deployments": [operator("docker.io/amdenterpriseai/aim-engine:v0.3.0")]}
+        copied = runtime_config("copied", env=["HF_TOKEN", "LOG_LEVEL"], caching_env=["HF_TOKEN"])
+        uncopied = runtime_config("default", env=["HF_ENDPOINT", "NO_PROXY"], caching_env=["HF_TOKEN"],
+                                  namespace=None)
+        both_line = ("INFO [runtime-config-download-env] AIMRuntimeConfig team/copied: spec.env and spec.caching.env"
+                     " set HF_TOKEN; spec.env also reaches inference containers, so remove it there unless they"
+                     f" need it. See #{MOVE_DOWNLOAD_SETTINGS}")
+
+        result = self.run_preflight({**upgraded, RUNTIME_CONFIGS: [copied, runtime_config("no-env")],
+                                     CLUSTER_RUNTIME_CONFIGS: [uncopied]})
+
+        self.assert_fails(result, "runtime-config-download-env", "AIMClusterRuntimeConfig default",
+                          MOVE_DOWNLOAD_SETTINGS)
+        for name in ("HF_ENDPOINT", "NO_PROXY"):
+            self.assertIn(f"FAIL [runtime-config-download-env] AIMClusterRuntimeConfig default: spec.env sets {name}"
+                          " and spec.caching.env does not, so the download Jobs of the new operator do not get it;"
+                          f" copy it to spec.caching.env. See #{MOVE_DOWNLOAD_SETTINGS}", result.stdout)
+        self.assertEqual(result.stdout.count("FAIL"), 2, result.stdout)
+        self.assertIn(both_line, result.stdout)
+        self.assertNotIn("Already upgraded", result.stdout)
+
+        result = self.run_preflight({**upgraded, RUNTIME_CONFIGS: [copied]})
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            both_line, "Already upgraded: the AIMService CRD no longer serves aim.eai.amd.com/v1alpha1."])
+
+        for resource in (RUNTIME_CONFIGS, CLUSTER_RUNTIME_CONFIGS):
+            with self.subTest(resource):
+                self.assert_fails(self.run_preflight(upgraded, errors=[resource]), "runtime-config-download-env",
+                                  resource, "run-the-upgrade-preflight")
 
     def test_exits_2_when_kubectl_cannot_read_what_every_check_needs(self):
         for resource in ("api-resources", CRDS, SERVICES, MODELS, CLUSTER_MODELS, "deployments"):

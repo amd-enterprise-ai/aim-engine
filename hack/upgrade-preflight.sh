@@ -20,6 +20,12 @@ guide="https://github.com/amd-enterprise-ai/aim-engine/blob/main/docs/docs/admin
 minimum_version="0.2.7"
 template_crds=(aimservicetemplates.aim.eai.amd.com aimclusterservicetemplates.aim.eai.amd.com
   aimtemplatecaches.aim.eai.amd.com)
+# Download Jobs of the new release read only the runtime config
+# spec.caching.env. These names in a runtime config spec.env are download
+# settings: the downloader's own, its credentials, and proxies. Inference
+# containers may need a proxy or a credential too, so the findings ask to copy
+# a name, not to move it.
+download_env_names='^(HF_TOKEN|HF_ENDPOINT|AIM_DOWNLOADER_.+|AIM_S3_.+|AWS_.+|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy)$'
 failures=0
 manual_checks=0
 
@@ -316,6 +322,36 @@ report_template_settings() {
   } | sed 's|^|INFO [template-settings] |; s|$|. See #move-template-services|'
 }
 
+runtime_configs() {
+  list aimruntimeconfigs.aim.eai.amd.com
+  list aimclusterruntimeconfigs.aim.eai.amd.com
+}
+
+# Before the CRD update, runtime configs have no spec.caching.env yet, so the
+# download settings in spec.env are only listed.
+report_runtime_config_download_env() {
+  runtime_configs | problems '.spec.env[]?.name | select(test($names))
+    | "spec.env sets \(.), which the download Jobs of the new operator do not read;"
+      + " copy it to spec.caching.env after the CRD update"' --arg names "${download_env_names}" \
+    | sed 's|^|INFO [runtime-config-download-env] |; s|$|. See #4-move-download-settings-to-speccachingenv|'
+}
+
+# After the CRD update, a download setting that spec.caching.env lacks is cut
+# off from downloads by the operator upgrade.
+check_runtime_config_download_env() {
+  local configs found
+  configs="$(runtime_configs)"
+  found="$(problems '[.spec.caching.env[]?.name] as $caching | .spec.env[]?.name
+    | select(test($names) and (IN($caching[]) | not))
+    | "spec.env sets \(.) and spec.caching.env does not, so the download Jobs of the new operator do not get it;"
+      + " copy it to spec.caching.env"' --arg names "${download_env_names}" <<<"${configs}")"
+  report runtime-config-download-env 4-move-download-settings-to-speccachingenv "${found}"
+  problems '[.spec.caching.env[]?.name] as $caching | .spec.env[]?.name | select(test($names) and IN($caching[]))
+    | "spec.env and spec.caching.env set \(.); spec.env also reaches inference containers,"
+      + " so remove it there unless they need it"' --arg names "${download_env_names}" <<<"${configs}" \
+    | sed 's|^|INFO [runtime-config-download-env] |; s|$|. See #4-move-download-settings-to-speccachingenv|'
+}
+
 run_check() {
   local name="$1" failures_before="${failures}" manual_before="${manual_checks}"
   "check_${name//-/_}"
@@ -344,13 +380,15 @@ api_resources="$(fetch api-resources -o name)"
 
 # The new release's AIMService CRD stops serving v1alpha1, and the new operator
 # clears status.reconcilerPipeline, so the checks below would fail every
-# service of an upgraded cluster. There, only the operator version and leftover
-# template objects are checked.
+# service of an upgraded cluster. There, only the operator version, leftover
+# template objects and the download settings of runtime configs are checked.
 if jq -e '.items[] | select(.metadata.name == "aimservices.aim.eai.amd.com")
     | any(.spec.versions[]; .name == "v1alpha1" and .served) | not' <<<"${crds}" >/dev/null; then
   check_operator_upgraded
   check_template_objects
   report_list_errors template-objects
+  check_runtime_config_download_env
+  report_list_errors runtime-config-download-env
   if ((failures > 0)); then
     echo "${failures} problem(s) found after the CRDs upgrade. Sections (#...) refer to ${guide}"
     exit 1
@@ -379,6 +417,8 @@ report_dedicated_caches
 report_list_errors dedicated-template-caches
 report_template_settings
 report_list_errors template-settings
+report_runtime_config_download_env
+report_list_errors runtime-config-download-env
 manual v1alpha1-clients update-v1alpha1-manifests "AIMService, AIMModel and AIMClusterModel stop serving\
  aim.eai.amd.com/v1alpha1: check GitOps repositories, Helm releases and scripts for such manifests"
 
