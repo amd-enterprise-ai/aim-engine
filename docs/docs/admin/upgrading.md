@@ -146,7 +146,7 @@ that consume those profiles can therefore roll and pull a new image of about
 
 ### 4. Move download settings to `spec.caching.env`
 
-Download Jobs read the runtime config `spec.caching.env` and no longer read the runtime config `spec.env`. A download credential or setting that a runtime config sets in `spec.env`, such as `HF_TOKEN`, `HF_ENDPOINT`, `AIM_DOWNLOADER_PROTOCOL` or a proxy variable, no longer reaches downloads after the operator upgrade. Move it before then. See [Download Job env](../concepts/runtime-config.md#download-job-env).
+Download Jobs read the runtime config `spec.caching.env` and no longer read the runtime config `spec.env`. A download credential or setting that a runtime config sets in `spec.env`, such as `HF_TOKEN`, `HF_ENDPOINT`, `AIM_DOWNLOADER_PROTOCOL`, an S3 credential such as `AWS_ACCESS_KEY_ID`, or a proxy variable, no longer reaches downloads after the operator upgrade. Move it before then. See [Download Job env](../concepts/runtime-config.md#download-job-env).
 
 After updating the CRDs but before upgrading the operator:
 
