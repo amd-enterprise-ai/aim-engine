@@ -664,10 +664,13 @@ cache downloads the weights, as a Dedicated one does (see
 well if the inference container needs it.
 
 On v0.2.7, a moved service runs without its own `spec.env` and the `spec.env`
-of its AIMRuntimeConfig and AIMClusterRuntimeConfig. If the service needs them,
-set them in `spec.profileOverrides.containerEnv`. That creates an overlay
-profile. With a Dedicated cache, the overlay profile's cache downloads the
-weights again.
+of its AIMRuntimeConfig and AIMClusterRuntimeConfig. After the upgrade, both
+reach its inference container again (see
+[Inference container env](../concepts/runtime-config.md#inference-container-env)
+and [Env for profile services](#env-for-profile-services)). If the service
+needs them between the move and the upgrade, set them in
+`spec.profileOverrides.containerEnv`. That creates an overlay profile. With a
+Dedicated cache, the overlay profile's cache downloads the weights again.
 
 The preflight prints an `INFO [template-settings]` line for each service whose
 hand-written template sets `customProfile`, `env` or `resources`, or that sets
