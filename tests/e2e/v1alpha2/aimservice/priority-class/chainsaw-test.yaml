@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service's priorityClassName is applied to its inference pods, which get the
+# PriorityClass's priority value.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-priority-class
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the PriorityClass, profile and service
+      try:
+        - apply:
+            file: priority-class.yaml
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The InferenceService uses the PriorityClass
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: priority-class
+              spec:
+                predictor:
+                  priorityClassName: v1alpha2-aimservice-priority-class
+
+    - name: The running pod has the class and its priority
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: priority-class
+              status:
+                status: Running
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: priority-class
+              spec:
+                priorityClassName: v1alpha2-aimservice-priority-class
+                priority: 1000000

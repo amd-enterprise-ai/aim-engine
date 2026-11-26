@@ -53,7 +53,7 @@ const (
 	ConditionTypeConfigValid           = "ConfigValid"
 	ConditionTypeReady                 = "Ready"
 
-	// Component condition suffix (e.g., "ModelReady", "TemplateReady")
+	// Component condition suffix (e.g., "ProfileReady", "ProfileCacheReady")
 	ComponentConditionSuffix = "Ready"
 
 	// DependenciesReachable condition reasons
@@ -227,10 +227,6 @@ func (pr *PlanResult) RequestRequeueAfter(duration time.Duration) {
 // Merge appends every object queued in `other` into this plan. RequeueAfter
 // adopts the smaller non-zero of the two values so the controller wakes up
 // as soon as either contributing pipeline asks to.
-//
-// Used by composite reconcilers that drive several independent sub-plans on
-// the same parent object (e.g. v1alpha1 + v1alpha2 AIMModel pipelines that
-// both produce children).
 func (pr *PlanResult) Merge(other PlanResult) {
 	pr.toCreate = append(pr.toCreate, other.toCreate...)
 	pr.toApply = append(pr.toApply, other.toApply...)
@@ -250,7 +246,8 @@ func (pr *PlanResult) Merge(other PlanResult) {
 
 // StateEngineDecision contains the state engine's analysis and reconciliation directives.
 type StateEngineDecision struct {
-	// ShouldApply is false if ConfigValid/AuthValid/DependenciesReachable is False
+	// ShouldApply is false if a blocking component reports an infrastructure,
+	// auth, invalid-spec or missing-upstream error
 	ShouldApply bool
 
 	// ShouldRequeue is true if infrastructure errors are present (triggers exponential backoff)
@@ -572,6 +569,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 type errorCategories struct {
 	hasInfra                bool
 	hasAuth                 bool
+	hasNonBlockingAuth      bool // Reported on AuthValid without gating readiness or apply
 	hasMissingDownstreamDep bool // Missing dependencies that will self-heal (e.g., resources being created)
 	hasMissingUpstreamDep   bool // Missing dependencies that will not self-heal (e.g., required secret or config)
 	hasInvalidSpec          bool
@@ -579,18 +577,21 @@ type errorCategories struct {
 }
 
 // categorizeComponentErrors collects and categorizes all errors from component health.
+// NonBlocking components contribute only their auth errors, which AuthValid
+// reports without gating.
 func categorizeComponentErrors(componentHealth []ComponentHealth) errorCategories {
 	var result errorCategories
 	for _, h := range componentHealth {
-		if h.NonBlocking {
-			continue
-		}
 		for _, err := range h.Errors {
 			if err == nil {
 				continue
 			}
-			categorized := CategorizeError(err)
-			switch categorized.Category() {
+			category := CategorizeError(err).Category()
+			if h.NonBlocking {
+				result.hasNonBlockingAuth = result.hasNonBlockingAuth || category == ErrorCategoryAuth
+				continue
+			}
+			switch category {
 			case ErrorCategoryInfrastructure:
 				result.hasInfra = true
 				result.infraErrors = append(result.infraErrors, err)
@@ -676,7 +677,11 @@ func setComponentConditions(cm *ConditionManager, componentHealth []ComponentHea
 			}
 		}
 
-		cm.Set(conditionType, statusToCondition(state), reason, message, statusToObsLevel(state))
+		obsLevel := statusToObsLevel(state)
+		if h.UserFixable && isErrorState(state) {
+			obsLevel = AsUserWarning()
+		}
+		cm.Set(conditionType, statusToCondition(state), reason, message, obsLevel)
 	}
 }
 
@@ -696,6 +701,8 @@ func preserveGracePeriodState(oldStatus metav1.ConditionStatus) (constants.AIMSt
 func setErrorCategoryConditions(cm *ConditionManager, cats errorCategories) {
 	if cats.hasAuth {
 		cm.Set(ConditionTypeAuthValid, metav1.ConditionFalse, ReasonAuthError, MessageAuthError, AsError())
+	} else if cats.hasNonBlockingAuth {
+		cm.Set(ConditionTypeAuthValid, metav1.ConditionFalse, ReasonAuthError, MessageAuthError, AsUserWarning())
 	} else if oldAuthValid := cm.Get(ConditionTypeAuthValid); oldAuthValid != nil && oldAuthValid.Status == metav1.ConditionFalse {
 		cm.Set(ConditionTypeAuthValid, metav1.ConditionTrue, ReasonAuthValid, MessageAuthValid, AsInfo())
 	}
@@ -721,10 +728,10 @@ func deriveStatusAndSetReadyCondition(cm *ConditionManager, cats errorCategories
 	}
 
 	// Build lookup maps for component states, dependency types, and gating policy.
-	componentStates, componentDepTypes, nonBlockingComponents := buildComponentMaps(componentHealth)
+	componentStates, componentDepTypes, nonBlockingComponents, servingComponents := buildComponentMaps(componentHealth)
 
 	// Scan all gating component conditions and aggregate results.
-	scanResult := scanComponentConditions(cm, componentStates, componentDepTypes, nonBlockingComponents)
+	scanResult := scanComponentConditions(cm, componentStates, componentDepTypes, nonBlockingComponents, servingComponents)
 
 	// Set Ready condition based on scan results
 	setReadyConditionFromScan(cm, scanResult, cats)
@@ -758,16 +765,18 @@ func handleErrorCategories(cm *ConditionManager, cats errorCategories) (constant
 }
 
 // buildComponentMaps creates lookup maps for component states, dependency types, and gating policy.
-func buildComponentMaps(componentHealth []ComponentHealth) (map[string]constants.AIMStatus, map[string]DependencyType, map[string]bool) {
+func buildComponentMaps(componentHealth []ComponentHealth) (map[string]constants.AIMStatus, map[string]DependencyType, map[string]bool, map[string]bool) {
 	componentStates := make(map[string]constants.AIMStatus)
 	componentDepTypes := make(map[string]DependencyType)
 	nonBlockingComponents := make(map[string]bool)
+	servingComponents := make(map[string]bool)
 	for _, h := range componentHealth {
 		componentStates[h.Component] = h.GetState()
 		componentDepTypes[h.Component] = h.DependencyType
 		nonBlockingComponents[h.Component] = h.NonBlocking
+		servingComponents[h.Component] = h.Serving
 	}
-	return componentStates, componentDepTypes, nonBlockingComponents
+	return componentStates, componentDepTypes, nonBlockingComponents, servingComponents
 }
 
 // componentScanResult holds the aggregated results from scanning component conditions.
@@ -777,6 +786,11 @@ type componentScanResult struct {
 	firstErrorComponent string
 	firstErrorReason    string
 	firstErrorMessage   string
+	// The first not-ready component that still serves explains Ready=False
+	// when no component is in an error state.
+	servingComponent string
+	servingReason    string
+	servingMessage   string
 }
 
 // scanComponentConditions scans all gating component Ready conditions and aggregates their status.
@@ -785,6 +799,7 @@ func scanComponentConditions(
 	componentStates map[string]constants.AIMStatus,
 	componentDepTypes map[string]DependencyType,
 	nonBlockingComponents map[string]bool,
+	servingComponents map[string]bool,
 ) componentScanResult {
 	result := componentScanResult{
 		allReady:    true,
@@ -809,6 +824,15 @@ func scanComponentConditions(
 
 		// Process the component status
 		processComponentStatus(cond, componentName, componentStatus, &result)
+
+		if servingComponents[componentName] && componentStatus != constants.AIMStatusReady {
+			if result.servingComponent == "" {
+				result.servingComponent = componentName
+				result.servingReason = cond.Reason
+				result.servingMessage = cond.Message
+			}
+			continue
+		}
 
 		// Keep the worst status
 		if constants.CompareAIMStatus(componentStatus, result.worstStatus) < 0 {
@@ -894,6 +918,10 @@ func setReadyConditionFromScan(cm *ConditionManager, result componentScanResult,
 
 	// Determine reason for Ready=False
 	reason, message, obsLevel := determineReadyFalseReason(result, cats)
+	if result.firstErrorComponent != "" &&
+		cm.ConfigFor(result.firstErrorComponent+ComponentConditionSuffix).logAsInfo {
+		obsLevel = AsUserWarning()
+	}
 	cm.Set(ConditionTypeReady, metav1.ConditionFalse, reason, message, obsLevel)
 }
 
@@ -906,6 +934,10 @@ func determineReadyFalseReason(result componentScanResult, cats errorCategories)
 	}
 	if cats.hasInfra {
 		return ReasonDependenciesNotReachable, MessageInfraError, AsError()
+	}
+	if result.servingComponent != "" {
+		message := fmt.Sprintf("Component %s is not ready: %s", result.servingComponent, result.servingMessage)
+		return result.servingReason, message, AsInfo()
 	}
 	return ReasonProgressing, MessageProgressing, AsInfo()
 }

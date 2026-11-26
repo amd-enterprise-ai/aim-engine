@@ -10,6 +10,13 @@ go test ./internal/v1alpha1/aimservice -v    # Specific package
 go test ./internal/... -run TestFoo # Specific test
 ```
 
+`TestManagerStartsWithAllControllers` in `cmd/` starts the manager with every controller against an envtest control plane (kube-apiserver and etcd) loaded with the generated CRDs. It fails if any controller watches a kind or version the API server doesn't serve. `make test` downloads the control plane with `setup-envtest` (installed by `mise install`). To run it with plain `go test`, export the path first:
+
+```bash
+export KUBEBUILDER_ASSETS="$(make -s envtest)"
+go test ./cmd/...
+```
+
 ## E2E Tests (Chainsaw)
 
 Chainsaw tests are declarative YAML files in `tests/e2e/`. Each test directory contains a `chainsaw-test.yaml` that defines steps: apply resources, assert conditions, run scripts.
@@ -251,6 +258,13 @@ spec:
             timeout: 120s
 ```
 
+### Fixture Conventions
+
+- Write `AIMService`, `AIMModel`, `AIMClusterModel` and the profile kinds (`AIMProfile`, `AIMClusterProfile`, `AIMProfileSet`, `AIMClusterProfileSet`, `AIMProfileCache`) at `aim.eai.amd.com/v1alpha2`. Write `AIMArtifact`, `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` and `AIMClusterModelSource` at `aim.eai.amd.com/v1alpha1`.
+- An `AIMService` serves from an `AIMProfile` or `AIMClusterProfile`, which it finds through `spec.profile.name`, `spec.profile.selector`, `spec.model.name` or `spec.model.image`.
+- Produce profiles the way users do: apply an `AIMProfile` / `AIMClusterProfile`, or derive them with `spec.profiles` on an `AIMModel` / `AIMClusterModel` or with an `AIMProfileSet` / `AIMClusterProfileSet`.
+- Prefer a full chain that reaches Ready in Kind over fabricated status. The frozen-status tests in `tests/e2e/aimservice/frozen/` cover service behaviour that Kind can't reach naturally.
+
 ### Debug Simulation
 
 For tests that involve model downloads, use simulation mode to avoid real network calls:
@@ -269,16 +283,15 @@ Key e2e test areas:
 
 | Directory | What it tests |
 |-----------|--------------|
-| `tests/e2e/aimmodel/fine-tuned/` | aimId-based template matching for fine-tuned models |
-| `tests/e2e/aimmodel/custom-models/` | Custom models with explicit hardware and modelSources |
-| `tests/e2e/aimservicetemplate/` | Template discovery, inline sources, GPU availability |
+| `tests/e2e/v1alpha2/aimmodel/` | Image, modelId and derivation models: discovery, image metadata, generated profiles |
+| `tests/e2e/v1alpha2/aimclustermodel/` | The same for cluster-scoped models |
 | `tests/e2e/aimservice/` | Full service lifecycle including frozen models and GPU tests |
 | `tests/e2e/aimartifact/` | Model artifact downloads, quotas, and protocols |
 
 Run a specific test area:
 
 ```bash
-make test-chainsaw CHAINSAW_ARGS="--test-dir tests/e2e/aimmodel/fine-tuned"
+make test-chainsaw CHAINSAW_ARGS="--test-dir tests/e2e/v1alpha2/aimmodel"
 ```
 
 ## Continuous Integration

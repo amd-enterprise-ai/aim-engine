@@ -47,7 +47,7 @@ spec:
       try:
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMClusterModel
               metadata:
                 labels:

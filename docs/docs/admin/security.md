@@ -23,7 +23,7 @@ The Jobs that the operator creates meet the Kubernetes [Pod Security Standard `r
 | Job | User |
 |-----|------|
 | Size check, download and adapter Jobs | UID and GID 1000 |
-| `AIMModel`, `AIMClusterModel`, `AIMServiceTemplate` and `AIMClusterServiceTemplate` discovery | UID 65532 |
+| `AIMModel` and `AIMClusterModel` discovery | UID 65532 |
 
 The discovery Jobs run the model image and read its profile files, so these files must be readable by UID 65532. The inference pods are not part of this list.
 
@@ -50,7 +50,7 @@ When `rbacHelpers.enable` is `true` (default), the chart creates admin/editor/vi
 | `{crd}-editor` | Create, update, delete |
 | `{crd}-viewer` | Read-only |
 
-Available for: `aimservice`, `aimmodel`, `aimclustermodel`, `aimartifact`, `aimtemplatecache`, `aimprofile`, `aimclusterprofile`, `aimprofileset`, `aimclusterprofileset`, `aimprofilecache`, `aimservicetemplate`, `aimclusterservicetemplate`, `aimruntimeconfig`, `aimclusterruntimeconfig`.
+Available for: `aimservice`, `aimmodel`, `aimclustermodel`, `aimartifact`, `aimprofile`, `aimclusterprofile`, `aimprofileset`, `aimclusterprofileset`, `aimprofilecache`, `aimruntimeconfig`, `aimclusterruntimeconfig`.
 
 ### Example: Team RBAC
 

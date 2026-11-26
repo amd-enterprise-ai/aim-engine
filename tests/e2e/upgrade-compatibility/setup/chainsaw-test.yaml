@@ -115,7 +115,7 @@ spec:
       try:
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: upgrade-namespace-service
@@ -128,7 +128,7 @@ spec:
                   scope: Namespace
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: upgrade-cluster-service

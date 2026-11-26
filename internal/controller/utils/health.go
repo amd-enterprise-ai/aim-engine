@@ -31,7 +31,7 @@ type DependencyType string
 
 const (
 	// DependencyTypeUpstream indicates this component is an upstream dependency that this controller depends on.
-	// Examples: templates, runtime configs, secrets, configmaps.
+	// Examples: profiles, runtime configs, secrets, configmaps.
 	// When upstream dependencies are not ready, the resource should be Pending.
 	DependencyTypeUpstream DependencyType = "Upstream"
 
@@ -45,11 +45,11 @@ const (
 )
 
 // ComponentHealth describes the health of a component (dependency, child resource, or virtual component).
-// It unifies tracking for logical components (model, template, cache), physical resources (pods, deployments),
+// It unifies tracking for logical components (model, profile, cache), physical resources (pods, deployments),
 // and virtual components (external API queries, image registry access, etc.).
 type ComponentHealth struct {
 	// Component is the logical name of this component:
-	// - Physical dependencies: "Model", "Cache", "Template"
+	// - Physical dependencies: "Model", "Cache", "Profile"
 	// - Child resources: "Workload"
 	// - Virtual components: "MetadataQuery", "ImageRegistry", "ExternalAPI"
 	Component string
@@ -84,8 +84,20 @@ type ComponentHealth struct {
 	ChildRef *ChildRef
 
 	// NonBlocking keeps this component's condition visible without allowing its
-	// state or errors to gate root readiness, apply, or requeue decisions.
+	// state or errors to gate root readiness, apply, or requeue decisions. Its
+	// auth errors still set AuthValid=False.
 	NonBlocking bool
+
+	// Serving marks a not-ready component that still serves traffic, such as a
+	// workload rolling out a new revision while the previous one runs. It keeps
+	// root Ready False with its own reason but does not lower the root status.
+	Serving bool
+
+	// UserFixable reports a Failed, Degraded or NotAvailable component, and the
+	// root Ready it explains, with AsUserWarning instead of AsError. Use it for
+	// states only a spec or referenced-object change resolves, such as a
+	// reference that matches nothing.
+	UserFixable bool
 }
 
 // ChildRef identifies a child resource (e.g., Pod, Deployment, Service).

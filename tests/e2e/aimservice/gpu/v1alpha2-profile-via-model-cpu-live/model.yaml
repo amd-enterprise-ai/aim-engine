@@ -4,7 +4,7 @@
 # owned by this model and matched to the cluster's accelerator family labels
 # (CPU here).
 #
-# No profileCopy, no seed AIMProfile, no AIMServiceTemplate - this is the
+# No profileCopy and no seed AIMProfile - this is the
 # minimum custom-resource shape that exercises the
 # AIMModel v1alpha2 → AIMProfile → AIMService v1alpha2 → /v1/chat/completions
 # chain.

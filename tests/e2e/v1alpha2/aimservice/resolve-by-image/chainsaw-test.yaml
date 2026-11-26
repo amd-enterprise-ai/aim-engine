@@ -1,23 +1,17 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
 #
-# v1alpha2 quick-start: a service authored with spec.model.image and
-# routed onto the profile pipeline via the reconciler-pipeline annotation
-# must auto-create a dedicated v1alpha2 AIMModel, drive native discovery
-# on it, and resolve to a deployable AIMProfile produced by that model.
+# v1alpha2 quick-start: a service authored with spec.model.image must
+# auto-create a dedicated v1alpha2 AIMModel, drive native discovery on it,
+# and resolve to a deployable AIMProfile produced by that model.
 #
-# This is the canonical "image + annotation" flow documented in
-# admin/upgrading.md (Migration window) and concepts/services.md.
+# This is the "by image" flow documented in concepts/services.md.
 # Asserting all six outcomes (auto-model exists, has the right labels,
 # is owned by the service, profile resolves, service reports
 # ProfileReady=True and ProfileCacheReady=True) guards against silent
 # regressions in any one of the resolver/plan/watch wiring pieces that together make this work.
 #
-# Service readiness (InferenceService Ready) is intentionally NOT asserted
-# because the aim-dummy image's predictor lifecycle depends on cache
-# warm-up that other GPU tests already cover end-to-end (see
-# tests/e2e/v1alpha2/custom-model/end-to-end). This test focuses on the
-# image -> auto-model -> profile-resolution chain that's net-new in
-# v1alpha2.
+# The suite covers the whole image -> auto-model -> profile -> cache ->
+# Running chain. The cache downloads from Hugging Face, so it needs live HF.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -26,8 +20,8 @@ metadata:
     hf-access: live
 spec:
   description: |
-    Authors an AIMService with spec.model.image + the reconciler-pipeline
-    annotation, then asserts the v1alpha2 profile pipeline (a) creates a
+    Authors an AIMService with spec.model.image, then asserts the v1alpha2
+    profile pipeline (a) creates a
     dedicated AIMModel owned by the service, (b) labels it origin=auto-
     generated with the spec.model.image provenance annotation, (c) lets
     the model controller discover profiles from the image, and (d) the
@@ -38,7 +32,7 @@ spec:
     - use:
         template: ../../../_shared/hf-token-step.yaml
 
-    - name: Apply the image-shape service with the reconciler-pipeline annotation
+    - name: Apply the image-shape service
       try:
         - apply:
             file: service.yaml
@@ -101,7 +95,7 @@ spec:
         - assert:
             timeout: 120s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: resolve-by-image-service
@@ -122,7 +116,7 @@ spec:
         - assert:
             timeout: 300s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: resolve-by-image-service
@@ -130,3 +124,15 @@ spec:
                 (conditions[?type == 'ProfileCacheReady']):
                   - status: "True"
                     reason: ProfileCacheReady
+
+    - name: Assert the AIMService reaches Running
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: resolve-by-image-service
+              status:
+                status: Running

@@ -69,16 +69,14 @@ Only one reference is present — namespace or cluster, never both. When the two
 
 ## Resources that consume runtime config
 
-| Resource | v1alpha2 path | v1alpha1 path |
-|---|---|---|
-| `AIMService` | Yes (resolved per service) | Yes |
-| `AIMModel` / `AIMClusterModel` | Yes (used by discovery Job) | Yes |
-| `AIMProfile` | Indirectly: profile-owned caching creates a cache that resolves `default` | n/a |
-| `AIMClusterProfile` | No | n/a |
-| `AIMProfileCache` | Yes (download env from `spec.caching.env`, storage defaults) | n/a |
-| `AIMServiceTemplate` / `AIMClusterServiceTemplate` | n/a | Yes (legacy) |
-| `AIMTemplateCache` | n/a | Yes (legacy) |
-| `AIMArtifact` | Yes (download env from `spec.caching.env`) | Yes |
+| Resource | Consumes runtime config |
+|---|---|
+| `AIMService` | Yes (resolved per service) |
+| `AIMModel` / `AIMClusterModel` | Yes (used by discovery Job) |
+| `AIMProfile` | Indirectly: profile-owned caching creates a cache that resolves `default` |
+| `AIMClusterProfile` | No |
+| `AIMProfileCache` | Yes (download env from `spec.caching.env`, storage defaults) |
+| `AIMArtifact` | Yes (download env from `spec.caching.env`) |
 
 Each consuming resource independently resolves its RuntimeConfig and publishes
 the result. A named RuntimeConfig selected by an `AIMService` does not retarget
@@ -127,7 +125,6 @@ owner:
 |---|---|
 | `AIMProfileSet`, `AIMClusterProfileSet`, and v1alpha2 `AIMModel.spec.profiles.derivedFrom` | Merged `default` configuration for the applicable scope |
 | v1alpha2 `AIMService.spec.profileOverrides` | The RuntimeConfig selected by that service |
-| v1alpha1 fine-tuned `AIMModel` / `AIMClusterModel` template copies | The RuntimeConfig selected by that model |
 
 A namespace `baseImageRegistry` replaces the cluster value. A named
 configuration does not inherit `default`, so set `baseImageRegistry` on each
@@ -381,8 +378,6 @@ metadata:
   namespace: ml-team
   labels:
     project: conversational-ai
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
@@ -506,7 +501,7 @@ A setting that both need, such as a proxy, goes in both fields. In both fields t
 
 `spec.caching.env` is not the same as `spec.artifactCache.env`. That field belongs to the removed embedded S3 cache: it is deprecated and AIM Engine ignores it.
 
-An `AIMService` with `spec.profile` has the same split: its `spec.env` is for its inference container and its `spec.caching.env` for its download Jobs. In the template pipeline the AIMService `spec.env` reaches download Jobs too. To decide which field to use, see [Choosing where to set a variable](../reference/environment-variables.md#choosing-where-to-set-a-variable).
+An `AIMService` has the same split: its `spec.env` is for its inference container and its `spec.caching.env` for its download Jobs. To decide which field to use, see [Choosing where to set a variable](../reference/environment-variables.md#choosing-where-to-set-a-variable).
 
 ### Inference container env
 
@@ -514,7 +509,7 @@ The env of an inference container has two levels.
 
 **Engine process.** For a profile that runs the AIM runtime, the AIM runtime applies the AIMProfile `engineEnv`, including `spec.profileOverrides.engineEnv`, over the pod env before it starts the engine. An `engineEnv` value therefore wins over every value in the list below. A direct NVIDIA vLLM profile (an NVIDIA profile with `engine: vllm`, see [Generic NVIDIA vLLM profiles](profiles.md#generic-nvidia-vllm-profiles)) has no AIM runtime: AIM Engine sets its `engineEnv` as container env on the KServe ServingRuntime, and those names are operator-owned.
 
-**Pod env** of a service with `spec.profile` (the profile pipeline), highest first:
+**Pod env**, highest first:
 
 1. Env that AIM Engine adds to the InferenceService last: the CA trust env, the `AIM_ADAPTER_*` env of a service with adapters and, with a Dedicated cache, the AIM framework and cache env.
 2. Operator-owned names. For every profile these are `AIM_PROFILE_ID`, `AIM_ENGINE`, `AIM_ID`, `AIM_MODEL_ID` and `AIM_CACHE_PATH`. For a direct NVIDIA vLLM profile they also include `AIM_VLLM_MODEL`, `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` and the names in its `engineEnv`. AIM Engine ignores these names in the AIMService `spec.env` and the runtime config `spec.env`, also where it leaves one unset, such as `AIM_MODEL_ID` for a profile without `modelSources`. The values it sets win over the profile `containerEnv`.
@@ -531,8 +526,6 @@ KServe merges two entries with the same name field by field. Because of this, a 
 
 To change a container variable for one service, `spec.env` is enough. To change an engine variable, use `spec.profileOverrides.engineEnv`. This creates an overlay profile. With a Shared cache the overlay reuses the downloaded weights; with a Dedicated cache it downloads them again.
 
-A service without `spec.profile` (the template pipeline) uses the same order, with the `AIMServiceTemplate` `env` in place of the profile `containerEnv`. The CA trust and adapter env win there too, and the AIM runtime applies the template's `customProfile.envVars` over the pod env. The template pipeline has no operator-owned names and leaves no entry out: the AIMService `spec.env` wins for every name, including the `AIM_*` framework names. `AIM_ENGINE_ARGS` is merged key by key across the AIMService, the template and the runtime configs.
-
 Changing a runtime config's `spec.env` restarts the inference pods of every service that gets the changed variables, because the env is part of each predictor's pod template.
 
 ### Download Job env
@@ -540,12 +533,12 @@ Changing a runtime config's `spec.env` restarts the inference pods of every serv
 The model download, size check, adapter download and adapter subtree sync Jobs get this env, highest first:
 
 1. Env that AIM Engine sets: the CA trust env and, with a typed S3 connection, its S3 env.
-2. The `AIMArtifact` `spec.env`. The profile pipeline builds it from the model source `env`, then the AIMService `spec.caching.env`, then the AIMProfile `caching.env`. The template pipeline builds it from the model source `env`, then the AIMService `spec.env`, then the AIMService `spec.caching.env`, then the template `caching.env` and `env`. With a typed S3 connection, only the `AIM_S3_*` tuning variables are allowed here. The subtree sync Job has no artifact.
+2. The `AIMArtifact` `spec.env`. AIM Engine builds it from the model source `env`, then the AIMService `spec.caching.env`, then the AIMProfile `caching.env`. With a typed S3 connection, only the `AIM_S3_*` tuning variables are allowed here. The subtree sync Job has no artifact.
 3. The `AIMRuntimeConfig` `spec.caching.env`.
 4. The `AIMClusterRuntimeConfig` `spec.caching.env`.
 5. Downloader defaults, such as `AIM_DOWNLOADER_PROTOCOL=XET,HF_TRANSFER`, and the download filter.
 
-The runtime config `spec.env` doesn't reach these Jobs. In the profile pipeline the AIMService `spec.env` doesn't either.
+The runtime config `spec.env` doesn't reach these Jobs. The AIMService `spec.env` doesn't either.
 
 Each Job reads the runtime config that applies to it. The model download and size check Jobs read the runtime config of their `AIMArtifact`, and the subtree sync Job reads the service's runtime config. An adapter download Job reads the `spec.caching.env` of the adapter `AIMArtifact`'s runtime config over the service's.
 
@@ -607,13 +600,11 @@ spec:
 
 When enabled, labels matching the `match` patterns are automatically copied:
 
-- **AIMService** → `InferenceService`, `HTTPRoute`, PVCs, auto-created `AIMModel` (v1alpha1 image path), `AIMProfileCache`
+- **AIMService** → `InferenceService`, `HTTPRoute`, PVCs, auto-created `AIMModel`, `AIMProfileCache`
 - **AIMProfileCache** → `AIMArtifact` resources
 - **AIMArtifact** → PVCs, download `Job`s
-- **AIMModel** / **AIMClusterModel** → auto-created `AIMServiceTemplate` (v1alpha1), `AIMProfile` (v1alpha2 discovery), child `AIMProfileSet` (v1alpha2 derivation)
+- **AIMModel** / **AIMClusterModel** → `AIMProfile` (discovery), child `AIMProfileSet` (derivation)
 - **AIMProfileSet** → derived `AIMProfile`s
-- **AIMServiceTemplate** → `AIMTemplateCache` (legacy)
-- **AIMTemplateCache** → `AIMArtifact` (legacy)
 - **AIMClusterModelSource** → auto-discovered `AIMClusterModel`s
 
 ### Pattern matching
@@ -659,8 +650,6 @@ metadata:
     org.example/cost-center: "eng-ml"
     org.example/department: "engineering"
     org.example/project: "chatbot-v2"
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
@@ -699,14 +688,13 @@ This lets workloads without special requirements run on a fresh cluster without 
 
 ## Operator namespace
 
-The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESPACE` environment variable (default: `aim-system`). Cluster-scoped workflows — cluster template discovery, cluster image inspection, auto-generated cluster templates — run auxiliary pods in this namespace and resolve namespaced runtime configs there.
+The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESPACE` environment variable (default: `aim-system`). Cluster-scoped workflows, such as `AIMClusterModel` discovery and image inspection, run auxiliary pods in this namespace and resolve namespaced runtime configs there.
 
 ## Related documentation
 
 - [Models](models.md) — How models use runtime configs for discovery
 - [Profiles](profiles.md) — Self-contained runtime configurations (v1alpha2)
 - [Services](services.md) — How services consume runtime config
-- [Service Templates (v1alpha1)](../legacy/service-templates.md) — Legacy template-driven path
 - [Deploying Services](../guides/deploying-services.md) — Practical service configuration
 - [Model Caching](caching.md) — Download protocol strategy and cache architecture
 - [Storage Configuration](../admin/storage-configuration.md) — Storage classes, PVCs, quotas

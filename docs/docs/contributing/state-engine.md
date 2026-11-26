@@ -32,6 +32,7 @@ All errors are automatically categorized using `CategorizeError()`:
 - Sets `AuthValid=False`
 - Stops apply phase (user must fix)
 - Component state: `Failed` (requires spec/secret change)
+- From a `NonBlocking` component, only sets `AuthValid=False`, with `AsUserWarning()`: apply continues and `Ready` is unaffected. Errors of other categories from a `NonBlocking` component are ignored
 
 **Log patterns detected**:
 - S3: `access denied`, `InvalidAccessKeyId`, `NoCredentialProviders`
@@ -251,7 +252,7 @@ type StateEngineDecision struct {
 
 **Decision logic**:
 
-- `AuthValid=False` → `ShouldApply=false` (stop apply)
+- `AuthValid=False` → `ShouldApply=false` (stop apply), unless only `NonBlocking` components report auth errors
 - `ConfigValid=False` → `ShouldApply=false` (stop apply)
 - Infrastructure errors → `ShouldRequeue=true` (exponential backoff)
 
@@ -265,6 +266,7 @@ The state engine automatically configures event and log emission:
 
 - `Ready`/`Progressing` states → `AsInfo()` (normal event, info log on transition)
 - `Failed`/`Degraded`/`NotAvailable` states → `AsError()` (warning event, error log recurring)
+- Those states with `UserFixable: true` → `AsUserWarning()` (warning event, info log on transition), and so does the `Ready=False` they explain
 
 ### For Parent Conditions
 

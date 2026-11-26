@@ -70,8 +70,7 @@ func TestHasProfileOverrides_DetectsRealOverrides(t *testing.T) {
 // materialising a per-service overlay for users who emit `profileOverrides: {}`
 // from a templating layer. Two services that both end up with nil/empty
 // overrides on the same seed must continue to point at the seed (and hence
-// share the namespace cache) — that's the v1alpha1 sharing parity the chain
-// promises.
+// share the namespace cache).
 func TestHasProfileOverrides_TreatsEmptyAsNoOp(t *testing.T) {
 	cases := map[string]*aimv1alpha1.AIMServiceProfileOverrides{
 		"nil":   nil,
@@ -133,7 +132,7 @@ env_vars: {}
 		Spec: aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seed},
 	}
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testServiceName,
 			Namespace: "ns",
@@ -273,7 +272,7 @@ func TestBuildServiceOverlayProfile_NameSurvivesRecreate(t *testing.T) {
 	overrides := &aimv1alpha1.AIMServiceProfileOverrides{AcceleratorModel: "MI325X"}
 
 	build := func(uid string) string {
-		service := &aimv1alpha1.AIMService{
+		service := &aimv1alpha2.AIMService{
 			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: types.UID(uid)},
 			Spec: aimv1alpha1.AIMServiceSpec{
 				Profile:          &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -308,7 +307,7 @@ func TestComposeState_NoOverridesDoesNotMaterialiseOverlay(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *sampleProfileSpec()},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "u"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -318,7 +317,7 @@ func TestComposeState_NoOverridesDoesNotMaterialiseOverlay(t *testing.T) {
 		service: service,
 		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
 	}
-	obs := (&ProfileServiceReconciler{}).ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, fetch)
+	obs := (&ProfileServiceReconciler{}).ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, fetch)
 
 	if obs.desiredOverlayProfile != nil {
 		t.Fatalf("no overrides set: ComposeState must not materialise an overlay")
@@ -336,7 +335,7 @@ func TestComposeState_OverridesMaterialiseOverlay(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *sampleProfileSpec()},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -349,7 +348,7 @@ func TestComposeState_OverridesMaterialiseOverlay(t *testing.T) {
 		service: service,
 		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
 	}
-	obs := (&ProfileServiceReconciler{}).ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, fetch)
+	obs := (&ProfileServiceReconciler{}).ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, fetch)
 
 	if obs.desiredOverlayProfile == nil {
 		t.Fatalf("override set: ComposeState must materialise an overlay")
@@ -384,7 +383,7 @@ func TestComposeState_WeightsReplacementUsesRuntimeConfigBaseImageRegistry(t *te
 			BaseImage: "docker.io/vllm/vllm-openai-rocm:v0.16.0",
 		},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -407,7 +406,7 @@ func TestComposeState_WeightsReplacementUsesRuntimeConfigBaseImageRegistry(t *te
 
 	obs := (&ProfileServiceReconciler{}).ComposeState(
 		context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{},
 		fetch,
 	)
 
@@ -439,7 +438,7 @@ func TestComposeState_HandAuthoredBaseImageRefSupportsWeightReplacement(t *testi
 		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -457,7 +456,7 @@ func TestComposeState_HandAuthoredBaseImageRefSupportsWeightReplacement(t *testi
 
 	obs := (&ProfileServiceReconciler{}).ComposeState(
 		context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{},
 		fetch,
 	)
 
@@ -485,7 +484,7 @@ func TestComposeState_WeightsReplacementWithoutBaseImageFailsGracefully(t *testi
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
 		Status:     aimv1alpha2.AIMProfileStatus{Status: "Ready"},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -504,7 +503,7 @@ func TestComposeState_WeightsReplacementWithoutBaseImageFailsGracefully(t *testi
 	reconciler := &ProfileServiceReconciler{}
 	obs := reconciler.ComposeState(
 		context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{},
 		fetch,
 	)
 
@@ -534,7 +533,7 @@ func TestComposeState_WeightsReplacementWithoutBaseImageFailsGracefully(t *testi
 
 	plan := reconciler.PlanResources(
 		context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{},
 		obs,
 	)
 	if len(plan.GetToCreate()) != 0 ||
@@ -552,7 +551,7 @@ func TestComposeState_OverlayUsesFetchedStatusWhenPresent(t *testing.T) {
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *sampleProfileSpec()},
 		Status:     aimv1alpha2.AIMProfileStatus{Status: "Ready"},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -583,7 +582,7 @@ func TestComposeState_OverlayUsesFetchedStatusWhenPresent(t *testing.T) {
 		profile:        controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
 		overlayProfile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: overlay},
 	}
-	obs := (&ProfileServiceReconciler{}).ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, fetch)
+	obs := (&ProfileServiceReconciler{}).ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, fetch)
 
 	if obs.profileName != overlay.Name {
 		t.Fatalf("profileName = %q, want fetched overlay %q", obs.profileName, overlay.Name)
@@ -610,7 +609,7 @@ func TestPlanResources_OverlayMustBeReadyBeforeCache(t *testing.T) {
 			BaseImage: "docker.io/amdenterpriseai/aim-base:0.11",
 		},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -625,8 +624,8 @@ func TestPlanResources_OverlayMustBeReadyBeforeCache(t *testing.T) {
 	}
 
 	r := &ProfileServiceReconciler{}
-	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, fetch)
-	plan := r.PlanResources(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, obs)
+	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, fetch)
+	plan := r.PlanResources(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, obs)
 
 	var overlays, caches int
 	for _, obj := range plan.GetToApply() {
@@ -661,7 +660,7 @@ func TestPlanResources_OverlayReadyPlansCacheForOverlayName(t *testing.T) {
 			BaseImage: "docker.io/amdenterpriseai/aim-base:0.11",
 		},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -693,8 +692,8 @@ func TestPlanResources_OverlayReadyPlansCacheForOverlayName(t *testing.T) {
 	}
 
 	r := &ProfileServiceReconciler{}
-	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, fetch)
-	plan := r.PlanResources(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, obs)
+	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, fetch)
+	plan := r.PlanResources(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, obs)
 
 	var cache *aimv1alpha2.AIMProfileCache
 	for _, obj := range plan.GetToApply() {
@@ -724,7 +723,7 @@ func TestPlanResources_OverlayQueuedForApply(t *testing.T) {
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *sampleProfileSpec()},
 		Status:     aimv1alpha2.AIMProfileStatus{Status: "Ready"},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -741,8 +740,8 @@ func TestPlanResources_OverlayQueuedForApply(t *testing.T) {
 	}
 
 	r := &ProfileServiceReconciler{}
-	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, fetch)
-	plan := r.PlanResources(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, obs)
+	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, fetch)
+	plan := r.PlanResources(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{}, obs)
 
 	overlayFound := false
 	for _, obj := range plan.GetToApply() {
@@ -781,7 +780,7 @@ func TestBuildServiceOverlayProfile_SucceedsAfterContractBackfill(t *testing.T) 
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
 		Status:     aimv1alpha2.AIMProfileStatus{Origin: aimv1alpha1.ProfileOriginDerived},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -834,7 +833,7 @@ func TestBuildServiceOverlayProfile_StampsProvenanceLabels(t *testing.T) {
 			Spec: aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
 		}
 
-		service := &aimv1alpha1.AIMService{
+		service := &aimv1alpha2.AIMService{
 			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "uid"},
 			Spec: aimv1alpha1.AIMServiceSpec{
 				Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -874,7 +873,7 @@ func TestBuildServiceOverlayProfile_StampsProvenanceLabels(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
 			Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
 		}
-		service := &aimv1alpha1.AIMService{
+		service := &aimv1alpha2.AIMService{
 			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "uid"},
 			Spec: aimv1alpha1.AIMServiceSpec{
 				Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -953,7 +952,7 @@ func TestBuildServiceOverlayProfile_AppliesExplicitAdapterFeatureOverride(t *tes
 	seed := sampleProfileSpec()
 	seed.Features = nil
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns", UID: types.UID("svc-uid")},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
@@ -981,7 +980,7 @@ func TestBuildServiceOverlayProfile_AppliesExplicitAdapterFeatureOverride(t *tes
 func TestNeedsServiceOverlay_DoesNotInferAdapterFeatureFromServiceIntent(t *testing.T) {
 	t.Parallel()
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Adapters: []aimv1alpha1.AIMServiceAdapterReference{
 				{Name: "lora-a", Kind: aimv1alpha1.AdapterKindAIMArtifact},
@@ -997,7 +996,7 @@ func TestNeedsServiceOverlay_DoesNotInferAdapterFeatureFromServiceIntent(t *test
 func TestNeedsServiceOverlay_IncludesExplicitAdapterFeatureOverride(t *testing.T) {
 	t.Parallel()
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		Spec: aimv1alpha1.AIMServiceSpec{
 			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
 				Features: []string{aimv1alpha2.ProfileFeatureAdapters},

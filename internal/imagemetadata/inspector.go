@@ -1,0 +1,414 @@
+/*
+MIT License
+
+Copyright (c) 2025 Advanced Micro Devices, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+package imagemetadata
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+)
+
+// imageInspectCooldown is the minimum interval between registry inspections of an
+// image after an infrastructure failure (timeout, DNS, connection, 5xx). The entry
+// is keyed by image alone and shared across models, because the network is shared:
+// many AIMModels referencing the same unreachable image do not collectively hammer
+// the registry or each wait out registryReadTimeout.
+var imageInspectCooldown = 15 * time.Minute
+
+// imageAccessFailureCooldown is how long a 401, 403 or 404 is cached. The answer
+// depends on the credentials, so the entry is keyed by image, namespace and pull
+// secrets and never reaches another tenant, and it is short so a pushed tag or a
+// fixed secret is seen within a minute.
+var imageAccessFailureCooldown = time.Minute
+
+// registryReadTimeout bounds the keychain build and the manifest and config
+// reads of one inspection. A manifest and a config blob take seconds even over
+// a slow link, so a registry that accepts the connection and never answers
+// fails like an unreachable one instead of stalling the reconcile. A variable
+// so tests can shorten it.
+var registryReadTimeout = 30 * time.Second
+
+var (
+	inspectFailureMu sync.Mutex
+	inspectFailures  = map[string]inspectFailure{}
+)
+
+type inspectFailure struct {
+	at  time.Time
+	err error
+}
+
+// recentInspectFailure returns the cached infrastructure failure of imageURI or
+// the cached access failure of accessKey while it is within its cooldown,
+// otherwise nil.
+func recentInspectFailure(imageURI, accessKey string) error {
+	inspectFailureMu.Lock()
+	defer inspectFailureMu.Unlock()
+	if err := cachedInspectFailure(imageURI, imageInspectCooldown); err != nil {
+		return err
+	}
+	return cachedInspectFailure(accessKey, imageAccessFailureCooldown)
+}
+
+// cachedInspectFailure returns the error cached under key while it is younger
+// than cooldown. Expired entries are evicted on read so the map does not grow
+// unbounded across rotating image tags. The caller holds inspectFailureMu.
+func cachedInspectFailure(key string, cooldown time.Duration) error {
+	f, ok := inspectFailures[key]
+	if !ok {
+		return nil
+	}
+	if time.Since(f.at) < cooldown {
+		return f.err
+	}
+	delete(inspectFailures, key)
+	return nil
+}
+
+// recordInspectResult caches registry errors to drive the cooldown: 401, 403 and
+// 404 under accessKey, other registry failures under imageURI. It clears both
+// entries on success or non-registry errors.
+func recordInspectResult(imageURI, accessKey string, err error) {
+	inspectFailureMu.Lock()
+	defer inspectFailureMu.Unlock()
+	var regErr *utils.ImageRegistryError
+	if !errors.As(err, &regErr) {
+		delete(inspectFailures, imageURI)
+		delete(inspectFailures, accessKey)
+		return
+	}
+	if regErr.Type == utils.ImagePullErrorAuth || regErr.Type == utils.ImagePullErrorNotFound {
+		inspectFailures[accessKey] = inspectFailure{at: time.Now(), err: err}
+		return
+	}
+	inspectFailures[imageURI] = inspectFailure{at: time.Now(), err: err}
+}
+
+// inspectImage extracts metadata from a container image using the provided image pull secrets.
+// It uses go-containerregistry to authenticate and fetch image labels, then parses them into
+// the imageMetadata structure.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - imageURI: Full container image reference (e.g., "registry.example.com/repo/image:tag")
+//   - imagePullSecrets: Kubernetes image pull secrets for authentication
+//   - clientset: Kubernetes clientset for accessing secrets
+//   - namespace: namespace where the secrets are located
+//
+// Returns:
+//   - *imageMetadata: Extracted metadata if successful
+//   - error: Any error encountered during inspection (authentication, network, parsing, etc.)
+//     Registry access errors are classified by registryError.
+func inspectImage(
+	ctx context.Context,
+	imageURI string,
+	imagePullSecrets []corev1.LocalObjectReference,
+	clientset kubernetes.Interface,
+	secretNamespace string,
+) (_ *aimv1alpha1.ImageMetadata, retErr error) {
+	logger := ctrl.LoggerFrom(ctx)
+
+	secretNames := make([]string, len(imagePullSecrets))
+	for i, secret := range imagePullSecrets {
+		secretNames[i] = secret.Name
+	}
+	sort.Strings(secretNames)
+	accessKey := imageURI + " " + secretNamespace + "/" + strings.Join(secretNames, ",")
+
+	// Skip the registry GET while a recent registry failure is still within the cooldown.
+	if err := recentInspectFailure(imageURI, accessKey); err != nil {
+		logger.V(1).Info("Skipping image inspect within registry failure cooldown", "imageURI", imageURI)
+		return nil, err
+	}
+	defer func() { recordInspectResult(imageURI, accessKey, retErr) }()
+
+	// Parse the image reference
+	ref, err := name.ParseReference(imageURI)
+	if err != nil {
+		logger.Info("Invalid image reference format", "imageURI", imageURI, "error", err.Error())
+		return nil, controllerutils.NewInvalidSpecError(ReasonInvalidImageReference,
+			fmt.Sprintf("image %q is not a valid image reference: %v", imageURI, err), err)
+	}
+
+	// Pre-validate that all referenced imagePullSecrets exist.
+	// Following K8s conventions: if a user explicitly references a resource, validate it upfront
+	// rather than silently ignoring missing secrets (even if the image might be public).
+	// This provides fail-fast behavior and surfaces configuration issues early.
+	if len(imagePullSecrets) > 0 && secretNamespace != "" && clientset != nil {
+		for _, secret := range imagePullSecrets {
+			// Verify the secret exists
+			_, err := clientset.CoreV1().Secrets(secretNamespace).Get(ctx, secret.Name, metav1.GetOptions{})
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					logger.Info("Referenced imagePullSecret not found",
+						"secret", secret.Name,
+						"namespace", secretNamespace)
+					return nil, controllerutils.NewMissingUpstreamDependencyError(
+						"SecretNotFound",
+						fmt.Sprintf("imagePullSecret %q not found in namespace %q", secret.Name, secretNamespace),
+						err,
+					)
+				}
+				// Other errors (network, permissions) are infrastructure errors
+				logger.Error(err, "Failed to verify imagePullSecret",
+					"secret", secret.Name,
+					"namespace", secretNamespace)
+				return nil, controllerutils.NewInfrastructureError(
+					"SecretAccessFailed",
+					fmt.Sprintf("failed to access imagePullSecret %q: %v", secret.Name, err),
+					err,
+				)
+			}
+		}
+		logger.V(1).Info("Using image pull secrets for authentication", "secrets", secretNames, "namespace", secretNamespace)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, registryReadTimeout)
+	defer cancel()
+	keychain, err := utils.BuildKeychain(ctx, clientset, secretNamespace, imagePullSecrets)
+	if err != nil {
+		return nil, err
+	}
+
+	// The config file holds the labels.
+	img, err := remote.Image(ref, remote.WithAuthFromKeychain(keychain), remote.WithContext(ctx))
+	var configFile *v1.ConfigFile
+	if err == nil {
+		configFile, err = img.ConfigFile()
+	}
+	if err != nil {
+		err = registryError(imageURI, err)
+		logger.Info("Failed to read image from its registry", "imageURI", imageURI, "error", err.Error())
+		return nil, err
+	}
+
+	// Extract metadata from labels
+	labelCount := len(configFile.Config.Labels)
+	metadata, err := parseImageLabels(configFile.Config.Labels)
+	if err != nil {
+		logger.Error(err, "Failed to parse image labels", "imageURI", imageURI, "labelCount", labelCount)
+		return nil, fmt.Errorf("failed to parse image labels: %w", err)
+	}
+
+	// Extract AIM_BASE_IMAGE_REF from the image's env config. This env var is baked
+	// into AIM model images at build time and records the base image the model
+	// image was built from. It is consumed by the AIMModel controller to resolve
+	// spec.image for fine-tuned models whose spec.image is omitted.
+	metadata.BaseImageRef = extractEnvValue(configFile.Config.Env, constants.EnvAIMBaseImageRef)
+
+	logger.V(1).Info("Successfully extracted image metadata", "imageURI", imageURI,
+		"canonicalName", metadata.Model.CanonicalName,
+		"recommendedDeploymentCount", len(metadata.Model.RecommendedDeployments),
+		"baseImageRef", metadata.BaseImageRef)
+
+	return metadata, nil
+}
+
+// registryError classifies a failed registry read of imageURI by its HTTP
+// status, not its text: 404 means the repository or tag does not exist, 401
+// and 403 mean the registry refused the credentials, and anything else is
+// infrastructure. The result wraps an ImageRegistryError so the failure
+// cooldown applies.
+func registryError(imageURI string, err error) error {
+	regErr := &utils.ImageRegistryError{Type: utils.ImagePullErrorGeneric, Message: err.Error(), Cause: err}
+	var transportErr *transport.Error
+	if errors.As(err, &transportErr) {
+		switch transportErr.StatusCode {
+		case http.StatusNotFound:
+			regErr.Type = utils.ImagePullErrorNotFound
+			return controllerutils.NewMissingUpstreamDependencyError(constants.ReasonImageNotFound,
+				fmt.Sprintf("image %q does not exist in its registry (%v); check the repository and tag", imageURI, err), regErr)
+		case http.StatusUnauthorized, http.StatusForbidden:
+			regErr.Type = utils.ImagePullErrorAuth
+			return controllerutils.NewAuthError(constants.ReasonImagePullAuthFailure,
+				fmt.Sprintf("the registry refused access to image %q (%v); check spec.imagePullSecrets and that the repository exists", imageURI, err), regErr)
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return controllerutils.NewInfrastructureError("NetworkTimeout",
+			fmt.Sprintf("the registry of image %q did not answer within %v: %v", imageURI, registryReadTimeout, err), regErr)
+	}
+	if network := controllerutils.CategorizeError(err); network.Category() == controllerutils.ErrorCategoryInfrastructure {
+		return controllerutils.NewInfrastructureError(network.Reason(),
+			fmt.Sprintf("cannot reach the registry of image %q: %v", imageURI, err), regErr)
+	}
+	return controllerutils.NewInfrastructureError(ReasonImageInspectionFailed,
+		fmt.Sprintf("failed to read image %q from its registry: %v", imageURI, err), regErr)
+}
+
+// extractEnvValue scans an OCI image Config.Env slice (entries in "KEY=VALUE" form)
+// for the first entry whose key equals name. Returns "" when no such entry is found.
+func extractEnvValue(env []string, name string) string {
+	prefix := name + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return entry[len(prefix):]
+		}
+	}
+	return ""
+}
+
+// getAMDLabel retrieves a label value, checking both new and legacy prefixes.
+// It first checks for com.amd.aim.<suffix> (new prefix), then falls back to
+// org.amd.silogen.<suffix> (legacy prefix). Returns the first non-empty value found.
+func getAMDLabel(labels map[string]string, suffix string) string {
+	// Try new prefix first
+	if val := labels["com.amd.aim."+suffix]; val != "" {
+		return val
+	}
+	// Fall back to legacy prefix
+	return labels["org.amd.silogen."+suffix]
+}
+
+// parseImageLabels extracts structured metadata from OCI and AIM image labels.
+func parseImageLabels(labels map[string]string) (*aimv1alpha1.ImageMetadata, error) {
+	// Allow images with no labels - metadata will be minimal but valid
+	// Downstream logic will detect missing recommendedDeployments if needed
+
+	metadata := &aimv1alpha1.ImageMetadata{
+		OCI:            &aimv1alpha1.OCIMetadata{},
+		Model:          &aimv1alpha1.ModelMetadata{},
+		OriginalLabels: labels,
+	}
+
+	// Parse OCI standard labels
+	metadata.OCI.Title = labels["org.opencontainers.image.title"]
+	metadata.OCI.Description = labels["org.opencontainers.image.description"]
+	metadata.OCI.Licenses = labels["org.opencontainers.image.licenses"]
+	metadata.OCI.Vendor = labels["org.opencontainers.image.vendor"]
+	metadata.OCI.Authors = labels["org.opencontainers.image.authors"]
+	metadata.OCI.Source = labels["org.opencontainers.image.source"]
+	metadata.OCI.Documentation = labels["org.opencontainers.image.documentation"]
+	metadata.OCI.Created = labels["org.opencontainers.image.created"]
+	metadata.OCI.Revision = labels["org.opencontainers.image.revision"]
+	metadata.OCI.Version = labels["org.opencontainers.image.version"]
+
+	// Parse AIM model labels (supports both com.amd.aim and org.amd.silogen prefixes)
+	metadata.Model.CanonicalName = getAMDLabel(labels, "model.canonicalName")
+	metadata.Model.Source = getAMDLabel(labels, "model.source")
+	metadata.Model.Title = getAMDLabel(labels, "title")
+	metadata.Model.DescriptionFull = getAMDLabel(labels, "description.full")
+	metadata.Model.ReleaseNotes = getAMDLabel(labels, "release.notes")
+
+	// Parse comma-separated fields
+	if tags := getAMDLabel(labels, "model.tags"); tags != "" {
+		metadata.Model.Tags = parseCommaSeparated(tags)
+	}
+	if versions := getAMDLabel(labels, "model.versions"); versions != "" {
+		metadata.Model.Versions = parseCommaSeparated(versions)
+	}
+	if variants := getAMDLabel(labels, "model.variants"); variants != "" {
+		metadata.Model.Variants = parseCommaSeparated(variants)
+	}
+
+	// Parse boolean HF token required
+	if hfTokenStr := getAMDLabel(labels, "hfToken.required"); hfTokenStr != "" {
+		hfTokenRequired, err := strconv.ParseBool(hfTokenStr)
+		if err == nil {
+			metadata.Model.HFTokenRequired = hfTokenRequired
+		}
+	}
+
+	// Parse recommended deployments JSON array
+	if deploymentsJSON := getAMDLabel(labels, "model.recommendedDeployments"); deploymentsJSON != "" {
+		deployments, err := parseRecommendedDeployments(deploymentsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse recommended deployments: %w", err)
+		}
+		metadata.Model.RecommendedDeployments = deployments
+	}
+
+	// Note: canonicalName is optional. If missing, downstream logic will handle it.
+	// This allows images without full metadata to be processed gracefully.
+
+	return metadata, nil
+}
+
+// parseCommaSeparated splits a comma-separated string into a slice of trimmed strings.
+func parseCommaSeparated(input string) []string {
+	parts := strings.Split(input, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+// parseRecommendedDeployments parses deployment configurations from a label value.
+// The input can be either:
+// - A JSON array: [{"gpuModel": "MI300X", "gpuCount": 1, ...}, {...}]
+// - Comma-separated objects: {"gpuModel": "MI300X", "gpuCount": 1, ...}, {...}
+// - Python-style dicts with single quotes: {'gpuModel': 'MI300X', 'gpuCount': 1, ...}
+//
+// This function normalizes Python-style notation to JSON before parsing.
+func parseRecommendedDeployments(jsonStr string) ([]aimv1alpha1.RecommendedDeployment, error) {
+	var deployments []aimv1alpha1.RecommendedDeployment
+
+	// Normalize the input:
+	// 1. Replace single quotes with double quotes (Python -> JSON)
+	// 2. Wrap with brackets if it's comma-separated objects
+	trimmed := strings.TrimSpace(jsonStr)
+
+	// Replace single quotes with double quotes for Python-style dict notation
+	normalized := strings.ReplaceAll(trimmed, "'", "\"")
+
+	// If the string doesn't start with '[', assume it's comma-separated objects
+	// and wrap it with brackets to make it a valid JSON array
+	if !strings.HasPrefix(normalized, "[") {
+		normalized = "[" + normalized + "]"
+	}
+
+	// Parse as JSON array
+	err := json.Unmarshal([]byte(normalized), &deployments)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal deployments as JSON array: %w", err)
+	}
+
+	return deployments, nil
+}

@@ -21,9 +21,8 @@
 // SOFTWARE.
 
 // Package aimimage provides helpers for resolving fine-tuned AIM deployment
-// images. The helpers are version-agnostic: they operate on raw image strings
-// so v1alpha1 (legacy template-copy path) and v1alpha2 (profile-copy path) can
-// share one resolver.
+// images. The helpers are version-agnostic: they operate on raw image
+// strings.
 package aimimage
 
 import (

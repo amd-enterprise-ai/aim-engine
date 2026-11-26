@@ -5,9 +5,9 @@
 # A v1alpha2 AIMService first inherits the namespace runtime config's
 # tolerations on its InferenceService predictor. Setting spec.tolerations to []
 # on the service must then remove them. The unit tests cover the merge rule;
-# this test covers what they cannot: that an explicit [] survives admission,
-# storage and version conversion as an empty list rather than an unset one,
-# and that the toleration is removed from the existing InferenceService.
+# this test covers what they cannot: that an explicit [] survives admission
+# and storage as an empty list rather than an unset one, and that the
+# toleration is removed from the existing InferenceService.
 #
 # Test type: Frozen dependency test
 # Frozen resources: AIMClusterProfile (Ready, CPU-only), AIMProfileCache and
@@ -169,23 +169,18 @@ spec:
                 value: ($namespace)
             content: |
               set -eu
-              # Target v1alpha2 explicitly; kubectl otherwise picks the first
-              # served version.
-              SVC_GV=aimservices.v1alpha2.aim.eai.amd.com
-              kubectl patch "$SVC_GV" test-tolerations-service -n "$NAMESPACE" \
+              kubectl patch aimservice test-tolerations-service -n "$NAMESPACE" \
                 --type=merge -p '{"spec":{"tolerations":[]}}'
 
-              # An empty list must be stored as [], not dropped to unset, in
-              # both served versions; unset would inherit the runtime config's.
-              for VERSION in v1alpha2 v1alpha1; do
-                STORED=$(kubectl get "aimservices.$VERSION.aim.eai.amd.com" test-tolerations-service \
-                  -n "$NAMESPACE" -o json | jq -c '.spec.tolerations')
-                if [ "$STORED" != "[]" ]; then
-                  echo "ERROR: $VERSION spec.tolerations is $STORED, want []"
-                  exit 1
-                fi
-              done
-              echo "OK: spec.tolerations is [] in v1alpha2 and v1alpha1"
+              # An empty list must be stored as [], not dropped to unset;
+              # unset would inherit the runtime config's.
+              STORED=$(kubectl get aimservice test-tolerations-service \
+                -n "$NAMESPACE" -o json | jq -c '.spec.tolerations')
+              if [ "$STORED" != "[]" ]; then
+                echo "ERROR: spec.tolerations is $STORED, want []"
+                exit 1
+              fi
+              echo "OK: spec.tolerations is []"
 
     - name: Assert the InferenceService no longer carries the inherited toleration
       try:

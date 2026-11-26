@@ -24,10 +24,8 @@ package utils
 
 import "strings"
 
-// Well-known preference orders consumed by the auto-selection paths in
-// both v1alpha1 (AIMServiceTemplate scoring) and v1alpha2 (AIMProfile
-// resolver). They exist here so the two surfaces stay in lock-step: a
-// single edit propagates to both code paths.
+// Well-known preference orders consumed by the AIMProfile auto-selection
+// paths.
 //
 // Earlier entries beat later entries. Values not present in a list tie
 // at the bottom (lowest equal priority) via PreferenceScore's fallback,

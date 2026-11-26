@@ -1,0 +1,17 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: autoscaling
+spec:
+  aimId: test/autoscaling
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.1
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # The download is simulated, so the PVC only needs to provision.
+      size: 1Gi

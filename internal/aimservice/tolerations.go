@@ -26,13 +26,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 )
 
 // InferenceTolerations returns the tolerations of a service's inference pods:
 // the service's own list when it sets one, even an empty one, and otherwise
 // the merged runtime config's.
 func InferenceTolerations(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) []corev1.Toleration {
 	tolerations := service.Spec.Tolerations

@@ -23,7 +23,13 @@
 package controllerutils
 
 import (
+	"context"
+	"strings"
 	"testing"
+
+	"github.com/go-logr/logr"
+	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -397,12 +403,13 @@ func TestComposability(t *testing.T) {
 
 func TestHighLevelDefaults(t *testing.T) {
 	tests := []struct {
-		name          string
-		opt           ObservabilityOption
-		expectedEvent EventMode
-		expectedLevel EventLevel
-		expectedLog   LogMode
-		expectedLogLv int
+		name              string
+		opt               ObservabilityOption
+		expectedEvent     EventMode
+		expectedLevel     EventLevel
+		expectedLog       LogMode
+		expectedLogLv     int
+		expectedLogAsInfo bool
 	}{
 		{
 			name:          "AsInfo",
@@ -419,6 +426,15 @@ func TestHighLevelDefaults(t *testing.T) {
 			expectedLevel: LevelWarning,
 			expectedLog:   LogOnTransition,
 			expectedLogLv: 0,
+		},
+		{
+			name:              "AsUserWarning",
+			opt:               AsUserWarning(),
+			expectedEvent:     EventOnTransition,
+			expectedLevel:     LevelWarning,
+			expectedLog:       LogOnTransition,
+			expectedLogLv:     0,
+			expectedLogAsInfo: true,
 		},
 		{
 			name:          "AsError",
@@ -452,6 +468,60 @@ func TestHighLevelDefaults(t *testing.T) {
 			}
 			if tt.expectedLog != LogNone && cfg.logLevel != tt.expectedLogLv {
 				t.Errorf("expected logLevel=%v, got %v", tt.expectedLogLv, cfg.logLevel)
+			}
+			if cfg.logAsInfo != tt.expectedLogAsInfo {
+				t.Errorf("expected logAsInfo=%v, got %v", tt.expectedLogAsInfo, cfg.logAsInfo)
+			}
+		})
+	}
+}
+
+type levelCountingSink struct{ infos, errors int }
+
+func (s *levelCountingSink) Init(logr.RuntimeInfo)          {}
+func (s *levelCountingSink) Enabled(int) bool               { return true }
+func (s *levelCountingSink) Info(int, string, ...any)       { s.infos++ }
+func (s *levelCountingSink) Error(error, string, ...any)    { s.errors++ }
+func (s *levelCountingSink) WithValues(...any) logr.LogSink { return s }
+func (s *levelCountingSink) WithName(string) logr.LogSink   { return s }
+
+func TestEmit_UserWarningLogsInfoWithWarningEvent(t *testing.T) {
+	tests := []struct {
+		name       string
+		opt        ObservabilityOption
+		wantInfos  int
+		wantErrors int
+	}{
+		{name: "AsWarning logs an error", opt: AsWarning(), wantErrors: 1},
+		{name: "AsUserWarning logs info", opt: AsUserWarning(), wantInfos: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cm := NewConditionManager(nil)
+			cm.MarkFalse("ProfileReady", "ProfileNotFound", "no AIMProfile matched the selector", tt.opt)
+			transitions := DiffConditionTransitions(nil, cm.Conditions())
+			sink := &levelCountingSink{}
+			ctx := log.IntoContext(context.Background(), logr.New(sink))
+			recorder := record.NewFakeRecorder(10)
+
+			// Run twice: the second pass has no transition, so nothing recurs.
+			for _, ts := range [][]ConditionTransition{transitions, nil} {
+				EmitConditionTransitions(recorder, &testObject{}, ts, cm)
+				EmitRecurringEvents(recorder, &testObject{}, cm)
+				EmitConditionLogs(ctx, ts, cm)
+				EmitRecurringLogs(ctx, cm)
+			}
+
+			if sink.infos != tt.wantInfos || sink.errors != tt.wantErrors {
+				t.Errorf("logs: infos=%d errors=%d, want infos=%d errors=%d",
+					sink.infos, sink.errors, tt.wantInfos, tt.wantErrors)
+			}
+			if len(recorder.Events) != 1 {
+				t.Fatalf("events = %d, want 1", len(recorder.Events))
+			}
+			if event := <-recorder.Events; !strings.HasPrefix(event, "Warning ProfileNotFound ") {
+				t.Errorf("event = %q, want a Warning ProfileNotFound event", event)
 			}
 		})
 	}

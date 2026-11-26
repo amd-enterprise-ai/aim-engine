@@ -1,0 +1,89 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v0.2.7-rollback
+  labels:
+    requires: upgrade-workflow
+spec:
+  description: |
+    After the upgrade guide's rollback, the v0.2.7 operator replaced the
+    candidate and runs without restarts. The services moved to the profile
+    pipeline before the upgrade, and the service created after it with only
+    spec.model.name, stay on it.
+  timeouts:
+    assert: 300s
+  steps:
+    # With only the operator rolled back, the candidate pod keeps running.
+    - name: The v0.2.7 operator replaced the candidate
+      try:
+        - script:
+            content: |
+              set -eu
+              tags=$(kubectl get pods -n aim-system -l control-plane=controller-manager -o json \
+                | jq -r '[.items[] | select(.metadata.deletionTimestamp == null)
+                  | .spec.containers[] | select(.name == "manager") | .image | split(":") | last] | join(" ")')
+              if [ "$tags" != "v0.2.7" ]; then
+                echo "ERROR: the manager containers run image tags '$tags', want 'v0.2.7'"
+                exit 1
+              fi
+
+    - name: Moved and post-upgrade services stay on the profile pipeline
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-shared-service
+              status:
+                reconcilerPipeline: profile
+                status: Running
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-dedicated-service
+              status:
+                reconcilerPipeline: profile
+                status: Running
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-migrated-service
+              status:
+                reconcilerPipeline: profile
+                status: Running
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-post-upgrade-service
+              status:
+                reconcilerPipeline: profile
+
+    # A v0.2.7 pod that can't sync its watches exits about every two minutes
+    # and reports Ready in between, so readiness alone doesn't show it.
+    - name: The v0.2.7 operator runs for 3 minutes without a restart
+      try:
+        - sleep:
+            duration: 3m
+        - script:
+            content: |
+              set -eu
+              manager=$(kubectl get pods -n aim-system -l control-plane=controller-manager -o json \
+                | jq -r '.items[] | select(.metadata.deletionTimestamp == null)
+                  | .status.containerStatuses[] | select(.name == "manager")
+                  | "ready=\(.ready) restarts=\(.restartCount) running-3m=\((.state.running.startedAt // empty | fromdateiso8601) <= now - 180)"')
+              if [ "$manager" != "ready=true restarts=0 running-3m=true" ]; then
+                echo "ERROR: the manager container is '$manager', want 'ready=true restarts=0 running-3m=true'"
+                exit 1
+              fi
+              if kubectl logs -n aim-system deployment/aim-engine-controller-manager -c manager --tail=-1 \
+                | grep -E 'no matches for kind|Could not wait for Cache to sync'; then
+                echo "ERROR: the operator log shows a watch that never synced"
+                exit 1
+              fi

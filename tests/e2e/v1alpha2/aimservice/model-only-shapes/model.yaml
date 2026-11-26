@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: model-only-shapes
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: test/model-only-shapes
+        modelId: Qwen/Qwen3-0.6B
+    versionPolicy: latest

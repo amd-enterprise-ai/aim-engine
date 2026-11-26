@@ -5,7 +5,7 @@
 :::{admonition} v1alpha2
 :class: note
 
-All examples on this page use `aim.eai.amd.com/v1alpha2`. For the deprecated v1alpha1 shape (`spec.template`), see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+All examples on this page use `aim.eai.amd.com/v1alpha2`.
 :::
 ## Quick start
 
@@ -17,8 +17,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
@@ -67,9 +65,6 @@ the same profile properties can also act as ranking axes among the candidates
 that survive filtering. Constrain the selector when a specific hardware,
 metric, or precision choice is required rather than relying on default ranking.
 
-The v1alpha1 template selector has its own analogous filtering and preference
-logic. The order above describes the v1alpha2 profile pipeline.
-
 ### By name
 
 ```yaml
@@ -92,11 +87,6 @@ spec:
   model:
     name: qwen-qwen3-32b
 ```
-
-During the v1alpha1 → v1alpha2 migration window, a complete model-only
-`AIMService` must also set
-`aim.eai.amd.com/reconciler-pipeline: profile`. A service that includes
-`spec.profile.*` selects the profile pipeline by spec shape.
 
 The candidate pool is every deployable profile produced by `AIMModel/qwen-qwen3-32b` (or `AIMClusterModel` of the same name). Ranking picks the best.
 
@@ -136,22 +126,15 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
-The shortest path when you only have a container image. With the annotation, the v1alpha2 profile pipeline reuses an existing `AIMModel`/`AIMClusterModel` for that image if one is present, or creates a dedicated, service-owned `AIMModel` if not. Discovery runs against the model and the service then resolves to one of its profiles.
+The shortest path when you only have a container image. The controller reuses an existing `AIMModel`/`AIMClusterModel` for that image if one is present, or creates a dedicated, service-owned `AIMModel` if not. Discovery runs against the model and the service then resolves to one of its profiles.
 
-If you plan to share the image across many services, apply a long-lived `AIMModel`/`AIMClusterModel` once and reference it via `spec.model.name` instead — the same profiles back every service and the cache works in `Shared` mode without extra owner chains.
+If you plan to share the image across many services, apply a long-lived `AIMModel`/`AIMClusterModel` once and reference it via `spec.model.name` instead — the same profiles back every service and the cache works in `Shared` mode without extra owner chains. See [Services → By image](../concepts/services.md#by-image) for the auto-created `AIMModel` naming convention, labels and garbage collection.
 
-:::{admonition} Migration window
-:class: warning
-
-Without `aim.eai.amd.com/reconciler-pipeline: profile`, `spec.model.image` is reconciled by the **legacy v1alpha1 template pipeline**. The annotation will be removed (and the profile pipeline made the default) when v1alpha1 is dropped. See [Migration window](../admin/upgrading.md#migration-window) for the full mechanics, including the auto-created `AIMModel` naming convention, labels, and GC behaviour.
-:::
 ## Profile overlays
 
 To tweak a published profile for one service — typically to point it at fine-tune weights or override engine args — use `spec.profileOverrides`:
@@ -173,11 +156,11 @@ spec:
       VLLM_LOG_LEVEL: DEBUG
 ```
 
-The controller materialises a service-owned overlay `AIMProfile` named `<seed>-<service>-overlay-<hash>` with the override applied, then resolves the service to the overlay. The overlay is garbage-collected with the service.
+The controller materialises a service-owned overlay `AIMProfile` named `<seed>-<service>-overlay-<hash>` with the override applied, then resolves the service to the overlay. The overlay is garbage-collected with the service, or once the service has rolled out on another AIMProfile.
 
 Which container image the overlay runs is tied to whether you are replacing the model weights. If you set `modelSources` (for example to use fine-tuned weights), the controller does not keep the seed profile's model-optimized image — that image is built for the vendor's weights. Instead it uses the `aim-base` runtime for that model line so your new weights land on the standard base image. If you do not override weights and only change things like `acceleratorPartitioningMode`, `containerEnv` / `engineEnv`, or `engineArgs`, the overlay keeps the seed's model-optimized image, so changing partitioning or environment settings cannot quietly switch the service to the generic base runtime. See [Image resolution](../concepts/profilesets.md#image-resolution) for the full table.
 
-`spec.profileOverrides` lives at the top level of the AIMService spec, **not under `spec.profile`**, because it is a separate concern: `spec.profile` describes *which* profile to resolve, `spec.profileOverrides` describes *how to mutate* the resolved profile into a service-owned overlay. The CRD allows `profileOverrides` only together with `spec.profile` (`name` or `selector`), and the overlay derives from the profile that `spec.profile` resolves. Keeping it at the top level mirrors the v1alpha1 `spec.overrides` shape that did the same job for templates.
+`spec.profileOverrides` lives at the top level of the AIMService spec, **not under `spec.profile`**, because it is a separate concern: `spec.profile` describes *which* profile to resolve, `spec.profileOverrides` describes *how to mutate* the resolved profile into a service-owned overlay. The CRD allows `profileOverrides` only together with `spec.profile` (`name` or `selector`), and the overlay derives from the profile that `spec.profile` resolves.
 
 When you have many services that share the same override shape, build a fine-tune `AIMModel` instead — see [Fine-Tuned Models](fine-tuned-models.md).
 
@@ -331,7 +314,7 @@ kubectl -n ml-team describe aimservice qwen-chat
 |---|---|
 | `resolvedProfile` | The profile the service is using (`name`, `scope`, `kind`, `uid`) |
 | `resolvedRuntimeConfig` | The runtime config (if any) that contributed defaults |
-| `cache` | Cache status — `profileCacheRef` (v1alpha2) or `templateCacheRef` (v1alpha1), `retryAttempts` |
+| `cache` | Cache status — `profileCacheRef`, `retryAttempts` |
 | `runtime` | Replica counts when autoscaling is active |
 | `routing` | Observed routing including the rendered path |
 | `conditions` | Per-component conditions |
@@ -372,7 +355,7 @@ status:
       reason: ProfileResolved
     - type: ProfileCacheReady
       status: "True"
-      reason: CacheReady
+      reason: ProfileCacheReady
     - type: InferenceServiceReady
       status: "True"
       reason: RuntimeReady

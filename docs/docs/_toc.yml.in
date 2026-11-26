@@ -87,8 +87,6 @@ subtrees:
                 title: Storage Configuration
               - file: admin/upgrading
                 title: Upgrading
-              - file: admin/template-migration
-                title: Bounded Template Migration
               - file: admin/monitoring
                 title: Monitoring
               - file: admin/troubleshooting
@@ -121,19 +119,5 @@ subtrees:
                 title: Naming and Labels
               - file: reference/conditions
                 title: Conditions
-      - file: legacy/index
-        title: Legacy (v1alpha1)
-        subtrees:
-          - entries:
-              - file: legacy/migrating
-                title: Migrating to v1alpha2
-              - file: legacy/aimservice-v1alpha1
-                title: AIMService (v1alpha1)
-              - file: legacy/aimmodel-v1alpha1
-                title: AIMModel (v1alpha1)
-              - file: legacy/service-templates
-                title: Service Templates (v1alpha1)
-              - file: legacy/conditions-v1alpha1
-                title: Conditions (v1alpha1)
       - file: changelog
         title: Changelog

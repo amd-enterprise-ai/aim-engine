@@ -250,10 +250,10 @@ func TestGatewayActivationInvariant(t *testing.T) {
 	)
 
 	restartRegression := readRepoFile(
-		t, root, "tests", "e2e", "aimservice", "common", "scale-from-zero", "chainsaw-test.yaml",
+		t, root, "tests", "e2e", "v1alpha2", "aimservice", "scale-from-zero", "chainsaw-test.yaml",
 	)
 	assertContainsAll(t, "collector-restart regression test", restartRegression,
-		"Restart the Envoy activation collector without waking the workload",
+		"Restarting the Envoy activation collector does not wake the service",
 		"kubectl rollout restart",
 		"PROXY_UID_BEFORE",
 		"PROXY_UID_AFTER",

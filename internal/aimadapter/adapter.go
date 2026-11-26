@@ -20,17 +20,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// Package aimadapter implements the pipeline-agnostic LoRA adapter staging
-// engine shared by the v1alpha1 (template) and v1alpha2 (profile) AIMService
-// pipelines.
+// Package aimadapter implements the LoRA adapter staging engine of the
+// profile-based AIMService pipeline.
 //
-// Both pipelines resolve a single base-model AIMArtifact and its shared,
-// ReadWriteMany "adapter disk" PVC; only that resolution differs between
-// them. Once a pipeline has fetched the per-adapter artifacts, the parent
-// model artifact, and any existing staging Jobs (see Fetch / Dependencies),
-// every downstream concern — validation, per-adapter disk-side state, staging
-// Job construction, the read-only subtree mount, status mirroring, and the
-// aggregate component health — is identical and lives here.
+// The pipeline resolves a single base-model AIMArtifact and its shared,
+// ReadWriteMany "adapter disk" PVC. Once it has fetched the per-adapter
+// artifacts, the parent model artifact, and any existing staging Jobs (see
+// Fetch / Dependencies), every downstream concern — validation, per-adapter
+// disk-side state, staging Job construction, the read-only subtree mount,
+// status mirroring, and the aggregate component health — lives here.
 package aimadapter
 
 import (
@@ -51,6 +49,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -103,8 +102,8 @@ type Dependencies struct {
 	AdapterDiskPVCUID     string
 
 	// ProfileSupportsAdapters reports whether the resolved profile advertises the
-	// LoRA feature. nil means unknown / not gated (e.g. the v1alpha1 pipeline has
-	// no features field); Compose only rejects when this is explicitly false.
+	// LoRA feature. nil means unknown / not gated; Compose only rejects when
+	// this is explicitly false.
 	ProfileSupportsAdapters *bool
 
 	// ParentResolutionErr is a terminal base-model resolution error (e.g. the
@@ -172,7 +171,7 @@ type State struct {
 // AIMArtifact name (adapterPathTemplate is deferred; resolveAdapterPath freezes
 // AdapterPath to the artifact name), so the keep-list is derived from the
 // reference names alone — stable regardless of artifact-fetch progress.
-func keepAdapterPaths(service *aimv1alpha1.AIMService) []string {
+func keepAdapterPaths(service *aimv1alpha2.AIMService) []string {
 	paths := make([]string, 0, len(service.Spec.Adapters))
 	for i := range service.Spec.Adapters {
 		paths = append(paths, service.Spec.Adapters[i].Name)
@@ -187,7 +186,7 @@ func keepAdapterPaths(service *aimv1alpha1.AIMService) []string {
 // fresh subtree synchronization. The empty set still hashes to a stable,
 // non-empty value so a synced empty subtree remains distinguishable from a
 // never-synced service.
-func desiredAdapterKey(service *aimv1alpha1.AIMService, adapterDiskPVC, adapterDiskPVCUID string) string {
+func desiredAdapterKey(service *aimv1alpha2.AIMService, adapterDiskPVC, adapterDiskPVCUID string) string {
 	paths := keepAdapterPaths(service)
 	// NUL separates fields unambiguously because Kubernetes names cannot contain it.
 	sum := sha256.Sum256([]byte(adapterDiskPVC + "\x00" + adapterDiskPVCUID + "\x00" + strings.Join(paths, ",")))
@@ -196,7 +195,7 @@ func desiredAdapterKey(service *aimv1alpha1.AIMService, adapterDiskPVC, adapterD
 
 // ServiceSubtreeID returns the per-service subtree directory name on the shared
 // adapter disk. The AIMService UID guarantees isolation across delete/recreate.
-func ServiceSubtreeID(service *aimv1alpha1.AIMService) string {
+func ServiceSubtreeID(service *aimv1alpha2.AIMService) string {
 	return string(service.UID)
 }
 
@@ -208,21 +207,20 @@ func ServiceSubtreeID(service *aimv1alpha1.AIMService) string {
 // status as well as the spec is what lets a removal — including dropping the last
 // adapter in dynamic mode — drive its prune to completion instead of stranding
 // bytes on the shared disk.
-func IsActive(service *aimv1alpha1.AIMService) bool {
+func IsActive(service *aimv1alpha2.AIMService) bool {
 	return service.Spec.AdaptersEnabled() || len(service.Status.Adapters) > 0
 }
 
 // Fetch loads the resolved parent model artifact, then each declared adapter and
 // the Jobs belonging to the current storage binding. parentName is resolved by
-// the caller from its pipeline-specific cache (profile cache for v1alpha2,
-// template cache for v1alpha1) and may be empty when the base model is not yet
-// resolvable. A transient resolution gap uses the PVC persisted on service
+// the caller from the service's profile cache and may be empty when the base
+// model is not yet resolvable. A transient resolution gap uses the PVC persisted on service
 // status so the controller continues observing the previous binding; a newly
 // resolved PVC selects a fresh generation of staging and subtree-sync Jobs.
 func Fetch(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	parentName string,
 ) Dependencies {
 	deps := Dependencies{
@@ -290,7 +288,7 @@ func Fetch(
 
 // Compose validates the declared adapters against the resolved parent and
 // computes each adapter's disk-side state.
-func Compose(service *aimv1alpha1.AIMService, deps Dependencies) State {
+func Compose(service *aimv1alpha2.AIMService, deps Dependencies) State {
 	return ComposeWithRuntimeConfig(service, deps, nil, nil)
 }
 
@@ -300,7 +298,7 @@ func Compose(service *aimv1alpha1.AIMService, deps Dependencies) State {
 // the caller's RuntimeConfig component health owns reporting and retrying the
 // fetch error.
 func ComposeWithRuntimeConfig(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	deps Dependencies,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	runtimeConfigFetchErr error,
@@ -414,7 +412,7 @@ func ComposeWithRuntimeConfig(
 }
 
 func resolveValidatedMaxAdapterRank(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	adapters []Observation,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	runtimeConfigFetchErr error,
@@ -434,7 +432,7 @@ func resolveValidatedMaxAdapterRank(
 	return maxRank, dynamicAdapterRankError(service, adapters, maxRank)
 }
 
-func profileAdapterSupportError(service *aimv1alpha1.AIMService, deps Dependencies) error {
+func profileAdapterSupportError(service *aimv1alpha2.AIMService, deps Dependencies) error {
 	if service.Spec.AdaptersEnabled() && deps.ProfileSupportsAdapters != nil && !*deps.ProfileSupportsAdapters {
 		return fmt.Errorf(
 			"resolved profile does not advertise LoRA adapter support; select an adapter-capable profile or set spec.profileOverrides.features: [\"adapters\"] on the AIMService")
@@ -443,7 +441,7 @@ func profileAdapterSupportError(service *aimv1alpha1.AIMService, deps Dependenci
 }
 
 func dynamicAdapterRankError(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	adapters []Observation,
 	maxRank int32,
 ) error {
@@ -466,7 +464,7 @@ func dynamicAdapterRankError(
 // conservative built-in default. Static services have an immutable adapter set
 // and round the largest resolved adapter rank up to a runtime-supported ceiling.
 func resolveMaxAdapterRank(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	adapters []Observation,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) (int32, error) {
@@ -638,7 +636,7 @@ func stagingJobFailure(job *batchv1.Job) string {
 // but no longer declared in spec. They stay visible as Deleting (keeping the
 // engine working through a drop-to-zero removal) until the subtree-sync Job for
 // the reduced set has pruned their bytes (pruneConfirmed).
-func deletingAdapters(service *aimv1alpha1.AIMService, specNames map[string]struct{}, pruneConfirmed bool) []Observation {
+func deletingAdapters(service *aimv1alpha2.AIMService, specNames map[string]struct{}, pruneConfirmed bool) []Observation {
 	if pruneConfirmed {
 		return nil
 	}
@@ -758,7 +756,7 @@ func countDownloaded(adapters []Observation) int {
 // as it lands. ISVC gating is the caller's concern (gate on State.Ready).
 func Plan(
 	planResult *controllerutils.PlanResult,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	deps Dependencies,
 	st State,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
@@ -866,7 +864,7 @@ func jobPresent(jf controllerutils.FetchResult[*batchv1.Job]) bool {
 // SubtreeSyncJobName returns the name of the per-service subtree-sync Job. The
 // name encodes the declared adapter set and adapter-disk PVC so either an
 // adapter edit or a storage-binding change yields a fresh Job.
-func SubtreeSyncJobName(service *aimv1alpha1.AIMService, adapterDiskPVC, adapterDiskPVCUID string) string {
+func SubtreeSyncJobName(service *aimv1alpha2.AIMService, adapterDiskPVC, adapterDiskPVCUID string) string {
 	name, _ := utils.GenerateDerivedName(
 		[]string{service.Name, "subtree-sync"},
 		utils.WithHashSource(string(service.UID), desiredAdapterKey(service, adapterDiskPVC, adapterDiskPVCUID)),
@@ -882,7 +880,7 @@ func SubtreeSyncJobName(service *aimv1alpha1.AIMService, adapterDiskPVC, adapter
 // downloader image; it may be nil, in which case the image falls back to the
 // runtime config / default.
 func BuildSubtreeSyncJob(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	parent *aimv1alpha1.AIMArtifact,
 	adapterDiskPVC string,
 	adapterDiskPVCUID string,
@@ -964,7 +962,7 @@ func BuildSubtreeSyncJob(
 
 // StagingJobName returns the deterministic staging Job name for a
 // (service, adapter, adapter-disk PVC) binding.
-func StagingJobName(service *aimv1alpha1.AIMService, adapterName, adapterDiskPVC, adapterDiskPVCUID string) string {
+func StagingJobName(service *aimv1alpha2.AIMService, adapterName, adapterDiskPVC, adapterDiskPVCUID string) string {
 	name, _ := utils.GenerateDerivedName(
 		[]string{service.Name, adapterName, "stage"},
 		utils.WithHashSource(string(service.UID), adapterDiskPVC, adapterDiskPVCUID),
@@ -975,7 +973,7 @@ func StagingJobName(service *aimv1alpha1.AIMService, adapterName, adapterDiskPVC
 // BuildStagingJob constructs the Job that downloads and atomically promotes a
 // single adapter into the service's subtree on the shared adapter disk.
 func BuildStagingJob(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	artifact *aimv1alpha1.AIMArtifact,
 	adapterDiskPVC string,
 	adapterDiskPVCUID string,
@@ -1105,7 +1103,7 @@ func BuildStagingJob(
 // the adapter container-contract env vars on the container.
 func AddVolumeMount(
 	isvc *servingv1beta1.InferenceService,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	adapterDiskPVC string,
 	maxRank int32,
 ) {
@@ -1159,15 +1157,10 @@ func AddVolumeMount(
 }
 
 // predictorInferenceContainer returns the inference container the adapter
-// wiring should target. The v1alpha1 template pipeline inlines an explicit
-// kserve-container in Predictor.Containers; the v1alpha2 profile pipeline
-// references a runtime and overlays the container via Predictor.Model, so the
-// container fields live on the embedded ModelSpec container. Returns nil when
-// neither is present.
+// wiring should target. The profile pipeline references a runtime and overlays
+// the container via Predictor.Model, so the container fields live on the
+// embedded ModelSpec container. Returns nil when there is no model spec.
 func predictorInferenceContainer(isvc *servingv1beta1.InferenceService) *corev1.Container {
-	if len(isvc.Spec.Predictor.Containers) > 0 {
-		return &isvc.Spec.Predictor.Containers[0]
-	}
 	if isvc.Spec.Predictor.Model != nil {
 		return &isvc.Spec.Predictor.Model.Container
 	}
@@ -1186,7 +1179,7 @@ func DynamicModeAllowed(nsLabels map[string]string) bool {
 // unresolved and while a replacement storage generation has not yet completed
 // its subtree synchronization. Callers skip re-applying the ISVC so it never
 // switches to a PVC before its subPath exists.
-func PreserveExistingMount(service *aimv1alpha1.AIMService, st State) bool {
+func PreserveExistingMount(service *aimv1alpha2.AIMService, st State) bool {
 	return service.Spec.AdaptersEnabled() &&
 		(st.AdapterDiskPVC == "" ||
 			st.AdapterDiskPVCUID == "" ||

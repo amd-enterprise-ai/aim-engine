@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: runtime-config-recovery
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2
+  runtimeConfigName: v1alpha2-aimmodel-runtime-config-recovery
+  discovery:
+    extractMetadata: false

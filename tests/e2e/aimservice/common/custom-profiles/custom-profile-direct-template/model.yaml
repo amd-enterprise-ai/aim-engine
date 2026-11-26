@@ -1,9 +1,0 @@
-# Model without custom templates — just provides the image.
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: test-direct-cp-model
-spec:
-  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
-  discovery:
-    createServiceTemplates: false

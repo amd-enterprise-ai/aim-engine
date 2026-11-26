@@ -1,0 +1,362 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v0.2.7-verify
+  labels:
+    requires: upgrade-workflow
+spec:
+  description: |
+    After the upgrade from v0.2.7, the operator started cleanly, v1alpha1 is no
+    longer served for AIMService, AIMModel and AIMClusterModel, the services
+    the guide moved keep serving from their profile caches, the service
+    aim-template-migration moved keeps its InferenceService and pods, the
+    replaced spec.model.custom service serves from the AIMProfile of its new
+    model, none of the moved services keeps template-era status, objects written through
+    v1alpha1 stay updatable at v1alpha2, the image and discovered models stay
+    Ready with their image status and Version column, no dependent object is
+    owned through v1alpha1, and the template CRDs are gone.
+  timeouts:
+    assert: 300s
+  steps:
+    # A watch on a version the API server no longer serves stops the manager
+    # from starting, so the pod would restart and log the failed watch.
+    - name: The operator started cleanly
+      try:
+        - script:
+            content: |
+              set -eu
+              manager=$(kubectl get pods -n aim-system -l control-plane=controller-manager -o json \
+                | jq -r '.items[] | select(.metadata.deletionTimestamp == null)
+                  | .status.containerStatuses[] | select(.name == "manager") | "ready=\(.ready) restarts=\(.restartCount)"')
+              if [ "$manager" != "ready=true restarts=0" ]; then
+                echo "ERROR: the manager container is '$manager', want 'ready=true restarts=0'"
+                exit 1
+              fi
+              if kubectl logs -n aim-system deployment/aim-engine-controller-manager -c manager --tail=-1 \
+                | grep -E 'no matches for kind|Could not wait for Cache to sync'; then
+                echo "ERROR: the operator log shows a watch that never synced"
+                exit 1
+              fi
+
+    # The three CRDs keep v1alpha1 as an unserved version, so the objects they
+    # store stay readable without a storage migration.
+    - name: v1alpha1 is no longer served for AIMService, AIMModel and AIMClusterModel
+      try:
+        - script:
+            content: |
+              set -eu
+              for resource in aimservices aimmodels aimclustermodels; do
+                if kubectl get "${resource}.v1alpha1.aim.eai.amd.com" --all-namespaces >/dev/null 2>&1; then
+                  echo "ERROR: ${resource} is still served at aim.eai.amd.com/v1alpha1"
+                  exit 1
+                fi
+                stored=$(kubectl get crd "${resource}.aim.eai.amd.com" -o jsonpath='{.status.storedVersions}')
+                if [ "$stored" != '["v1alpha2"]' ]; then
+                  echo "ERROR: ${resource} storedVersions is $stored, want [\"v1alpha2\"]"
+                  exit 1
+                fi
+              done
+              served=$(kubectl get --raw /apis/aim.eai.amd.com/v1alpha1 \
+                | jq -r '[.resources[].name | select(contains("/") | not)] | sort | join(" ")')
+              want="aimartifacts aimclustermodelsources aimclusterruntimeconfigs aimruntimeconfigs"
+              if [ "$served" != "$want" ]; then
+                echo "ERROR: aim.eai.amd.com/v1alpha1 serves '$served', want '$want'"
+                exit 1
+              fi
+
+    - name: Moved services keep serving from their profile caches
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-shared-service
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-dedicated-service
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-shared-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-dedicated-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: The migrated service keeps serving from its pinned InferenceService
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-migrated-service
+              spec:
+                profile:
+                  name: upgrade-migrated-template
+              status:
+                status: Running
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-migrated-service
+                  aim.eai.amd.com/template: upgrade-migrated-template
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        # The lane's identity diff compares these pods with the ones recorded
+        # before the upgrade; this assert keeps it from passing on no pods.
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-migrated-service
+                  app.kubernetes.io/component: inference
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: The replaced custom service keeps serving from the AIMProfile of its new model
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-custom-service
+              spec:
+                (model == null): true
+                (starts_with(profile.name, 'upgrade-custom-weights-')): true
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-custom-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Moved services carry no template-era status
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-shared-service
+              status:
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-dedicated-service
+              status:
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-migrated-service
+              status:
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-custom-service
+              status:
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+
+    # The corpus created the services through v1alpha1, and v0.2.7's source
+    # wrote the discovered model through v1alpha1. The guide's move left
+    # spec.template on the moved services; the v1alpha2 rule that rejects it
+    # ratchets, so updates that keep it are accepted.
+    - name: Objects written through v1alpha1 stay updatable at v1alpha2
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl label aimservices.v1alpha2.aim.eai.amd.com upgrade-shared-service -n "$NAMESPACE" \
+                example.com/updated-after-upgrade=true
+              kubectl label aimclustermodels.v1alpha2.aim.eai.amd.com \
+                -l aim.eai.amd.com/model-source=upgrade-model-source example.com/updated-after-upgrade=true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-shared-service
+                labels:
+                  example.com/updated-after-upgrade: "true"
+              spec:
+                template:
+                  name: upgrade-cpu-template
+              status:
+                (conditions[?type == 'TemplateFieldsIgnored']):
+                  - status: "True"
+                    message: "These fields have no effect on a profile-based AIMService and can be removed: spec.template"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-source: upgrade-model-source
+                  example.com/updated-after-upgrade: "true"
+
+    - name: Image and discovered models stay Ready and keep their image status
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: upgrade-image-model
+              status:
+                status: Ready
+                sourceType: Image
+                version: "0.2.0"
+                imageMetadata:
+                  model:
+                    canonicalName: HuggingFaceTB/SmolLM2-135M
+                    (length(recommendedDeployments) > `0`): true
+                (conditions[?type == 'MigrationRequired'] | length(@)): 0
+                # The guide's cleanup set createServiceTemplates=false, which
+                # profile-based serving no longer reads.
+                (conditions[?type == 'TemplateFieldsIgnored']):
+                  - status: "True"
+                    message: "These fields have no effect on profile-based serving and can be removed: spec.discovery.createServiceTemplates"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-source: upgrade-model-source
+              status:
+                status: Ready
+                sourceType: Image
+                version: "0.2.2"
+                imageMetadata:
+                  model:
+                    canonicalName: HuggingFaceTB/SmolLM2-135M
+                    (length(recommendedDeployments) > `0`): true
+                (conditions[?type == 'MigrationRequired'] | length(@)): 0
+
+    - name: The Version column shows the image tag
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              version_column() {
+                awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "VERSION") col = i }
+                  NR == 2 { print (col ? $col : "") }'
+              }
+              got=$(kubectl get aimmodels.v1alpha2.aim.eai.amd.com upgrade-image-model -n "$NAMESPACE" | version_column)
+              [ "$got" = "0.2.0" ] || { echo "ERROR: AIMModel Version column is '$got', want 0.2.0"; exit 1; }
+              got=$(kubectl get aimclustermodels.v1alpha2.aim.eai.amd.com \
+                -l aim.eai.amd.com/model-source=upgrade-model-source | version_column)
+              [ "$got" = "0.2.2" ] || { echo "ERROR: AIMClusterModel Version column is '$got', want 0.2.2"; exit 1; }
+
+    # Garbage collection can't resolve an owner at an unserved version, so such
+    # a dependent would never be collected.
+    - name: No dependent object is owned by a v1alpha1 AIMService, AIMModel or AIMClusterModel
+      try:
+        - script:
+            timeout: 2m
+            content: |
+              set -eu
+              available=$(kubectl api-resources -o name)
+              stale=$(for resource in inferenceservices.serving.kserve.io httproutes.gateway.networking.k8s.io \
+                scaledobjects.keda.sh persistentvolumeclaims jobs.batch configmaps aimartifacts.aim.eai.amd.com \
+                aimprofiles.aim.eai.amd.com aimclusterprofiles.aim.eai.amd.com aimprofilesets.aim.eai.amd.com \
+                aimclusterprofilesets.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com; do
+                if printf '%s\n' "$available" | grep -qxF "$resource"; then
+                  kubectl get "$resource" --all-namespaces -o json
+                fi
+              done | jq -r '.items[] | . as $object | .metadata.ownerReferences[]?
+                | select(.apiVersion == "aim.eai.amd.com/v1alpha1" and (.kind | IN("AIMService", "AIMModel", "AIMClusterModel")))
+                | "\($object.kind) \($object.metadata.namespace // "-")/\($object.metadata.name) is owned by v1alpha1 \(.kind) \(.name)"')
+              if [ -n "$stale" ]; then
+                echo "ERROR: dependents with a v1alpha1 owner reference:"
+                echo "$stale"
+                exit 1
+              fi
+
+    # The lane removed the template CRDs after the upgrade with the kubectl
+    # commands of the upgrade guide.
+    - name: The template CRDs are gone and nothing is terminating
+      try:
+        - script:
+            timeout: 2m
+            content: |
+              set -eu
+              left=$(kubectl get crd aimservicetemplates.aim.eai.amd.com \
+                aimclusterservicetemplates.aim.eai.amd.com aimtemplatecaches.aim.eai.amd.com \
+                --ignore-not-found -o name)
+              if [ -n "$left" ]; then
+                echo "ERROR: template CRDs still exist: $left"
+                exit 1
+              fi
+              terminating=$(for resource in $(kubectl api-resources --api-group=aim.eai.amd.com -o name); do
+                kubectl get "$resource" --all-namespaces \
+                  -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.kind} {.metadata.namespace}/{.metadata.name}{"\n"}{end}'
+              done)
+              if [ -n "$terminating" ]; then
+                echo "ERROR: objects stuck terminating:"
+                echo "$terminating"
+                exit 1
+              fi

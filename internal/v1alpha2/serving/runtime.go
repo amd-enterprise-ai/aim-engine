@@ -536,7 +536,7 @@ func runtimeLabels(profileName string, spec *aimv1alpha2.AIMProfileSpecCommon) m
 	}
 	// acceleratorModel is CRD-constrained to a valid label value
 	// (^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$, ≤63 chars), so it is carried
-	// verbatim — preserving case (MI300X) to match the gpu.model label.
+	// verbatim, preserving case (MI300X).
 	if spec.AcceleratorModel != "" {
 		labels[constants.LabelKeyAcceleratorClass] = spec.AcceleratorModel
 	}

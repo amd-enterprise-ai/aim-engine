@@ -1,0 +1,15 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: model-change
+spec:
+  model:
+    name: model-change-a
+  replicas: 1
+  caching:
+    mode: Dedicated
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"

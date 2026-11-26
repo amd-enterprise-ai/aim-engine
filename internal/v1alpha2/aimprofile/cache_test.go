@@ -37,8 +37,7 @@ import (
 // TestPlanResources_NoCacheWhenNotEnabled pins the default: no Profile-owned
 // cache is materialised when spec.caching is nil or disabled, even if the
 // profile carries model sources. The service-driven path is then the only
-// way an AIMProfileCache shows up — matching v1alpha1 behavior when an
-// AIMServiceTemplate has no Caching block.
+// way an AIMProfileCache shows up.
 func TestPlanResources_NoCacheWhenNotEnabled(t *testing.T) {
 	cases := map[string]*aimv1alpha2.AIMProfile{
 		"caching nil": {

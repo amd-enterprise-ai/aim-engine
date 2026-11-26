@@ -33,8 +33,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -135,6 +137,36 @@ func TestComposeState_MatchesArtifactBySourceURI(t *testing.T) {
 	}
 	if len(obs.MissingCaches) != 0 {
 		t.Errorf("expected 0 missing caches, got %d", len(obs.MissingCaches))
+	}
+}
+
+func TestProfileCache_PropagatesLabelsPerRuntimeConfig(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add v1alpha1 scheme: %v", err)
+	}
+	if err := aimv1alpha2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add v1alpha2 scheme: %v", err)
+	}
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "team-config", Namespace: "default"},
+		Spec: aimv1alpha1.AIMRuntimeConfigSpec{
+			AIMRuntimeConfigCommon: aimv1alpha1.AIMRuntimeConfigCommon{
+				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{Enabled: true, Match: []string{"team-*"}},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(runtimeConfig).Build()
+
+	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
+	pc.Spec.RuntimeConfigRef = aimv1alpha1.RuntimeConfigRef{Name: "team-config"}
+	r := &ProfileCacheReconciler{Scheme: scheme}
+	rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}
+	obs := r.ComposeState(context.Background(), rc, r.FetchRemoteState(context.Background(), c, rc))
+
+	want := &controllerutils.LabelPropagationSettings{Enabled: true, Match: []string{"team-*"}}
+	if got := r.GetApplyOptions(obs).LabelPropagation; !reflect.DeepEqual(got, want) {
+		t.Errorf("label propagation = %#v, want %#v", got, want)
 	}
 }
 
@@ -654,7 +686,7 @@ func TestPlanResources_CreatesArtifactsForMissing(t *testing.T) {
 // TestPlanResources_PropagatesEnvAndRuntimeConfigRef verifies the cache's
 // download-auth env and runtime config reference are stamped onto the
 // AIMArtifact it creates, so the credential and the named runtime config both
-// reach the download Job (matching the v1alpha1 template-cache behavior).
+// reach the download Job.
 func TestPlanResources_PropagatesEnvAndRuntimeConfigRef(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeCluster, aimv1alpha2.ProfileCacheModeShared, "")

@@ -45,9 +45,9 @@ import (
 )
 
 // newProfileCacheTestReconciler mirrors the production wiring, including the
-// status.artifacts index the artifact watch resolves through. Without WithIndex a
-// MatchingFields List errors instead of matching, so the index path has to be
-// registered here for the tests below to mean anything.
+// status.artifacts and runtime config indexes the watches resolve through. Without
+// WithIndex a MatchingFields List errors instead of matching, so the index paths have
+// to be registered here for the tests below to mean anything.
 func newProfileCacheTestReconciler(t *testing.T, objs ...client.Object) *AIMProfileCacheReconciler {
 	t.Helper()
 	scheme := runtimeProjectionScheme(t)
@@ -56,6 +56,7 @@ func newProfileCacheTestReconciler(t *testing.T, objs ...client.Object) *AIMProf
 			WithScheme(scheme).
 			WithObjects(objs...).
 			WithIndex(&aimv1alpha2.AIMProfileCache{}, aimv1alpha2.ProfileCacheArtifactNameIndexKey, indexProfileCacheArtifactNames).
+			WithIndex(&aimv1alpha2.AIMProfileCache{}, profileCacheRuntimeConfigIndexKey, indexProfileCacheRuntimeConfigName).
 			Build(),
 		Scheme: scheme,
 	}
@@ -178,6 +179,29 @@ func TestProfileCacheReconcileWritesObservedGenerationWhenAddingFinalizer(t *tes
 			got.Generation,
 		)
 	}
+}
+
+// A cache that names no runtime config merges the default one, and a namespaced
+// config only reaches caches in its namespace.
+func TestFindProfileCachesForRuntimeConfig(t *testing.T) {
+	named := makeSharedProfileCache("cache-named")
+	named.Spec.Name = "team-config"
+	unnamed := makeSharedProfileCache("cache-unnamed")
+	elsewhere := makeProfileCache("cache-elsewhere", "other", "p", aimv1alpha1.AIMResolutionScopeNamespace)
+	elsewhere.Spec.Name = "team-config"
+
+	r := newProfileCacheTestReconciler(t, named, unnamed, elsewhere)
+	config := func(name string) *aimv1alpha1.AIMRuntimeConfig {
+		return &aimv1alpha1.AIMRuntimeConfig{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace}}
+	}
+
+	assertRequestKeys(t, r.findProfileCachesForRuntimeConfig(context.Background(), config("team-config")),
+		[]string{testNamespace + "/" + named.Name})
+	assertRequestKeys(t, r.findProfileCachesForRuntimeConfig(context.Background(), config("default")),
+		[]string{testNamespace + "/" + unnamed.Name})
+	assertRequestKeys(t, r.findProfileCachesForClusterRuntimeConfig(context.Background(),
+		&aimv1alpha1.AIMClusterRuntimeConfig{ObjectMeta: metav1.ObjectMeta{Name: "team-config"}}),
+		[]string{testNamespace + "/" + named.Name, "other/" + elsewhere.Name})
 }
 
 // The candidate scan cannot compare source URIs without resolving each cache's profile,

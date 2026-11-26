@@ -64,16 +64,16 @@ failed jobs** on that run: the tag already exists, so a new run is rejected.
 
 The `compile-release` workflow builds every `v*` and `*int-test` tag:
 
-- regenerates CRDs, then runs `make test-bridge-contract` before packaging or
+- regenerates CRDs, then runs `make test-rbac-contract` before packaging or
   publishing Helm/CRD artifacts
 - for `vX.Y.Z` tags, attaches `install.yaml`, `crds.yaml`, the Helm chart
   tarball, and the CRDs chart tarball to a draft GitHub Release
 - pushes the `aim-engine-chart` and `aim-engine-crds-chart` charts to an OCI
   registry
 
-The bridge contract is static: it checks API markers and generated CRDs,
-controller roots, owner-reference semantics, RBAC, and release ordering. It
-does not qualify a migration, artifact preservation, GPU serving, or inference.
+The RBAC contract is static: it checks that the generated operator
+ClusterRole has no wildcards, cannot write CustomResourceDefinitions, and can
+only read AIMRuntimeConfig and AIMClusterRuntimeConfig.
 
 Once a release has been tested and promoted to `docker.io/amdenterpriseai`,
 the `publish-release` workflow publishes it:

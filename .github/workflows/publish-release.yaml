@@ -98,6 +98,7 @@ jobs:
             envoy-gateway-route-metrics.yaml
             envoy-gateway-metrics-collector.yaml
             kgateway-metrics-collector.yaml
+            upgrade-preflight.sh
           )
           uploaded=$(gh release view "${VERSION}" --json assets \
             --jq '.assets[] | select(.state == "uploaded" and .size > 0) | .name')

@@ -25,6 +25,8 @@ package v1alpha1
 import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 // AIMResolutionScope describes the scope of a resolved reference.
@@ -84,18 +86,20 @@ func (r *AIMResolvedReference) NamespacedName() types.NamespacedName {
 	}
 }
 
-// AIMServiceTemplateScope is retained for backwards compatibility with existing consumers.
-// +kubebuilder:validation:Enum=Namespace;Cluster;Unknown
-type AIMServiceTemplateScope string
-
-const (
-	// AIMServiceTemplateScopeNamespace denotes a namespace-scoped template.
-	AIMServiceTemplateScopeNamespace AIMServiceTemplateScope = AIMServiceTemplateScope(AIMResolutionScopeNamespace)
-	// AIMServiceTemplateScopeCluster denotes a cluster-scoped template.
-	AIMServiceTemplateScopeCluster AIMServiceTemplateScope = AIMServiceTemplateScope(AIMResolutionScopeCluster)
-	// AIMServiceTemplateScopeUnknown denotes that the scope could not be resolved.
-	AIMServiceTemplateScopeUnknown AIMServiceTemplateScope = AIMServiceTemplateScope(AIMResolutionScopeUnknown)
-)
+type AIMResolvedArtifact struct {
+	// UID of the AIMArtifact resource
+	UID string `json:"uid"`
+	// Name of the AIMArtifact resource
+	Name string `json:"name"`
+	// Model is the name of the model that is cached
+	Model string `json:"model"`
+	// Status of the artifact
+	Status constants.AIMStatus `json:"status"`
+	// PersistentVolumeClaim name if available
+	PersistentVolumeClaim string `json:"persistentVolumeClaim,omitempty"`
+	// MountPoint is the mount point for the artifact
+	MountPoint string `json:"mountPoint,omitempty"`
+}
 
 type RuntimeConfigRef struct {
 	// Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both

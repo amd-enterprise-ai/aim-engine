@@ -30,6 +30,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 )
 
 func TestInferenceSecurityContexts(t *testing.T) {
@@ -46,8 +47,8 @@ func TestInferenceSecurityContexts(t *testing.T) {
 	servicePod := &corev1.PodSecurityContext{RunAsUser: ptr.To(int64(2000))}
 	serviceContainer := &corev1.SecurityContext{ReadOnlyRootFilesystem: ptr.To(true)}
 
-	withSecurityContexts := func(pod *corev1.PodSecurityContext, container *corev1.SecurityContext) *aimv1alpha1.AIMService {
-		service := &aimv1alpha1.AIMService{}
+	withSecurityContexts := func(pod *corev1.PodSecurityContext, container *corev1.SecurityContext) *aimv1alpha2.AIMService {
+		service := &aimv1alpha2.AIMService{}
 		service.Spec.PodSecurityContext = pod
 		service.Spec.SecurityContext = container
 		return service
@@ -58,7 +59,7 @@ func TestInferenceSecurityContexts(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		service       *aimv1alpha1.AIMService
+		service       *aimv1alpha2.AIMService
 		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
 		wantPod       *corev1.PodSecurityContext
 		wantContainer *corev1.SecurityContext

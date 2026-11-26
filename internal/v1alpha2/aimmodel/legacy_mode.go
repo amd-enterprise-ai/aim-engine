@@ -24,35 +24,25 @@
 //
 // The v1alpha1 and v1alpha2 schemas are unified (same Go type, same storage
 // version, None conversion). Once an object lands in etcd there is no
-// reliable signal of which apiVersion the user originally submitted — the
-// stored payload is identical, and the apiVersion observed by a controller
-// is just whichever type its informer registered for.
+// reliable signal of which apiVersion the user originally submitted, so a
+// model is reconciled from its spec shape alone. Each phase is gated only on
+// whether its inputs are populated:
 //
-// Therefore we do not try to infer "which API the user meant". Instead, both
-// behaviours run side by side and each phase is gated only on whether its
-// inputs are populated:
+//   - spec.image: OCI label inspection, then an in-cluster discovery Job →
+//     catalog → AIMProfiles.
+//   - spec.modelId: AIMProfiles generated from the runtime config's
+//     profile-generation fallbacks.
+//   - spec.profiles (or the deprecated spec.derivedFrom / spec.profileCopy):
+//     a child AIMProfileSet.
 //
-//   - The legacy v1alpha1 pipeline (OCI image inspection +
-//     RecommendedDeployments → AIMServiceTemplate, plus customTemplates /
-//     fine-tuned matching) runs whenever the spec carries any v1alpha1
-//     inputs (image, customTemplates, modelSources, aimId, etc.). It is
-//     skipped entirely for pure v1alpha2 specs (profileCopy-only) so it
-//     does not surface conditions like ImageMetadataReady=False on a model
-//     that legitimately has no image.
-//   - The v1alpha2 native pipeline (in-cluster discovery Job → catalog →
-//     AIMProfile, plus profileCopy → AIMProfileSet) always runs. It is a
-//     no-op when neither spec.image nor spec.profileCopy is set.
-//
-// The two pipelines write disjoint plan items (templates vs profiles) and
-// disjoint status fields, so they compose without conflict. Earlier
-// revisions used an aim.eai.amd.com/mode annotation to pick one pipeline;
-// that annotation has been removed and is no longer consulted.
+// Spec fields that only configured AIMServiceTemplates are not read; a
+// model that sets them reports the TemplateFieldsIgnored warning.
 
 package aimmodel
 
 import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 // derivationSpec returns the active AIMProfileSet derivation source for the
@@ -133,96 +123,18 @@ func profilesSpecToProfileSet(profiles *aimv1alpha1.AIMModelProfilesSpec) *aimv1
 	return out
 }
 
-// hasLegacyInputs reports whether the spec carries any v1alpha1-shaped
-// configuration that would give the legacy reconciler real work to do. A
-// model that only sets spec.profileCopy is purely v1alpha2 and must not
-// be touched by the legacy pipeline — otherwise the legacy ImageMetadata
-// fetch tries to parse an empty image reference and surfaces spurious
-// failures (e.g. ImageMetadataReady=False, DependenciesReachable=False).
-//
-// Note: fine-tuned models (aimId + modelSources, possibly without spec.image)
-// intentionally fall on the legacy side of this gate. The empty-image
-// semantics for fine-tunes — skipping the OCI fetch and resolving the base
-// image at AIMService time from the matched template — are owned by the
-// legacy reconciler itself, not by this gate. Today on this branch that
-// path still calls inspectImage(""), but the upcoming
-// fix/set_finetuned_spec_image PR adds a fine-tuned skip in
-// fetchImageMetadata and a base-image resolver in finetune_image.go. Once
-// that lands, fine-tuned-no-image v1alpha2 models start working "for free"
-// via the dual-pipeline; no change is needed here.
-func hasLegacyInputs(spec aimv1alpha1.AIMModelSpec) bool {
-	if spec.ModelID != "" {
-		return false
-	}
-	if spec.Image != "" {
-		return true
-	}
-	if len(spec.CustomTemplates) > 0 {
-		return true
-	}
-	if len(spec.ModelSources) > 0 {
-		return true
-	}
-	if spec.AimId != "" {
-		return true
-	}
-	if spec.ImageMetadata != nil {
-		return true
-	}
-	if spec.Discovery != nil {
-		return true
-	}
-	if spec.DefaultServiceTemplate != "" {
-		return true
-	}
-	if spec.Custom != nil {
-		return true
-	}
-	// NOTE: spec.Name is intentionally NOT checked here. It is the embedded
-	// RuntimeConfigRef.Name (i.e. spec.runtimeConfigName) — a field that
-	// both v1alpha1 and v1alpha2 specs may set and that on its own says
-	// nothing about whether the legacy pipeline has real work to do.
-	// Checking it caused pure v1alpha2 specs that referenced a custom
-	// runtime config to be misclassified as legacy and routed through the
-	// OCI inspection path with an empty image.
-	return false
-}
-
-// requiresTemplateMigration reports whether a model still emits deprecated
-// templates or carries a model field whose v1alpha2 replacement is
-// profile-based. RuntimeConfigRef, image pull secrets, and service accounts
-// are intentionally excluded because native model/profile flows use them too.
-func requiresTemplateMigration(spec *aimv1alpha1.AIMModelSpec) bool {
-	if spec == nil {
-		return false
-	}
-	emitsDeprecatedTemplates := spec.Image != "" && spec.ShouldCreateTemplates()
-	usesDeprecatedShape := spec.ProfileCopy != nil ||
-		spec.DerivedFrom != nil ||
-		spec.Custom != nil ||
-		len(spec.CustomTemplates) > 0 ||
-		len(spec.ModelSources) > 0 ||
-		(spec.AimId != "" && spec.ModelID == "") ||
-		spec.DefaultServiceTemplate != "" ||
-		len(spec.Env) > 0 ||
-		len(spec.Resources.Limits) > 0 ||
-		len(spec.Resources.Requests) > 0 ||
-		len(spec.Resources.Claims) > 0 ||
-		spec.ImageMetadata != nil
-	return emitsDeprecatedTemplates || usesDeprecatedShape
-}
-
-// shouldRunNativeDiscovery reports whether the v1alpha2 native discovery
-// pipeline (in-cluster Job → DiscoveryCatalog → AIMProfile) should run for
-// this spec. It honours the legacy spec.discovery.extractMetadata=false
-// opt-out: that flag is the user's explicit "do not inspect my image", and
-// the native pipeline is a stronger form of inspection than the legacy
-// OCI-label fetch (it actually pulls and exec's the image inside the cluster).
+// shouldRunNativeDiscovery reports whether the discovery pipeline
+// (in-cluster Job → DiscoveryCatalog → AIMProfile) should run for this spec.
+// It honours the spec.discovery.extractMetadata=false opt-out: that flag is
+// the user's explicit "do not inspect my image", and the discovery Job is a
+// stronger form of inspection than the OCI-label fetch (it actually pulls
+// and exec's the image inside the cluster).
 //
 // When extractMetadata is false, the model is expected to reach Ready
-// without producing AIMProfiles. Callers that gate Discovery / NodeInventory
-// / Profiles component health on this helper get a clean "no native work
-// required" outcome rather than a stuck "DiscoveryPending".
+// without producing AIMProfiles, and ProfilesAvailable=False says so.
+// Callers that gate Discovery / NodeInventory / Profiles component health on
+// this helper get a clean "no native work required" outcome rather than a
+// stuck "DiscoveryPending".
 func shouldRunNativeDiscovery(spec *aimv1alpha1.AIMModelSpec) bool {
 	if spec == nil {
 		return false
@@ -230,38 +142,54 @@ func shouldRunNativeDiscovery(spec *aimv1alpha1.AIMModelSpec) bool {
 	return spec.Discovery.IsExtractMetadataEnabled()
 }
 
-// asLegacyModel rewraps a v1alpha2 AIMModel as a v1alpha1 AIMModel by sharing
-// the same metadata/spec/status. Mutations through the legacy view are visible
-// to the original v1alpha2 object because the embedded Spec/Status types are
-// identical.
-func asLegacyModel(model *aimv1alpha2.AIMModel) *aimv1alpha1.AIMModel {
-	if model == nil {
-		return nil
-	}
-	return &aimv1alpha1.AIMModel{
-		TypeMeta:   model.TypeMeta,
-		ObjectMeta: model.ObjectMeta,
-		Spec:       model.Spec,
-		Status:     model.Status,
+const replaceModelHint = "replace the model as described in the upgrade guide's #replace-models-without-a-native-path section"
+
+// noProfilesCause names why the spec produces no AIMProfiles, or returns ""
+// when discovery, profile generation or a derivation produces them.
+func noProfilesCause(spec *aimv1alpha1.AIMModelSpec) string {
+	switch {
+	case spec == nil || spec.ModelID != "" || derivationSpec(spec) != nil || nativeDiscoveryApplicable(spec):
+		return ""
+	case spec.Image == "":
+		return "none of spec.image, spec.modelId or spec.profiles is set; " + replaceModelHint
+	case len(spec.ModelSources) > 0:
+		return "spec.modelSources turns off image discovery; " + replaceModelHint
+	default:
+		return "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles"
 	}
 }
 
-func asLegacyClusterModel(model *aimv1alpha2.AIMClusterModel) *aimv1alpha1.AIMClusterModel {
-	if model == nil {
-		return nil
+// setProfilesAvailableCondition reports a model that has no AIMProfiles
+// because its spec produces none. It stays out of the Ready rollup: the
+// AIMServices that resolve through the model report the failure.
+func setProfilesAvailableCondition(
+	cm *controllerutils.ConditionManager,
+	spec *aimv1alpha1.AIMModelSpec,
+	existingProfiles controllerutils.FetchResult[[]managedProfile],
+) {
+	if !existingProfiles.OK() {
+		return
 	}
-	return &aimv1alpha1.AIMClusterModel{
-		TypeMeta:   model.TypeMeta,
-		ObjectMeta: model.ObjectMeta,
-		Spec:       model.Spec,
-		Status:     model.Status,
+	cause := noProfilesCause(spec)
+	if cause == "" || len(existingProfiles.Value) > 0 {
+		cm.Delete(aimv1alpha1.AIMModelConditionProfilesAvailable)
+		return
 	}
+	cm.MarkFalse(
+		aimv1alpha1.AIMModelConditionProfilesAvailable,
+		aimv1alpha1.AIMModelReasonNoDeployableProfiles,
+		cause,
+		controllerutils.AsUserWarning(),
+	)
 }
 
 // EnsureBaseImageBridge keeps the v1alpha2-style status.baseImage in sync with
 // the v1alpha1-style status.imageMetadata.baseImageRef so consumers that read
 // either field see a consistent value. Either field may be authoritative
 // depending on which reconcile path populated it.
+//
+// It never creates status.imageMetadata: the image metadata fetch treats any
+// value there as already inspected and would stop reading the image labels.
 func EnsureBaseImageBridge(spec *aimv1alpha1.AIMModelSpec, status *aimv1alpha1.AIMModelStatus) {
 	if status == nil {
 		return
@@ -272,12 +200,7 @@ func EnsureBaseImageBridge(spec *aimv1alpha1.AIMModelSpec, status *aimv1alpha1.A
 	if ref := spec.GetBaseImageRef(status); ref != "" && status.BaseImage == "" {
 		status.BaseImage = ref
 	}
-	if status.BaseImage != "" {
-		if status.ImageMetadata == nil {
-			status.ImageMetadata = &aimv1alpha1.ImageMetadata{}
-		}
-		if status.ImageMetadata.BaseImageRef == "" {
-			status.ImageMetadata.BaseImageRef = status.BaseImage
-		}
+	if status.BaseImage != "" && status.ImageMetadata != nil && status.ImageMetadata.BaseImageRef == "" {
+		status.ImageMetadata.BaseImageRef = status.BaseImage
 	}
 }

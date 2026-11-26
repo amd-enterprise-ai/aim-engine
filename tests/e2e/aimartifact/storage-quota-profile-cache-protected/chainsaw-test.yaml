@@ -1,0 +1,126 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: storage-quota-profile-cache-protected
+spec:
+  description: >
+    Tests that an artifact listed in an AIMProfileCache's status is never evicted.
+    Two artifacts fill a 2Gi namespace quota:
+      - the AIMProfileCache's artifact: no explicit retentionPriority (effective 0 from default)
+      - unlisted: explicit retentionPriority=50
+    A 3rd artifact triggers eviction. The cache's artifact has the lowest effective
+    priority, but its PVC may be mounted by inference pods, so unlisted is evicted instead.
+  timeouts:
+    assert: 120s
+  steps:
+    # ========================================
+    # Setup: RuntimeConfig + namespace quota
+    # ========================================
+    - name: Create RuntimeConfig with defaultRetentionPriority
+      try:
+        - apply:
+            file: runtime.yaml
+
+    - name: Set namespace storage quota to 2Gi
+      try:
+        - script:
+            timeout: 10s
+            content: |
+              kubectl annotate namespace $NAMESPACE aim.eai.amd.com/artifact-storage-quota=2Gi --overwrite
+
+    # ========================================
+    # Fill the quota with the cache's artifact and an unlisted artifact
+    # ========================================
+    - name: Create the caching profile and the unlisted artifact
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: artifact-unlisted.yaml
+
+    - name: Wait for the AIMProfileCache and the unlisted artifact to reach Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: cached-weights
+              status:
+                status: Ready
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: unlisted
+              status:
+                status: Ready
+
+    # ========================================
+    # Trigger eviction with a 3rd artifact
+    # ========================================
+    - name: Create trigger artifact that exceeds quota
+      try:
+        - apply:
+            file: artifact-trigger.yaml
+
+    - name: Assert unlisted is evicted
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              for i in $(seq 1 30); do
+                if ! kubectl get aimartifact unlisted -n $NAMESPACE 2>/dev/null; then
+                  echo "unlisted evicted (retentionPriority=50, not listed by any cache)"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "ERROR: unlisted was not evicted within timeout"
+              kubectl get aimartifacts -n $NAMESPACE
+              exit 1
+
+    - name: Assert trigger artifact eventually reaches Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: trigger
+              status:
+                status: Ready
+
+    # A Shared AIMProfileCache recreates an evicted artifact under the same name, and
+    # the recreated artifact then evicts unlisted. Only the Evicted event shows that.
+    - name: Assert the cache's artifact was never evicted
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: cached-weights
+              status:
+                status: Ready
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              ARTIFACT="$(kubectl get aimprofilecache cached-weights -n $NAMESPACE -o jsonpath='{.status.artifacts.*.name}')"
+              STATUS="$(kubectl get aimartifact "$ARTIFACT" -n $NAMESPACE -o jsonpath='{.status.status}')"
+              if [ "$STATUS" != "Ready" ]; then
+                echo "ERROR: cache artifact $ARTIFACT is '$STATUS', want Ready"
+                exit 1
+              fi
+              EVICTIONS="$(kubectl get events -n $NAMESPACE \
+                --field-selector "reason=Evicted,involvedObject.name=$ARTIFACT" -o name)"
+              if [ -n "$EVICTIONS" ]; then
+                echo "ERROR: cache artifact $ARTIFACT was evicted"
+                exit 1
+              fi
+              echo "cache artifact $ARTIFACT kept"

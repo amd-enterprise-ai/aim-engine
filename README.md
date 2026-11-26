@@ -13,7 +13,7 @@ AIM Engine is a Kubernetes operator for running and managing AMD Inference Micro
 - Support for Hugging Face Hub and S3 model sources
 
 ### Intelligent Resource Management
-- **Smart profile resolution** - Automatically selects the optimal `AIMProfile` based on GPU availability, precision requirements, and optimization goals (latency vs throughput). The legacy v1alpha1 template pipeline applies the same logic to `AIMServiceTemplate`s during the migration window.
+- **Smart profile resolution** - Automatically selects the optimal `AIMProfile` based on GPU availability, precision requirements, and optimization goals (latency vs throughput).
 
 ### Production-Ready Infrastructure
 - **Model caching** - Cache system that pre-downloads model artifacts to shared PVCs, saving space and reducing load time
@@ -93,17 +93,14 @@ kind: AIMService
 metadata:
   name: qwen3-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
 ```
 
-!!! note "Why the `reconciler-pipeline: profile` annotation?"
-    AIMService dispatch is decided by **spec shape**, not by `apiVersion`. During the v1alpha1 → v1alpha2 migration window, `spec.model.name` and `spec.model.image` default to the legacy template pipeline so existing deployments keep working unchanged. The annotation forces this service onto the v1alpha2 profile pipeline, which resolves `qwen-qwen3-32b` to one of the `AIMClusterProfile`s produced by the `AIMClusterModel` above. The annotation becomes unnecessary once v1alpha1 is removed — see [Migration window](./docs/docs/admin/upgrading.md#migration-window) for the full dispatch table.
+The service resolves `qwen-qwen3-32b` to one of the `AIMClusterProfile`s produced by the `AIMClusterModel` above.
 
-For a one-shot deploy from just a container image (no pre-applied `AIMModel`), the same annotation tells the v1alpha2 profile pipeline to auto-create a dedicated, service-owned `AIMModel` for the image:
+For a one-shot deploy from just a container image (no pre-applied `AIMModel`), the operator auto-creates a dedicated, service-owned `AIMModel` for the image:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -111,8 +108,6 @@ kind: AIMService
 metadata:
   name: qwen3-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
@@ -162,7 +157,6 @@ make run     # start controller via access from kubeconfig
 - [Guides](./docs/docs/guides/) - Practical deployment examples
 - [API Reference](./docs/docs/reference/) - CRD specifications
 - [Administration](./docs/docs/admin/) - Platform configuration
-- [Legacy v1alpha1](./docs/docs/legacy/) - Migration notes and legacy reference
 
 ## Related Projects
 

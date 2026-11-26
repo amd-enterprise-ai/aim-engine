@@ -31,6 +31,7 @@ import (
 	"github.com/go-logr/logr"
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -40,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -66,9 +68,8 @@ const (
 )
 
 // ProfileServiceReconciler implements the domain logic for profile-based
-// AIMService reconciliation. It uses the v1alpha1 Go types because v1alpha1
-// is the storage version; the profile-specific spec fields live on
-// aimv1alpha1.AIMService while the referenced profile is defined in v1alpha2.
+// AIMService reconciliation. It works on the v1alpha2 AIMService, whose spec
+// and status are the shared v1alpha1 AIMServiceSpec and AIMServiceStatus types.
 type ProfileServiceReconciler struct {
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
@@ -85,7 +86,7 @@ func (r *ProfileServiceReconciler) GetApplyOptions(obs ServiceObservation) contr
 // ServiceFetchResult holds all resources fetched for a profile-based
 // AIMService reconcile.
 type ServiceFetchResult struct {
-	service *aimv1alpha1.AIMService
+	service *aimv1alpha2.AIMService
 
 	profile        controllerutils.FetchResult[*aimv1alpha2.AIMProfile]
 	clusterProfile controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]
@@ -106,6 +107,7 @@ type ServiceFetchResult struct {
 
 	inferenceService     controllerutils.FetchResult[*servingv1beta1.InferenceService]
 	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList]
+	predictorDeployment  controllerutils.FetchResult[*appsv1.Deployment]
 	hpa                  controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute            controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	gateway              controllerutils.FetchResult[*gatewayapiv1.Gateway]
@@ -116,6 +118,11 @@ type ServiceFetchResult struct {
 	// transitioned away from it. Absent (IsNotFound) for services created after
 	// the ServingRuntime-reference rewrite, in which case cleanup is a no-op.
 	legacyProfileConfigMap controllerutils.FetchResult[*corev1.ConfigMap]
+
+	// serviceProfileCaches and serviceOverlayProfiles carry this service's
+	// controller label, so PlanResources can delete those of a previous AIMProfile.
+	serviceProfileCaches   controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]
+	serviceOverlayProfiles controllerutils.FetchResult[*aimv1alpha2.AIMProfileList]
 
 	// profileRuntime and profileRuntimeConfigMap must both exist before a new
 	// InferenceService references a cluster profile's bare ClusterServingRuntime.
@@ -213,8 +220,7 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	}
 
 	// Scale-from-zero requires routing; surface the invalid combination as
-	// ConfigValid=False. Shared with the v1alpha1 pipeline so the validation is
-	// identical regardless of which pipeline owns the service.
+	// ConfigValid=False.
 	if cfg := v1alpha1service.ScaleToZeroRoutingComponentHealth(obs.service, obs.mergedRuntimeConfig.Value); cfg.Component != "" {
 		health = append(health, cfg)
 	}
@@ -228,15 +234,13 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	// Routing on a multi-listener gateway requires a hostname pin; otherwise
 	// the route attaches to every listener and can bypass authentication.
 	// Surface as ConfigValid=False even before a profile resolves (the route
-	// is also not created). Shared with the v1alpha1 pipeline.
+	// is also not created).
 	if cfg := v1alpha1service.RoutingHostnameComponentHealth(obs.service, obs.mergedRuntimeConfig.Value, obs.gateway); cfg.Component != "" {
 		health = append(health, cfg)
 	}
 
-	// Autoscaling configured but no trigger resolves -> ConfigValid=False.
-	// Shared with the v1alpha1 pipeline so the invariant (external autoscaler
-	// class implies a ScaledObject) holds regardless of which pipeline owns the
-	// service.
+	// Autoscaling configured but no trigger resolves -> ConfigValid=False, so
+	// the invariant (external autoscaler class implies a ScaledObject) holds.
 	if cfg := v1alpha1service.AutoscalingTriggerComponentHealth(obs.service); cfg.Component != "" {
 		health = append(health, cfg)
 	}
@@ -283,7 +287,7 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	// downstream components as "Creating"/"not found" in that case is
 	// misleading — the controller is not creating anything. Surface only
 	// the gating Profile condition so the user sees a single, accurate
-	// reason (ProfileNotFound or BaseProfile) on both ProfileReady and
+	// reason (ProfileNotFound, ModelHasNoProfiles or BaseProfile) on both ProfileReady and
 	// the aggregate Ready condition. Profile health is still
 	// progressing-aware: a resolved-but-not-yet-ready profile keeps
 	// downstream conditions visible so users see cache / ISVC progress.
@@ -302,17 +306,17 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 		health = append(health, obs.getInferenceServiceHealth())
 	}
 
-	// Predictor pod health (downstream). Shared with the v1alpha1 pipeline so a
-	// healthily-idled scale-to-zero service reports Ready (ScaledToZero) instead
-	// of stalling at "no pods" forever.
+	// Predictor pod health (downstream). A healthily-idled scale-to-zero
+	// service reports Ready (ScaledToZero) instead of stalling at "no pods"
+	// forever.
 	if podsHealth, ok := v1alpha1service.InferenceServicePodsComponentHealth(
 		ctx, clientset, obs.service, obs.hpa, obs.inferenceServicePods,
 	); ok {
 		health = append(health, podsHealth)
 	}
 
-	// HPA health (autoscaling configured). Shared with v1alpha1 so the
-	// activation metric never gates readiness under scale-to-zero.
+	// HPA health (autoscaling configured). The activation metric never gates
+	// readiness under scale-to-zero.
 	if hpaHealth := v1alpha1service.HPAComponentHealth(
 		obs.service,
 		obs.hpa,
@@ -334,8 +338,8 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 }
 
 // podItemCount returns the number of pods in a (possibly nil) pod-list fetch
-// result, treating a missing or failed fetch as zero. Mirrors the v1alpha1
-// helper so the shared HPA verdict sees an identical pod count.
+// result, treating a missing or failed fetch as zero, as the shared HPA
+// verdict expects.
 func podItemCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
 	if pods == nil || !pods.OK() || pods.Value == nil {
 		return 0
@@ -566,7 +570,11 @@ func (obs ServiceObservation) getProfileHealth() controllerutils.ComponentHealth
 	// Degraded/NotAvailable states (see processComponentStatus in
 	// internal/controller/utils/reconciler.go).
 	health.State = constants.AIMStatusFailed
+	health.UserFixable = true
 	health.Reason = aimv1alpha1.AIMServiceReasonProfileNotFound
+	if reason := obs.resolution.notFoundReason; reason != "" {
+		health.Reason = reason
+	}
 	if msg := obs.resolution.notFoundMessage; msg != "" {
 		health.Message = msg
 	} else {
@@ -579,6 +587,7 @@ func (obs ServiceObservation) getInferenceServiceHealth() controllerutils.Compon
 	return v1alpha1service.InferenceServiceComponentHealth(
 		obs.inferenceService,
 		obs.inferenceServicePods,
+		obs.predictorDeployment,
 	)
 }
 
@@ -587,7 +596,7 @@ func (obs ServiceObservation) getInferenceServiceHealth() controllerutils.Compon
 func (r *ProfileServiceReconciler) FetchRemoteState(
 	ctx context.Context,
 	c client.Client,
-	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
+	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
 ) ServiceFetchResult {
 	service := reconcileCtx.Object
 	logger := log.FromContext(ctx).WithValues(
@@ -607,15 +616,25 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// failure or a not-found result is handled downstream (cleanup is skipped).
 	result.legacyProfileConfigMap = fetchLegacyProfileConfigMap(ctx, c, service)
 
+	children := []client.ListOption{client.InNamespace(service.Namespace), client.MatchingLabels{serviceControllerNameLabel: service.Name}}
+	result.serviceProfileCaches = controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileCacheList{}, children...)
+	result.serviceOverlayProfiles = controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileList{}, children...)
+
 	// Fetch HPA and predictor pods if the InferenceService exists. The HPA is
 	// only present when KServe has created the predictor (KEDA names it
 	// keda-hpa-{isvc}-predictor). Pods feed the shared scale-to-zero idle
 	// verdict so a healthily-idled service reports Ready rather than stalling
-	// at "no pods" forever.
+	// at "no pods" forever. The predictor Deployment tells whether ready pods
+	// belong to the current revision.
 	if result.inferenceService.OK() && result.inferenceService.Value != nil {
-		result.hpa = v1alpha1service.FetchHPA(ctx, c, result.inferenceService.Value)
-		pods := v1alpha1service.FetchPredictorPods(ctx, c, result.inferenceService.Value)
+		isvc := result.inferenceService.Value
+		result.hpa = v1alpha1service.FetchHPA(ctx, c, isvc)
+		pods := v1alpha1service.FetchPredictorPods(ctx, c, isvc)
 		result.inferenceServicePods = &pods
+		result.predictorDeployment = controllerutils.Fetch(ctx, c, client.ObjectKey{
+			Namespace: isvc.Namespace,
+			Name:      isvc.Name + constants.PredictorServiceSuffix,
+		}, &appsv1.Deployment{})
 	}
 
 	// Resolve the profile using whichever of the four supported shapes the
@@ -695,7 +714,7 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// Fetch the merged AIMRuntimeConfig. It supplies routing (HTTPRoute) and
 	// label-propagation settings. FetchMergedRuntimeConfig falls back to the
 	// default cluster-scoped AIMClusterRuntimeConfig when the ref is empty.
-	runtimeConfigRef := service.GetRuntimeConfigRef()
+	runtimeConfigRef := service.Spec.RuntimeConfigRef
 	result.mergedRuntimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, runtimeConfigRef.Name, service.Namespace)
 	bundleReader := client.Reader(c)
 	if r.APIReader != nil {
@@ -741,7 +760,7 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 // one place guarantees a single source of truth per reconcile cycle.
 func (r *ProfileServiceReconciler) ComposeState(
 	ctx context.Context,
-	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
+	_ controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
 	fetch ServiceFetchResult,
 ) ServiceObservation {
 	obs := ServiceObservation{ServiceFetchResult: fetch}
@@ -1114,7 +1133,7 @@ func planProfileRuntimeMaterialization(
 // pipeline.
 func (r *ProfileServiceReconciler) PlanResources(
 	ctx context.Context,
-	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
+	_ controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
 	obs ServiceObservation,
 ) controllerutils.PlanResult {
 	logger := log.FromContext(ctx).WithName("plan").WithValues("pipeline", "profile")
@@ -1141,9 +1160,8 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// references the legacy service-owned profile ConfigMap.
 	planLegacyProfileConfigMapCleanup(&planResult, obs, logger)
 
-	// v1alpha2 quick-start: a service authored with spec.model.image and
-	// dispatched onto the profile pipeline via the reconciler-pipeline
-	// annotation has no AIMModel yet. Plant the seed (dedicated, owned
+	// v1alpha2 quick-start: a service authored with spec.model.image may
+	// have no AIMModel yet. Plant the seed (dedicated, owned
 	// by this service) so the v1alpha2 model controller runs discovery
 	// and the next reconcile resolves via the standard model-ref path.
 	// Skip everything else this pass — there is nothing to apply until
@@ -1194,7 +1212,7 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// behind would leave a stale, cache-eligible profile in the namespace.
 	// 2. Plan AIMProfileCache if the profile has model sources.
 	//
-	// Cache ownership tracks the service's caching mode, mirroring v1alpha1:
+	// Cache ownership tracks the service's caching mode:
 	//   - Shared: applied without an owner reference so the cache persists
 	//     across service deletions and is shared by every service in the
 	//     namespace that resolves to the same AIMProfile.
@@ -1298,11 +1316,9 @@ func (r *ProfileServiceReconciler) PlanResources(
 			}
 		}
 	}
+	planStaleChildCleanup(&planResult, obs, logger)
 
 	// 3. Plan the HTTPRoute if routing is enabled on the merged AIMRuntimeConfig.
-	// The builder and naming scheme are shared with the v1alpha1
-	// pipeline so routing behaves identically regardless of which pipeline
-	// owns the service.
 	if route := v1alpha1service.PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value, obs.gateway.Value); route != nil {
 		planResult.Apply(route)
 	}
@@ -1319,21 +1335,21 @@ func (r *ProfileServiceReconciler) PlanResources(
 }
 
 func shouldPreserveMigratedInferenceService(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 ) bool {
 	return migrationPreservationPinActive(service) &&
 		validateActiveMigrationPreservation(service, obs.inferenceService) == nil
 }
 
-func migrationPreservationPinActive(service *aimv1alpha1.AIMService) bool {
+func migrationPreservationPinActive(service *aimv1alpha2.AIMService) bool {
 	return service != nil &&
 		service.Annotations[constants.AnnotationMigrationPreserveInferenceServiceGeneration] ==
 			strconv.FormatInt(service.Generation, 10)
 }
 
 func validateActiveMigrationPreservation(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
 ) error {
 	expectedUID := service.Annotations[constants.AnnotationMigrationPreserveInferenceServiceUID]
@@ -1414,12 +1430,62 @@ func planLegacyProfileConfigMapCleanup(plan *controllerutils.PlanResult, obs Ser
 	plan.Delete(configMap)
 }
 
+// planStaleChildCleanup deletes the Dedicated AIMProfileCaches and overlay
+// AIMProfiles this service created for an AIMProfile other than the current
+// one. It waits until the predictor rollout has finished and neither the
+// InferenceService nor any predictor pod is labeled with that AIMProfile,
+// because those pods mount its cache PVC and its profile ConfigMap, and going
+// back to it before the new revision serves would download its weights again.
+func planStaleChildCleanup(plan *controllerutils.PlanResult, obs ServiceObservation, logger logr.Logger) {
+	isvc, pods := obs.inferenceService.Value, obs.inferenceServicePods
+	caches, overlays := obs.serviceProfileCaches, obs.serviceOverlayProfiles
+	if isvc == nil || pods == nil || pods.HasError() || caches.HasError() || overlays.HasError() ||
+		caches.Value == nil || overlays.Value == nil || !predictorRolloutFinished(obs) {
+		return
+	}
+	inUse := map[string]bool{isvc.Labels[constants.LabelProfile]: true}
+	for _, pod := range pods.Value.Items {
+		inUse[pod.Labels[constants.LabelProfile]] = true
+	}
+	stale := func(child client.Object, profileName string) bool {
+		label, _ := utils.SanitizeLabelValue(profileName)
+		return profileName != obs.profileName && !inUse[label] && metav1.IsControlledBy(child, obs.service)
+	}
+	for i := range caches.Value.Items {
+		if cache := &caches.Value.Items[i]; stale(cache, cache.Spec.ProfileName) {
+			logger.Info("Deleting the AIMProfileCache of a previous AIMProfile", "profileCache", cache.Name)
+			plan.Delete(cache)
+		}
+	}
+	for i := range overlays.Value.Items {
+		if overlay := &overlays.Value.Items[i]; stale(overlay, overlay.Name) {
+			logger.Info("Deleting the overlay AIMProfile of a previous AIMProfile", "profile", overlay.Name)
+			plan.Delete(overlay)
+		}
+	}
+}
+
+// predictorRolloutFinished reports whether the observed InferenceService spec
+// is fully rolled out: the InferenceService is Ready for its generation, and
+// the predictor Deployment has observed its generation with every desired
+// replica updated and available. A Deployment scaled to zero has proven
+// nothing, so it never counts as finished.
+func predictorRolloutFinished(obs ServiceObservation) bool {
+	deployment := obs.predictorDeployment.Value
+	if deployment == nil || !v1alpha1service.InferenceServiceReady(obs.inferenceService) {
+		return false
+	}
+	desired, status := ptr.Deref(deployment.Spec.Replicas, 1), deployment.Status
+	return desired > 0 && status.ObservedGeneration >= deployment.Generation &&
+		status.Replicas == desired && status.UpdatedReplicas == desired && status.AvailableReplicas == desired
+}
+
 // serviceOwnsConfigMap reports whether the ConfigMap carries a controller-style
 // owner reference back to the given AIMService, matched by UID so a
 // delete-and-recreate of a same-named service can never adopt a stale orphan.
 // A missing service UID (never the case for a live object) short-circuits to
 // false so an empty-vs-empty UID comparison cannot yield a false positive.
-func serviceOwnsConfigMap(configMap *corev1.ConfigMap, service *aimv1alpha1.AIMService) bool {
+func serviceOwnsConfigMap(configMap *corev1.ConfigMap, service *aimv1alpha2.AIMService) bool {
 	if service.UID == "" {
 		return false
 	}
@@ -1440,10 +1506,11 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ServiceObservation,
 ) {
-	controllerutils.SetTemplateMigrationRequired(cm, false)
+	clearTemplateEraStatus(status, cm)
+	setTemplateFieldsIgnoredCondition(cm, obs.service.Spec)
 
 	// Report-only: whether KEDA can read the scale-from-zero activation
-	// trigger. Shared with v1alpha1; never gates readiness.
+	// trigger. Never gates readiness.
 	v1alpha1service.SetActivationMetricCondition(
 		cm,
 		obs.service,
@@ -1517,13 +1584,11 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 //
 // Shared mode: list AIMProfileCaches in the namespace whose
 // spec.profileName matches the resolved profile and spec.mode is Shared, and
-// pick the healthiest. This is the v1alpha1 pattern (see
-// internal/v1alpha1/aimservice/caching.go::searchTemplateCaches) and is what
-// guarantees that a profile-driven cache and a service-driven cache cannot
-// coexist for the same profile in the same namespace — one cache owns the
-// downstream artifact, eliminating the watch-handler ambiguity that exists
-// when two caches both create artifacts under the deterministic-by-weights
-// name scheme.
+// pick the healthiest. This is what guarantees that a profile-driven cache and
+// a service-driven cache cannot coexist for the same profile in the same
+// namespace — one cache owns the downstream artifact, eliminating the
+// watch-handler ambiguity that exists when two caches both create artifacts
+// under the deterministic-by-weights name scheme.
 //
 // Dedicated mode: deterministic lookup by the per-service name. Dedicated is
 // explicit per-service ownership, so we never reuse a Shared cache here.
@@ -1536,7 +1601,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 func fetchProfileCache(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	profileName string,
 	profileScope aimv1alpha1.AIMResolutionScope,
 ) controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache] {
@@ -1566,10 +1631,9 @@ func fetchProfileCache(
 	}
 
 	// Shared: search the namespace for any cache that already references this
-	// profile in Shared mode and prefer the healthiest. Mirrors v1alpha1's
-	// AIMTemplateCache resolution. ProfileScope must also match so we don't
-	// reuse a cache that was created for a different scope's same-named
-	// profile.
+	// profile in Shared mode and prefer the healthiest. ProfileScope must also
+	// match so we don't reuse a cache that was created for a different scope's
+	// same-named profile.
 	cacheList := controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileCacheList{}, client.InNamespace(service.Namespace))
 	if cacheList.Error != nil {
 		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: cacheList.Error}
@@ -1591,14 +1655,11 @@ func fetchProfileCache(
 
 // planProfileCache builds the desired AIMProfileCache for the resolved profile
 // when the profile actually carries model sources. Caching mode is honored
-// here so the v1alpha2 chain (AIMService → AIMProfile → AIMProfileCache →
-// AIMArtifact) mirrors v1alpha1's (AIMService → AIMServiceTemplate →
-// AIMTemplateCache → AIMArtifact) Shared/Dedicated semantics. The caller is
-// responsible for routing the result through Apply vs ApplyWithoutOwnerRef
-// based on the same mode (see PlanResources) so Shared caches persist
-// independently of any one service.
+// here, and the caller is responsible for routing the result through Apply vs
+// ApplyWithoutOwnerRef based on the same mode (see PlanResources) so Shared
+// caches persist independently of any one service.
 func planProfileCache(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 ) *aimv1alpha2.AIMProfileCache {
 	if obs.profileCache.Value != nil {
@@ -1664,7 +1725,7 @@ func planProfileCache(
 			StorageClassName: storageClassName,
 			Mode:             profileCacheModeFor(cachingMode),
 			Env:              cacheEnv,
-			RuntimeConfigRef: service.GetRuntimeConfigRef(),
+			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
 			// Adapters need the base artifact to carry a shared RWX adapter disk.
 			RequiresAdapterDisk: service.Spec.AdaptersEnabled(),
 		},
@@ -1682,8 +1743,7 @@ func profileCacheModeFor(cachingMode aimv1alpha1.AIMCachingMode) aimv1alpha2.AIM
 }
 
 // GenerateProfileCacheName creates a deterministic name for an AIMProfileCache.
-// The naming scheme mirrors v1alpha1's GenerateTemplateCacheName so the two
-// pipelines share their Shared/Dedicated identity model:
+// The name encodes the Shared/Dedicated identity model:
 //
 //   - Shared (default): name is derived from (profileName) hashed against
 //     (namespace+"|"+profileScope, profileName). Two services in the same

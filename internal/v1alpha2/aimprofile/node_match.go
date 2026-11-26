@@ -96,8 +96,8 @@ type NodeMatchResult struct {
 //
 // New profile reconciliation should use ResolveProfileResources so the vendor
 // and partitioning axes participate in resource-name resolution. GPU profiles
-// also receive the host CPU and memory defaults used by the v1alpha1 service
-// path, with explicit resources remaining authoritative per key.
+// also receive per-GPU host CPU and memory defaults, with explicit resources
+// remaining authoritative per key.
 func ResolveResources(
 	accelType aimv1alpha1.AcceleratorType,
 	accelCount int32,
@@ -730,10 +730,9 @@ func FormatProfileHardwareSummary(spec aimv1alpha2.AIMProfileSpecCommon) string 
 // reference. Returns the part after the last colon, or empty string if
 // no tag is present.
 //
-// Thin wrapper around aimimage.ExtractTag so the v1alpha2 profile
-// pipeline and the v1alpha1/v1alpha2 model pipelines share one
-// implementation that's correct on tricky inputs (registry ports,
-// digest references). Examples:
+// Thin wrapper around aimimage.ExtractTag so the profile and model
+// pipelines share one implementation that's correct on tricky inputs
+// (registry ports, digest references). Examples:
 //
 //	"registry/image:0.8.5"        → "0.8.5"
 //	"registry/image"              → ""

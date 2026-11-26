@@ -45,6 +45,7 @@ import (
 	sharedcontroller "github.com/amd-enterprise-ai/aim-engine/internal/controller"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofilecache"
 )
 
@@ -52,6 +53,8 @@ const (
 	profileCacheName = "profile-cache"
 
 	finalizerProfileCacheArtifactCleanup = "aim.eai.amd.com/profile-cache-artifact-cleanup"
+
+	profileCacheRuntimeConfigIndexKey = ".spec.name"
 )
 
 // AIMProfileCacheReconciler reconciles AIMProfileCache objects.
@@ -81,6 +84,8 @@ type AIMProfileCacheReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimartifacts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimruntimeconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
 
 func (r *AIMProfileCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -174,6 +179,9 @@ func (r *AIMProfileCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMProfileCache{}, aimv1alpha2.ProfileCacheArtifactNameIndexKey, indexProfileCacheArtifactNames); err != nil {
 		return err
 	}
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMProfileCache{}, profileCacheRuntimeConfigIndexKey, indexProfileCacheRuntimeConfigName); err != nil {
+		return err
+	}
 
 	r.reconciler = &aimprofilecache.ProfileCacheReconciler{
 		Scheme: r.Scheme,
@@ -217,6 +225,18 @@ func (r *AIMProfileCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&aimv1alpha2.AIMClusterProfile{},
 			handler.EnqueueRequestsFromMapFunc(r.findProfileCachesForClusterProfile),
 			builder.WithPredicates(profilePredicate),
+		).
+		// A cache whose runtime config is missing blocks without a requeue, so
+		// creating the config must wake it.
+		Watches(
+			&aimv1alpha1.AIMRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.findProfileCachesForRuntimeConfig),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.findProfileCachesForClusterRuntimeConfig),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
 		).
 		Named(profileCacheName).
 		Complete(r)
@@ -265,6 +285,61 @@ func (r *AIMProfileCacheReconciler) findProfileCachesForClusterProfile(ctx conte
 		requests[i] = ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&pc)}
 	}
 	return requests
+}
+
+func (r *AIMProfileCacheReconciler) findProfileCachesForRuntimeConfig(ctx context.Context, obj client.Object) []ctrl.Request {
+	config, ok := obj.(*aimv1alpha1.AIMRuntimeConfig)
+	if !ok {
+		return nil
+	}
+
+	var caches aimv1alpha2.AIMProfileCacheList
+	if err := r.List(ctx, &caches,
+		client.InNamespace(config.Namespace),
+		client.MatchingFields{profileCacheRuntimeConfigIndexKey: config.Name},
+	); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list profile caches for runtime config",
+			"config", config.Name, "namespace", config.Namespace)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, len(caches.Items))
+	for i, pc := range caches.Items {
+		requests[i] = ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&pc)}
+	}
+	return requests
+}
+
+func (r *AIMProfileCacheReconciler) findProfileCachesForClusterRuntimeConfig(ctx context.Context, obj client.Object) []ctrl.Request {
+	config, ok := obj.(*aimv1alpha1.AIMClusterRuntimeConfig)
+	if !ok {
+		return nil
+	}
+
+	var caches aimv1alpha2.AIMProfileCacheList
+	if err := r.List(ctx, &caches, client.MatchingFields{profileCacheRuntimeConfigIndexKey: config.Name}); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list profile caches for cluster runtime config", "config", config.Name)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, len(caches.Items))
+	for i, pc := range caches.Items {
+		requests[i] = ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&pc)}
+	}
+	return requests
+}
+
+// indexProfileCacheRuntimeConfigName returns the name of the runtime config a
+// profile cache merges: its spec.name, or the default config when that is empty.
+func indexProfileCacheRuntimeConfigName(obj client.Object) []string {
+	profileCache, ok := obj.(*aimv1alpha2.AIMProfileCache)
+	if !ok {
+		return nil
+	}
+	if profileCache.Spec.Name == "" {
+		return []string{aimruntimeconfig.DefaultRuntimeConfigName}
+	}
+	return []string{profileCache.Spec.Name}
 }
 
 // indexProfileCacheArtifactNames extracts the artifact names a profile cache published in

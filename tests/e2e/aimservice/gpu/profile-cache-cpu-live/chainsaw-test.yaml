@@ -85,9 +85,6 @@ spec:
     # itself (1:1 with the profile, owner-ref'd to it). The AIMService's
     # fetchProfileCache picks this up via the Shared-mode list-by-profile-name
     # search and reuses it instead of creating its own service-driven cache.
-    # This mirrors v1alpha1's AIMServiceTemplate -> AIMTemplateCache pattern
-    # where a template-driven cache is preferred over a service-driven one
-    # when both could match.
     - name: Verify the profile-driven AIMProfileCache is materialised and reused
       try:
         - assert:
@@ -164,7 +161,7 @@ spec:
         - assert:
             timeout: 10m
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: test-profile-cache-cpu

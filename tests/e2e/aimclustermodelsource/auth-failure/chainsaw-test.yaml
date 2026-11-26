@@ -42,7 +42,7 @@ spec:
         - error:
             timeout: 10s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMClusterModel
               metadata:
                 labels:

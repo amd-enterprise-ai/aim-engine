@@ -20,7 +20,7 @@ Kubernetes names have a 63-character limit. AIM Engine often needs to encode mul
 :::{important}
 Derived resource names are **not** predictable from the parent name alone. Always use labels (not name matching) to find child resources.
 :::
-### v1alpha2 derived resource names
+### Derived resource names
 
 | Resource | Created by | Name parts | Hash source |
 |---|---|---|---|
@@ -30,6 +30,9 @@ Derived resource names are **not** predictable from the parent name alone. Alway
 | Overlay `AIMProfile` | `AIMService.spec.profileOverrides` | `[seedName, serviceName, "overlay"]` | service UID + overrides |
 | `AIMProfileCache` | `AIMService` (when caching enabled) | `[profileName]` | namespace |
 | `AIMArtifact` | `AIMProfileCache` | `[sourceURI]` | source URI + env + storage class + download filter (+ runtime config for `s3://`, cache name for Dedicated) |
+| Auto-created `AIMModel` | `AIMService.spec.model.image` | `[serviceName, "auto"]` | image URI |
+| `AIMClusterModel` (discovered image) | `AIMClusterModelSource` | `[repository, tag]` | registry + repo + tag |
+| `AIMClusterModel` (declared model) | `AIMClusterModelSource.spec.models` | `[modelId]` | model ID |
 | Discovery `ConfigMap` | `AIMModel` | `[modelName, "discovery"]` | model + spec hash |
 | Discovery `Job` | `AIMModel` | `[modelName, "discovery", "job"]` | spec hash |
 | `InferenceService` | `AIMService` | `[serviceName]` | namespace |
@@ -38,18 +41,6 @@ Derived resource names are **not** predictable from the parent name alone. Alway
 | Download `Job` | `AIMArtifact` | `[artifactName, "download"]` | artifact UID |
 
 Image-model definitions retain the same logical source identity when a corresponding profile resource is materialised or removed by hardware reconciliation. Derived output names are stable across that transition. Definitions from independent models and direct profiles remain distinct even when they share runtime fields or a `profileId`.
-
-### v1alpha1 derived resource names
-
-These are still produced for v1alpha1 resources during the deprecation window.
-
-| Resource | Created by | Name parts | Hash source |
-|---|---|---|---|
-| `AIMServiceTemplate` (discovered) | `AIMModel` | `[imageName, "metric-precision-gpu"]` | hash string |
-| `AIMTemplateCache` (shared) | `AIMService` (v1alpha1) | `[templateName]` | namespace |
-| `AIMTemplateCache` (dedicated) | `AIMService` (v1alpha1) | `[templateName, serviceName]` | service UID |
-| `AIMModel` (from image) | `AIMService.spec.model.image` | `[imageName, imageTag]` | image URI |
-| `AIMClusterModel` | `AIMClusterModelSource` | `[repository, tag]` | registry + repo + tag |
 
 ## Labels
 
@@ -92,8 +83,7 @@ The `source-model` and `source-model-scope` labels are derived from controller o
 |---|---|---|
 | `aim.eai.amd.com/service.name` | Service name | Framework-applied owner label (`{controller}.name`) for AIMService-managed resources |
 | `aim.eai.amd.com/model` | Model name | Identifies the owning model |
-| `aim.eai.amd.com/template` | Template name | Identifies the owning template (v1alpha1) |
-| `aim.eai.amd.com/template-cache.name` | Cache name | Identifies the owning template cache (v1alpha1) |
+| `aim.eai.amd.com/template` | Template name | Set by earlier releases on InferenceServices created from a service template |
 | `aim.eai.amd.com/origin` | `auto-generated`, `manual`, `derived` | How the resource was created |
 | `aim.eai.amd.com/managed-by` | `aim-controller` | Marks operator-managed resources |
 | `aim.eai.amd.com/component` | `inference`, `discovery`, `cache`, `check-size` | Functional role of the resource |
@@ -104,8 +94,6 @@ The `source-model` and `source-model-scope` labels are derived from controller o
 |---|---|---|
 | `aim.eai.amd.com/metric` | `latency`, `throughput` | Optimization metric |
 | `aim.eai.amd.com/precision` | `fp8`, `fp16`, `bf16`, … | Numeric precision |
-| `aim.eai.amd.com/gpu.model` | `MI300X`, `MI325X`, … | GPU model |
-| `aim.eai.amd.com/gpu.count` | `"1"`, `"4"` | GPU count |
 
 <a id="projected-runtime-metadata"></a>
 
@@ -141,23 +129,9 @@ A projected `ServingRuntime` / `ClusterServingRuntime` also carries an owner ref
 | Label | Value | Purpose |
 |---|---|---|
 | `aim.eai.amd.com/cache-type` | `temp`, `persistent`, `dedicated` | PVC cache type |
-| `aim.eai.amd.com/cache.type` | `artifact`, `template-cache` | Cache resource type |
+| `aim.eai.amd.com/cache.type` | `artifact`, `template-cache` | Cache resource type. `template-cache` marks PVCs of artifacts an `AIMTemplateCache` created in an earlier release |
 | `aim.eai.amd.com/cache.name` | Artifact name | Identifies the cache resource |
 | `aim.eai.amd.com/model.source` | `huggingface`, `s3` | Model download source |
-
-### v1alpha1 template labels
-
-These remain in use on v1alpha1 templates and v1alpha1-managed downstream resources during the deprecation window.
-
-| Label | Value | Purpose |
-|---|---|---|
-| `aim.eai.amd.com/template.name` | Template name | On artifacts — parent template |
-| `aim.eai.amd.com/template.scope` | `Namespace`, `Cluster` | Template scope (note capitalisation differs from the v1alpha2 `source-model-scope` label, which uses lowercase) |
-| `aim.eai.amd.com/template.index` | `"0"`, `"1"` | Profile index in template |
-| `aim.eai.amd.com/template.metric` | `latency`, `throughput` | Template metric |
-| `aim.eai.amd.com/template.precision` | `fp8`, `fp16` | Template precision |
-| `aim.eai.amd.com/template.alias` | User alias | Custom template alias |
-| `aim.eai.amd.com/custom-model` | `"true"` | Marks custom model templates |
 
 ### Accelerator detection labels
 
@@ -264,15 +238,3 @@ The operator maintains field indexes for efficient lookups. The full set used by
 | `.spec.profileName` | `AIMProfileCache` | Caches by target profile name |
 | `.spec.sourceUri` | `AIMArtifact` | Artifacts by source URI |
 | `.spec.runtimeConfigName` | Multiple CRDs | Resources by runtime config |
-
-v1alpha1-only indexers (still active during deprecation):
-
-| Index key | Resource | Description |
-|---|---|---|
-| `.spec.templateRef` | `AIMService` (v1alpha1) | Services by template reference |
-| `.status.resolvedTemplate.name` | `AIMService` (v1alpha1) | Services by resolved template |
-| `.spec.templateName` | `AIMTemplateCache` | Caches by template name |
-| `.spec.templateScope` | `AIMTemplateCache` | Caches by template scope |
-| `.spec.modelName` | `AIMServiceTemplate` | Templates by model name |
-
-Some index key names are legacy internal identifiers (for example, `.spec.templateRef`) and may not exactly match the current CRD JSON field path.

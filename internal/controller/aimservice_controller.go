@@ -29,6 +29,7 @@ import (
 	"sort"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -36,8 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/record"
-	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,23 +50,20 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
-	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
-	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	profileservice "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimservice"
 )
 
 const (
-	serviceName                 = "service"
-	invalidPipelineMarkerReason = "InvalidReconcilerPipeline"
+	serviceName = "service"
 
 	// finalizerCacheCleanup guards the AIMService against deletion until any
-	// non-Ready caches it created (AIMTemplateCache, AIMProfileCache) and
-	// their non-Ready shared AIMArtifacts are torn down. Shared caches and
-	// shared artifacts that are Ready are preserved for reuse by other
-	// services referencing the same template or profile.
+	// non-Ready AIMProfileCaches it created and their non-Ready shared
+	// AIMArtifacts are torn down. Shared caches and shared artifacts that are
+	// Ready are preserved for reuse by other services referencing the same
+	// profile.
 	finalizerCacheCleanup = "aim.eai.amd.com/cache-cleanup"
 
 	// finalizerTemplateCacheCleanupLegacy is the legacy finalizer name. Any
@@ -76,67 +72,15 @@ const (
 	finalizerTemplateCacheCleanupLegacy = "aim.eai.amd.com/template-cache-cleanup"
 )
 
-type aimServicePipeline interface {
-	Run(context.Context, *aimv1alpha2.AIMService) (ctrl.Result, error)
-}
-
-type legacyAIMServicePipeline[F, Obs any] struct {
-	pipeline *controllerutils.Pipeline[
-		*aimv1alpha1.AIMService,
-		*aimv1alpha1.AIMServiceStatus,
-		F,
-		Obs,
-	]
-}
-
-func (p *legacyAIMServicePipeline[F, Obs]) Run(
-	ctx context.Context,
-	service *aimv1alpha2.AIMService,
-) (ctrl.Result, error) {
-	legacyService := servicepolicy.LegacyView(service)
-	pipeline := *p.pipeline
-	pipeline.StatusClient = &canonicalAIMServiceStatusWriter{
-		StatusWriter: p.pipeline.StatusClient,
-		service:      service,
-	}
-	return pipeline.Run(ctx, legacyService)
-}
-
-type canonicalAIMServiceStatusWriter struct {
-	client.StatusWriter
-	service *aimv1alpha2.AIMService
-}
-
-func (w *canonicalAIMServiceStatusWriter) Update(
-	ctx context.Context,
-	obj client.Object,
-	opts ...client.SubResourceUpdateOption,
-) error {
-	legacyService, ok := obj.(*aimv1alpha1.AIMService)
-	if !ok {
-		return fmt.Errorf("update canonical AIMService status from %T", obj)
-	}
-	w.service.Status = *legacyService.Status.DeepCopy()
-	return w.StatusWriter.Update(ctx, w.service, opts...)
-}
-
-// AIMServiceReconciler reconciles AIMService objects.
-// It dispatches to the template pipeline (v1alpha1) or profile pipeline
-// (v1alpha2) using the shared explicit-or-spec-shape selection contract.
+// AIMServiceReconciler reconciles AIMService objects through the profile
+// pipeline.
 type AIMServiceReconciler struct {
 	client.Client
-	APIReader client.Reader
 	Scheme    *runtime.Scheme
-	Recorder  record.EventRecorder
 	Clientset kubernetes.Interface
 
-	// templateReconciler handles the v1alpha1 template-based path.
-	templateReconciler controllerutils.DomainReconciler[*aimv1alpha1.AIMService, *aimv1alpha1.AIMServiceStatus, aimservice.ServiceFetchResult, aimservice.ServiceObservation]
-	templatePipeline   aimServicePipeline
-
-	// profileReconciler handles the v1alpha2 profile-based path.
-	profileReconciler controllerutils.DomainReconciler[*aimv1alpha1.AIMService, *aimv1alpha1.AIMServiceStatus, profileservice.ServiceFetchResult, profileservice.ServiceObservation]
-	profilePipeline   aimServicePipeline
+	profileReconciler controllerutils.DomainReconciler[*aimv1alpha2.AIMService, *aimv1alpha1.AIMServiceStatus, profileservice.ServiceFetchResult, profileservice.ServiceObservation]
+	profilePipeline   *controllerutils.Pipeline[*aimv1alpha2.AIMService, *aimv1alpha1.AIMServiceStatus, profileservice.ServiceFetchResult, profileservice.ServiceObservation]
 }
 
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservices,verbs=get;list;watch;create;update;patch;delete
@@ -144,12 +88,9 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservices/finalizers,verbs=update
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodels,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclustermodels,verbs=get;list;watch
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservicetemplates,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates,verbs=get;list;watch
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofiles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles,verbs=get;list;watch
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimtemplatecaches,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofilecaches,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofilecaches,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimartifacts,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimruntimeconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
@@ -165,6 +106,7 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 
 func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -179,9 +121,8 @@ func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Finalizer for cache cleanup. The finalizer covers AIMTemplateCache
-	// (v1alpha1) and AIMProfileCache (v1alpha2) plus non-Ready shared
-	// AIMArtifacts created for this service's profile cache.
+	// Finalizer for cache cleanup. The finalizer covers AIMProfileCache plus
+	// non-Ready shared AIMArtifacts created for this service's profile cache.
 	hasCurrent := controllerutil.ContainsFinalizer(&service, finalizerCacheCleanup)
 	hasLegacy := controllerutil.ContainsFinalizer(&service, finalizerTemplateCacheCleanupLegacy)
 
@@ -252,124 +193,28 @@ func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Dispatch onto the v1alpha1 template pipeline or the v1alpha2 profile
-	// pipeline. The two API versions share a single storage schema (no
-	// conversion webhook, strategy: None), so we route on the *spec shape*
-	// the user authored rather than on apiVersion, which the API server
-	// rewrites per request.
-	//
-	// Default rule: spec.profile-shaped services use the v1alpha2 profile
-	// pipeline; everything else (spec.template-shaped, spec.model-shaped,
-	// including image and custom-model variants the v1alpha2 resolver does
-	// not implement yet) uses the v1alpha1 template pipeline.
-	//
-	// A supported AnnotationReconcilerPipeline value forces a specific
-	// pipeline. Malformed markers remain compatible by falling back to spec
-	// shape and surfacing an administrator-facing warning.
-	legacyService := servicepolicy.LegacyView(&service)
-	pipeline := servicepolicy.SelectPipeline(legacyService)
-	if warning := servicepolicy.PipelineMarkerWarning(legacyService); warning != "" {
-		logger.Info("Ignoring malformed AIMService pipeline annotation", "reason", warning)
-		if r.Recorder != nil {
-			r.Recorder.Event(&service, corev1.EventTypeWarning, invalidPipelineMarkerReason, warning)
-		}
-	}
-	if servicepolicy.PrepareStatusForPipeline(&service.Status, pipeline) {
-		return r.persistPipelineStatus(ctx, &service)
-	}
-	if pipeline == servicepolicy.PipelineProfile {
-		return r.profilePipeline.Run(ctx, &service)
-	}
-	return r.templatePipeline.Run(ctx, &service)
-}
-
-func (r *AIMServiceReconciler) persistPipelineStatus(
-	ctx context.Context,
-	service *aimv1alpha2.AIMService,
-) (ctrl.Result, error) {
-	key := client.ObjectKeyFromObject(service)
-	// Conflict retries must read directly from the API server. Requeueing or
-	// reading through the informer cache can return the same stale resource
-	// version that lost a race with another metadata writer.
-	reader := r.APIReader
-	if reader == nil {
-		reader = r.Client
-	}
-	serviceDeleted := false
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var latest aimv1alpha2.AIMService
-		if err := reader.Get(ctx, key, &latest); err != nil {
-			if apierrors.IsNotFound(err) {
-				serviceDeleted = true
-				return nil
-			}
-			return err
-		}
-		pipeline := servicepolicy.SelectPipeline(servicepolicy.LegacyView(&latest))
-		if !servicepolicy.PrepareStatusForPipeline(&latest.Status, pipeline) {
-			return nil
-		}
-		return r.Status().Update(ctx, &latest)
-	})
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("persist AIMService pipeline status: %w", err)
-	}
-	if serviceDeleted {
-		return ctrl.Result{}, nil
-	}
-	return ctrl.Result{Requeue: true}, nil
+	return r.profilePipeline.Run(ctx, &service)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 //
-// Wiring is split across packages so each domain owns its own watches:
-//   - internal/v1alpha1/aimservice.RegisterWatches registers template/model/
-//     runtimeconfig/templatecache indices, watches, and map funcs.
-//   - internal/v1alpha2/aimservice.RegisterWatches registers profile/
-//     clusterprofile/profilecache indices, watches, and map funcs.
-//
-// Shared watches that belong to neither domain (pods, events, HPAs, and the
-// Owns() relationships on the generated KServe/HTTPRoute/PVC/ConfigMap
+// internal/v1alpha2/aimservice.RegisterWatches registers the profile/model/
+// runtimeconfig/profilecache indices, watches, and map funcs. Watches that
+// belong to no domain (pods, events, HPAs, gateways, and the Owns()
+// relationships on the generated KServe/HTTPRoute/PVC/ConfigMap/Job
 // resources) stay in this file.
 func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 	c := mgr.GetClient()
-	if r.APIReader == nil {
-		r.APIReader = mgr.GetAPIReader()
-	}
 	recorder := mgr.GetEventRecorderFor("aim-" + serviceName + "-controller")
-
-	r.templateReconciler = &aimservice.ServiceReconciler{
-		Clientset: r.Clientset,
-		Scheme:    r.Scheme,
-		APIReader: mgr.GetAPIReader(),
-	}
-	templatePipeline := &controllerutils.Pipeline[
-		*aimv1alpha1.AIMService,
-		*aimv1alpha1.AIMServiceStatus,
-		aimservice.ServiceFetchResult,
-		aimservice.ServiceObservation,
-	]{
-		Client:         c,
-		StatusClient:   c.Status(),
-		Recorder:       recorder,
-		ControllerName: serviceName,
-		Reconciler:     r.templateReconciler,
-		Scheme:         r.Scheme,
-		Clientset:      r.Clientset,
-	}
-	r.templatePipeline = &legacyAIMServicePipeline[
-		aimservice.ServiceFetchResult,
-		aimservice.ServiceObservation,
-	]{pipeline: templatePipeline}
 
 	r.profileReconciler = &profileservice.ProfileServiceReconciler{
 		Scheme:    r.Scheme,
 		Recorder:  recorder,
 		APIReader: mgr.GetAPIReader(),
 	}
-	profilePipeline := &controllerutils.Pipeline[
-		*aimv1alpha1.AIMService,
+	r.profilePipeline = &controllerutils.Pipeline[
+		*aimv1alpha2.AIMService,
 		*aimv1alpha1.AIMServiceStatus,
 		profileservice.ServiceFetchResult,
 		profileservice.ServiceObservation,
@@ -382,12 +227,6 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Scheme:         r.Scheme,
 		Clientset:      r.Clientset,
 	}
-	r.profilePipeline = &legacyAIMServicePipeline[
-		profileservice.ServiceFetchResult,
-		profileservice.ServiceObservation,
-	]{pipeline: profilePipeline}
-
-	r.Recorder = recorder
 
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.Event{}, "involvedObject.name", func(obj client.Object) []string {
 		event, ok := obj.(*corev1.Event)
@@ -407,11 +246,7 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&batchv1.Job{})
 
-	b, err := aimservice.RegisterWatches(ctx, mgr, b, c)
-	if err != nil {
-		return err
-	}
-	b, err = profileservice.RegisterWatches(ctx, mgr, b, c)
+	b, err := profileservice.RegisterWatches(ctx, mgr, b, c)
 	if err != nil {
 		return err
 	}
@@ -423,7 +258,13 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Watches(
 			&corev1.Pod{},
-			handler.EnqueueRequestsFromMapFunc(r.findServicesForInferenceServicePod),
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForPredictorObject),
+		).
+		// The predictor Deployment's status carries the rollout progress that
+		// stale-child cleanup and the rollout verdict wait on.
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForPredictorObject),
 		).
 		Watches(
 			&autoscalingv2.HorizontalPodAutoscaler{},
@@ -460,26 +301,23 @@ func (r *AIMServiceReconciler) findServicesForGateway(ctx context.Context, _ cli
 	return requests
 }
 
-func (r *AIMServiceReconciler) findServicesForInferenceServicePod(ctx context.Context, obj client.Object) []reconcile.Request {
-	pod, ok := obj.(*corev1.Pod)
-	if !ok {
-		return nil
-	}
-
-	isvcName, hasLabel := pod.Labels[constants.LabelKServeInferenceService]
+// findServicesForPredictorObject maps a predictor pod or Deployment, through
+// the KServe InferenceService label, to the AIMService that owns it.
+func (r *AIMServiceReconciler) findServicesForPredictorObject(ctx context.Context, obj client.Object) []reconcile.Request {
+	isvcName, hasLabel := obj.GetLabels()[constants.LabelKServeInferenceService]
 	if !hasLabel {
 		return nil
 	}
 
 	isvc := &servingv1beta1.InferenceService{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: isvcName}, isvc); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: isvcName}, isvc); err != nil {
 		return nil
 	}
 
 	for _, ownerRef := range isvc.OwnerReferences {
 		if ownerRef.Kind == "AIMService" {
 			return []reconcile.Request{{
-				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: pod.Namespace},
+				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: obj.GetNamespace()},
 			}}
 		}
 	}
@@ -648,12 +486,11 @@ func (r *AIMServiceReconciler) findServicesForHPA(ctx context.Context, obj clien
 
 // cleanupCaches deletes non-Ready caches and shared artifacts that were
 // created on behalf of the service being deleted. Ready resources are
-// preserved so other services referencing the same template or profile can
-// continue to reuse them.
+// preserved so other services referencing the same profile can continue to
+// reuse them.
 //
 // Scope:
-//   - AIMTemplateCache labeled with this service (v1alpha1 template path)
-//   - AIMProfileCache labeled with this service (v1alpha2 profile path, shared mode)
+//   - AIMProfileCache labeled with this service (shared mode)
 //   - AIMArtifact labeled with the profile cache name (shared artifacts created
 //     by AIMProfileCache without owner references; dedicated-mode artifacts
 //     cascade via owner refs and are not touched here)
@@ -668,23 +505,11 @@ func (r *AIMServiceReconciler) cleanupCaches(ctx context.Context, service *aimv1
 	}
 
 	logger := log.FromContext(ctx)
-	var errs []error
 
-	tcErrs, terminating, err := r.cleanupTemplateCaches(ctx, service, serviceLabelValue)
+	deletedPCs, errs, terminating, err := r.cleanupProfileCaches(ctx, service, serviceLabelValue)
 	if err != nil {
 		return err
 	}
-	errs = append(errs, tcErrs...)
-	if terminating {
-		logger.Info("Skipping cleanup, namespace may be terminating", "service", service.Name)
-		return joinCleanupErrs(errs)
-	}
-
-	deletedPCs, pcErrs, terminating, err := r.cleanupProfileCaches(ctx, service, serviceLabelValue)
-	if err != nil {
-		return err
-	}
-	errs = append(errs, pcErrs...)
 	if terminating {
 		logger.Info("Skipping artifact cleanup, namespace may be terminating", "service", service.Name)
 		return joinCleanupErrs(errs)
@@ -699,48 +524,6 @@ func joinCleanupErrs(errs []error) error {
 		return nil
 	}
 	return fmt.Errorf("cleanup errors: %v", errs)
-}
-
-// cleanupTemplateCaches deletes non-Ready AIMTemplateCaches labeled for this
-// service. Returns (deleteErrs, namespaceTerminating, fatalErr). A fatal
-// error (e.g. transient List failure) aborts the entire cleanup; the
-// terminating flag signals the caller to stop without treating it as an
-// error.
-func (r *AIMServiceReconciler) cleanupTemplateCaches(
-	ctx context.Context,
-	service *aimv1alpha2.AIMService,
-	serviceLabel string,
-) ([]error, bool, error) {
-	logger := log.FromContext(ctx)
-	var list aimv1alpha1.AIMTemplateCacheList
-	if err := r.List(ctx, &list,
-		client.InNamespace(service.Namespace),
-		client.MatchingLabels{constants.LabelService: serviceLabel},
-	); err != nil {
-		if apierrors.IsForbidden(err) || apierrors.IsNotFound(err) {
-			return nil, true, nil
-		}
-		return nil, false, fmt.Errorf("failed to list template caches for cleanup: %w", err)
-	}
-	var errs []error
-	for i := range list.Items {
-		tc := &list.Items[i]
-		if tc.Status.Status == constants.AIMStatusReady {
-			continue
-		}
-		if deleteErr := r.Delete(ctx, tc); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
-			if apierrors.IsForbidden(deleteErr) {
-				continue
-			}
-			errs = append(errs, fmt.Errorf("failed to delete template cache %s: %w", tc.Name, deleteErr))
-			continue
-		}
-		logger.Info("Deleted non-ready template cache during service cleanup",
-			"templateCache", tc.Name,
-			"service", service.Name,
-			"cacheStatus", tc.Status.Status)
-	}
-	return errs, false, nil
 }
 
 // cleanupProfileCaches deletes non-Ready AIMProfileCaches labeled for this

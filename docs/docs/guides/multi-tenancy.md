@@ -5,15 +5,14 @@ AIM Engine supports multi-tenant deployments through a combination of cluster-sc
 :::{admonition} v1alpha2
 :class: note
 
-The resource-scoping table below covers both v1alpha2 (Profiles / ProfileSets) and v1alpha1 (Templates) variants. `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources consumed by both pipelines.
+`AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources.
 :::
 ## Resource Scoping
 
 | Resource | Cluster-Scoped | Namespace-Scoped |
 |----------|---------------|-----------------|
 | Models | `AIMClusterModel` | `AIMModel` |
-| Profiles (v1alpha2) | `AIMClusterProfile` | `AIMProfile` |
-| Templates (v1alpha1, deprecated) | `AIMClusterServiceTemplate` | `AIMServiceTemplate` |
+| Profiles | `AIMClusterProfile` | `AIMProfile` |
 | Runtime Config | `AIMClusterRuntimeConfig` | `AIMRuntimeConfig` |
 | Model Sources | `AIMClusterModelSource` | — |
 | Services | — | `AIMService` |
@@ -28,7 +27,7 @@ A typical multi-tenant setup:
 1. **Cluster admin** creates cluster-scoped resources shared by all teams:
    - `AIMClusterModelSource` for model discovery
    - `AIMClusterRuntimeConfig` for default routing, storage, and policies
-   - `AIMClusterProfile` (or legacy `AIMClusterServiceTemplate`) for validated runtime profiles
+   - `AIMClusterProfile` for validated runtime profiles
 
 2. **Teams** work in their own namespaces with:
    - `AIMService` resources for their inference endpoints
@@ -62,7 +61,7 @@ Configuration is resolved with the most specific scope winning:
 | Setting | Resolution Order |
 |---------|-----------------|
 | Model | `AIMModel` (namespace) → `AIMClusterModel` (cluster) |
-| Profile / Template | `AIMProfile` (namespace) → `AIMClusterProfile` (cluster) / `AIMServiceTemplate` → `AIMClusterServiceTemplate` |
+| Profile | `AIMProfile` (namespace) → `AIMClusterProfile` (cluster) |
 | Runtime config | `AIMRuntimeConfig` (namespace) → `AIMClusterRuntimeConfig` (cluster) |
 | Inference container env | Service `spec.env` → Profile `containerEnv` → RuntimeConfig `spec.env` (namespace) → ClusterRuntimeConfig `spec.env` ([full order](../concepts/runtime-config.md#inference-container-env)) |
 | Download Job env | Service `spec.caching.env` → Profile `spec.caching.env` → RuntimeConfig `spec.caching.env` (namespace) → ClusterRuntimeConfig `spec.caching.env` ([full order](../concepts/runtime-config.md#download-job-env)) |

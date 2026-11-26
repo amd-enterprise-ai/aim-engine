@@ -55,9 +55,9 @@ const (
 	// every AIMModel / AIMClusterModel because it feeds into the discovery spec hash.
 	DiscoveryCommandVersion = "v1"
 
-	// DiscoveryKindLabelKey distinguishes v1alpha2 AIMModel-scoped discovery Jobs
-	// from v1alpha1 AIMServiceTemplate ones while both still count against the same
-	// global 10-Job budget (they share app.kubernetes.io/name=aim-discovery).
+	// DiscoveryKindLabelKey records which model kind created a discovery Job. All
+	// discovery Jobs count against the same global 10-Job budget (they share
+	// app.kubernetes.io/name=aim-discovery).
 	DiscoveryKindLabelKey = constants.AimLabelDomain + "/discovery-kind"
 
 	// DiscoveryKindAIMModel marks Jobs owned by v1alpha2 AIMModel resources.
@@ -79,6 +79,17 @@ const (
 	// discoveryJobBackoffLimit forces Kubernetes to fail the Job immediately so the
 	// operator can own the retry/backoff policy instead.
 	discoveryJobBackoffLimit = 0
+
+	// discoveryJobActiveDeadlineSeconds fails a discovery Job whose pod never
+	// finishes, such as one Pending because no node tolerates it, so it frees
+	// its slot under the global cap. An hour covers pulling a large AIM image
+	// (tens of GB) over a slow link; the profile walk itself takes seconds.
+	discoveryJobActiveDeadlineSeconds = 3600
+
+	// discoveryPullRetryGrace is how long a discovery Job keeps a pull error
+	// other than auth or not-found, such as a 429, a 5xx or a connection reset,
+	// before it is deleted, so the kubelet retries the pull in place.
+	discoveryPullRetryGrace = 10 * time.Minute
 
 	// DiscoveryRecordBegin and DiscoveryRecordEnd delimit base64-encoded profile YAML
 	// blocks emitted by the in-image shell script.
@@ -124,6 +135,7 @@ type DiscoveryJobSpec struct {
 // image (alpine/busybox, distroless variants that ship a shell, etc.).
 func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	backoffLimit := int32(discoveryJobBackoffLimit)
+	activeDeadline := int64(discoveryJobActiveDeadlineSeconds)
 	ttl := int32(discoveryJobTTLSeconds)
 
 	command := DiscoveryShellCommand()
@@ -151,6 +163,7 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
+			ActiveDeadlineSeconds:   &activeDeadline,
 			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -165,9 +178,8 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 					ServiceAccountName: spec.ServiceAccount,
 					Tolerations:        spec.Tolerations,
 					// AIM images run as root by default. The script only reads
-					// the profile files, so it runs as the same non-root UID as
-					// the AIMServiceTemplate discovery Job, which reads the same
-					// files from the same images.
+					// the profile files, which other users can read, so it runs
+					// as a non-root UID.
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:   ptr.To(true),
 						RunAsUser:      ptr.To(int64(65532)),
@@ -470,25 +482,31 @@ func ComputeDiscoverySpecHash(image string, pullSecrets []corev1.LocalObjectRefe
 	return fmt.Sprintf("%x", h.Sum(nil)[:16])
 }
 
+// reasonAwaitingDiscovery is the discovery reason while a failed attempt backs off.
+const reasonAwaitingDiscovery = "AwaitingDiscovery"
+
 // ShouldCreateDiscoveryJob returns true if the operator should create (or recreate)
-// a discovery Job now. Returns (false, reason, message) with a human-readable
-// explanation when backoff applies.
-func ShouldCreateDiscoveryJob(state *aimv1alpha1.ModelDiscoveryState, currentSpecHash string, now time.Time) (bool, string, string) {
+// a discovery Job now. During backoff it returns false with the time left until
+// the retry, a reason and a message. The message names the absolute retry time
+// so status stays unchanged, and doesn't retrigger the model, until then.
+func ShouldCreateDiscoveryJob(state *aimv1alpha1.ModelDiscoveryState, currentSpecHash string, now time.Time) (bool, time.Duration, string, string) {
 	if state == nil || state.Attempts == 0 {
-		return true, "", ""
+		return true, 0, "", ""
 	}
 	if state.SpecHash != "" && state.SpecHash != currentSpecHash {
-		return true, "", ""
+		return true, 0, "", ""
 	}
 	if state.LastAttemptTime != nil && state.Attempts > 0 {
-		backoff := calculateDiscoveryBackoff(state.Attempts)
-		next := state.LastAttemptTime.Add(backoff)
+		next := state.LastAttemptTime.Add(calculateDiscoveryBackoff(state.Attempts))
 		if now.Before(next) {
-			remaining := next.Sub(now).Round(time.Second)
-			return false, "AwaitingDiscovery", fmt.Sprintf("Waiting %s before retry (attempt %d)", remaining, state.Attempts+1)
+			message := fmt.Sprintf("Waiting until %s before retry (attempt %d)", next.UTC().Format(time.RFC3339), state.Attempts+1)
+			if state.LastFailureReason != "" {
+				message += "; last attempt failed: " + state.LastFailureReason
+			}
+			return false, next.Sub(now), reasonAwaitingDiscovery, message
 		}
 	}
-	return true, "", ""
+	return true, 0, "", ""
 }
 
 // calculateDiscoveryBackoff uses exponential backoff: base * 2^(attempts-1), capped at max.

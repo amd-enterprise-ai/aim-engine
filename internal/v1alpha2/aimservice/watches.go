@@ -29,6 +29,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -42,7 +44,6 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
-	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
@@ -106,9 +107,7 @@ const (
 )
 
 // RegisterWatches installs the field indexers and watches that feed the
-// profile-based AIMService pipeline. The top-level controller composes this
-// with the v1alpha1 equivalent (template-based pipeline) to assemble the
-// full watch graph.
+// profile-based AIMService pipeline.
 //
 // Indexes:
 //   - ServiceProfileIndex (existing): name-driven services.
@@ -125,6 +124,8 @@ const (
 //   - AIMProfileCache -> downstream cache state
 //   - AIMModel / AIMClusterModel -> upstream model state for model-driven
 //     services (status.managedProfiles drives downstream profile readiness).
+//   - AIMRuntimeConfig / AIMClusterRuntimeConfig -> services that read the
+//     merged runtime config (routing, label propagation).
 func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builder, c client.Client) (*builder.Builder, error) {
 	if err := registerServiceIndexes(ctx, mgr); err != nil {
 		return nil, err
@@ -165,6 +166,14 @@ func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builde
 			&aimv1alpha2.AIMClusterModel{},
 			handler.EnqueueRequestsFromMapFunc(findServicesForClusterModel(c)),
 			builder.WithPredicates(modelRelevantChangePredicate()),
+		).
+		Watches(
+			&aimv1alpha1.AIMRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(findServicesForRuntimeConfig(c)),
+		).
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(findServicesForClusterRuntimeConfig(c)),
 		), nil
 }
 
@@ -195,13 +204,8 @@ func registerServiceIndexes(ctx context.Context, mgr manager.Manager) error {
 	return nil
 }
 
-func profilePipelineService(obj client.Object) (*aimv1alpha2.AIMService, bool) {
-	svc, ok := obj.(*aimv1alpha2.AIMService)
-	return svc, ok && usesProfilePipeline(svc)
-}
-
 func indexServiceProfileName(obj client.Object) []string {
-	svc, ok := profilePipelineService(obj)
+	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Name == "" {
 		return nil
 	}
@@ -209,7 +213,7 @@ func indexServiceProfileName(obj client.Object) []string {
 }
 
 func indexServiceModelName(obj client.Object) []string {
-	svc, ok := profilePipelineService(obj)
+	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || svc.Spec.Model == nil || svc.Spec.Model.Name == nil || *svc.Spec.Model.Name == "" {
 		return nil
 	}
@@ -217,7 +221,7 @@ func indexServiceModelName(obj client.Object) []string {
 }
 
 func indexServiceSelectorModelRef(obj client.Object) []string {
-	svc, ok := profilePipelineService(obj)
+	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Selector == nil ||
 		svc.Spec.Profile.Selector.ModelRef == nil || svc.Spec.Profile.Selector.ModelRef.Name == "" {
 		return nil
@@ -226,7 +230,7 @@ func indexServiceSelectorModelRef(obj client.Object) []string {
 }
 
 func indexServiceSelectorAimID(obj client.Object) []string {
-	svc, ok := profilePipelineService(obj)
+	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Selector == nil ||
 		svc.Spec.Profile.Selector.AimId == "" {
 		return nil
@@ -235,7 +239,7 @@ func indexServiceSelectorAimID(obj client.Object) []string {
 }
 
 func indexServiceModelImage(obj client.Object) []string {
-	svc, ok := profilePipelineService(obj)
+	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || svc.Spec.Model == nil || svc.Spec.Model.Image == nil || *svc.Spec.Model.Image == "" {
 		return nil
 	}
@@ -243,7 +247,7 @@ func indexServiceModelImage(obj client.Object) []string {
 }
 
 func indexServiceResolvedProfile(obj client.Object) []string {
-	svc, ok := profilePipelineService(obj)
+	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || svc.Status.ResolvedProfile == nil || svc.Status.ResolvedProfile.Name == "" {
 		return nil
 	}
@@ -257,15 +261,14 @@ func resolvedProfileKey(scope aimv1alpha1.AIMResolutionScope, name string) strin
 }
 
 func indexServiceResourceNodeMatch(obj client.Object) []string {
-	svc, ok := profilePipelineService(obj)
+	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || svc.Spec.Resources == nil {
 		return nil
 	}
 	return []string{serviceResourceNodeMatchIndexValue}
 }
 
-// indexServiceAdapterArtifacts indexes adapter dependencies shared by both
-// reconciliation pipelines.
+// indexServiceAdapterArtifacts indexes adapter dependencies.
 func indexServiceAdapterArtifacts(obj client.Object) []string {
 	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || len(svc.Spec.Adapters) == 0 {
@@ -278,12 +281,6 @@ func indexServiceAdapterArtifacts(obj client.Object) []string {
 		}
 	}
 	return names
-}
-
-// usesProfilePipeline applies the same authoritative selection contract as
-// controller dispatch.
-func usesProfilePipeline(service *aimv1alpha2.AIMService) bool {
-	return servicepolicy.UsesPipeline(servicepolicy.LegacyView(service), servicepolicy.PipelineProfile)
 }
 
 // serviceResourceNodeChangePredicate fires only when data consumed by
@@ -430,8 +427,9 @@ func profileCacheRelevantChangePredicate() predicate.Predicate {
 }
 
 // modelRelevantChangePredicate fires when an AIMModel / AIMClusterModel's
-// managedProfiles set or readiness changes — those are the signals that
-// move the set of profiles a model-driven AIMService can resolve to.
+// managedProfiles set, readiness or ProfilesAvailable condition changes —
+// those are the signals that move the set of profiles a model-driven
+// AIMService can resolve to, or the reason it reports when none match.
 // Cosmetic status writes (e.g. observedGeneration nudges without a real
 // change) are filtered.
 func modelRelevantChangePredicate() predicate.Predicate {
@@ -440,12 +438,13 @@ func modelRelevantChangePredicate() predicate.Predicate {
 		DeleteFunc:  func(_ event.DeleteEvent) bool { return true },
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldStatus, oldGen, oldManaged := modelRelevantFields(e.ObjectOld)
-			newStatus, newGen, newManaged := modelRelevantFields(e.ObjectNew)
+			oldStatus, oldGen, oldManaged, oldProfiles := modelRelevantFields(e.ObjectOld)
+			newStatus, newGen, newManaged, newProfiles := modelRelevantFields(e.ObjectNew)
 			if oldStatus != newStatus || oldGen != newGen {
 				return true
 			}
-			return !equality.Semantic.DeepEqual(oldManaged, newManaged)
+			return !equality.Semantic.DeepEqual(oldManaged, newManaged) ||
+				!equality.Semantic.DeepEqual(oldProfiles, newProfiles)
 		},
 	}
 }
@@ -470,16 +469,20 @@ func profileRelevantFields(obj client.Object) (
 }
 
 // modelRelevantFields extracts the model status fields the predicate cares
-// about (status, observedGeneration, and the managedProfiles summary).
-func modelRelevantFields(obj client.Object) (constants.AIMStatus, int64, any) {
+// about (status, observedGeneration, the managedProfiles summary and the
+// ProfilesAvailable condition).
+func modelRelevantFields(obj client.Object) (constants.AIMStatus, int64, any, *metav1.Condition) {
+	var status *aimv1alpha1.AIMModelStatus
 	switch m := obj.(type) {
 	case *aimv1alpha2.AIMModel:
-		return m.Status.Status, m.Status.ObservedGeneration, m.Status.ManagedProfiles
+		status = &m.Status
 	case *aimv1alpha2.AIMClusterModel:
-		return m.Status.Status, m.Status.ObservedGeneration, m.Status.ManagedProfiles
+		status = &m.Status
 	default:
-		return "", 0, nil
+		return "", 0, nil, nil
 	}
+	return status.Status, status.ObservedGeneration, status.ManagedProfiles,
+		meta.FindStatusCondition(status.Conditions, aimv1alpha1.AIMModelConditionProfilesAvailable)
 }
 
 // provenanceLabelsChanged returns true when any of the
@@ -603,6 +606,61 @@ func findServicesForClusterModel(c client.Client) handler.MapFunc {
 	}
 }
 
+func findServicesForRuntimeConfig(c client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		config, ok := obj.(*aimv1alpha1.AIMRuntimeConfig)
+		if !ok {
+			return nil
+		}
+		requests := map[types.NamespacedName]struct{}{}
+		collectServicesForRuntimeConfig(ctx, c, requests, config.Name, config.Namespace)
+		return requestsFromSet(requests)
+	}
+}
+
+func findServicesForClusterRuntimeConfig(c client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		config, ok := obj.(*aimv1alpha1.AIMClusterRuntimeConfig)
+		if !ok {
+			return nil
+		}
+		// Cluster runtime configs merge into services in every namespace.
+		requests := map[types.NamespacedName]struct{}{}
+		collectServicesForRuntimeConfig(ctx, c, requests, config.Name, "")
+		return requestsFromSet(requests)
+	}
+}
+
+// collectServicesForRuntimeConfig adds the profile-pipeline services that name
+// the runtime config, or name none, to requests. Services that name none read
+// the default runtime config but are matched on every config name; runtime
+// config edits are rare, so the extra reconciles are cheap.
+//
+// namespace == "" widens the lookup to all namespaces.
+func collectServicesForRuntimeConfig(
+	ctx context.Context,
+	c client.Client,
+	requests map[types.NamespacedName]struct{},
+	configName, namespace string,
+) {
+	var opts []client.ListOption
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	var services aimv1alpha2.AIMServiceList
+	if err := c.List(ctx, &services, opts...); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for runtime config",
+			"config", configName, "namespace", namespace)
+		return
+	}
+	for i := range services.Items {
+		service := &services.Items[i]
+		if service.Spec.Name == configName || service.Spec.Name == "" {
+			requests[types.NamespacedName{Name: service.Name, Namespace: service.Namespace}] = struct{}{}
+		}
+	}
+}
+
 // adapterArtifactRelevantChangePredicate fires on adapter/model artifact events
 // that can change a service's adapter staging or gating: type, overall status,
 // adapterPath, canonical modelId, rank, and the model's
@@ -651,7 +709,7 @@ func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 
 		switch artifact.Spec.Type {
 		case aimv1alpha1.ArtifactTypeAdapter:
-			collectAllServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, artifact.Name, artifact.Namespace)
+			collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, artifact.Name, artifact.Namespace)
 		default:
 			// Exact-binding adapters whose parent is this concrete artifact.
 			var adapters aimv1alpha1.AIMArtifactList
@@ -664,7 +722,7 @@ func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 				return nil
 			}
 			for i := range adapters.Items {
-				collectAllServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, adapters.Items[i].Name, artifact.Namespace)
+				collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, adapters.Items[i].Name, artifact.Namespace)
 			}
 
 			// Logical adapters compatible with this canonical model ID. A model
@@ -680,7 +738,7 @@ func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 					return requestsFromSet(requests)
 				}
 				for i := range adapters.Items {
-					collectAllServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, adapters.Items[i].Name, artifact.Namespace)
+					collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, adapters.Items[i].Name, artifact.Namespace)
 				}
 			}
 		}
@@ -793,9 +851,7 @@ func addProfileServiceRequest(
 		}
 		return
 	}
-	if usesProfilePipeline(&service) {
-		requests[key] = struct{}{}
-	}
+	requests[key] = struct{}{}
 }
 
 // collectServicesByField runs a field-indexed list against the controller-
@@ -812,27 +868,6 @@ func collectServicesByField(
 	requests map[types.NamespacedName]struct{},
 	indexKey, value, namespace string,
 ) {
-	collectServicesByFieldForPipeline(ctx, c, requests, indexKey, value, namespace, true)
-}
-
-// collectAllServicesByField is reserved for watches shared by both pipelines,
-// such as adapter artifacts.
-func collectAllServicesByField(
-	ctx context.Context,
-	c client.Client,
-	requests map[types.NamespacedName]struct{},
-	indexKey, value, namespace string,
-) {
-	collectServicesByFieldForPipeline(ctx, c, requests, indexKey, value, namespace, false)
-}
-
-func collectServicesByFieldForPipeline(
-	ctx context.Context,
-	c client.Client,
-	requests map[types.NamespacedName]struct{},
-	indexKey, value, namespace string,
-	profileOnly bool,
-) {
 	if value == "" {
 		return
 	}
@@ -848,9 +883,6 @@ func collectServicesByFieldForPipeline(
 	}
 	for i := range services.Items {
 		service := &services.Items[i]
-		if profileOnly && !usesProfilePipeline(service) {
-			continue
-		}
 		requests[types.NamespacedName{Name: service.Name, Namespace: service.Namespace}] = struct{}{}
 	}
 }

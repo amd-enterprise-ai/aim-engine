@@ -104,30 +104,23 @@ The operator emits Kubernetes Events on AIM resources when conditions change. Ev
 
 Events use the condition's `reason` field as the event reason. Common event reasons:
 
-**AIMService (v1alpha2):**
+**AIMService:**
 
 | Reason | Type | Description |
 |--------|------|-------------|
 | `ProfileResolved` | Normal | Profile resolved successfully |
 | `ProfileNotFound` | Warning | No profile matched `spec.profile` / `spec.model` |
 | `BaseProfile` | Warning | Resolved profile is a base profile (not deployable) |
-| `CacheReady` | Normal | Profile cache is populated |
-| `CacheFailed` | Warning | Cache download failed |
+| `ProfileCacheReady` | Normal | Profile cache is ready |
+| `ProfileCacheNotReady` | Normal | Profile cache is not Ready; the message includes the cache's own Ready message |
 | `RuntimeReady` | Normal | InferenceService is serving |
 | `PodCreationFailed` | Warning | The API server or an admission policy refuses the predictor pod. Emitted on every reconcile |
-| `InvalidImageReference` | Warning | Model image URI is invalid |
-| `PathTemplateInvalid` | Warning | Routing path template failed to resolve |
+| `RolloutInProgress` | Normal | A new predictor revision is not ready yet; the previous one still serves |
+| `RolloutStalled` | Warning | The new predictor revision can't progress; the previous one still serves |
+| `ModelHasNoProfiles` | Warning | The AIMModel or AIMClusterModel the service resolves through produces no AIMProfiles |
+| `TemplateFieldsSet` | Warning | The service sets fields that have no effect on profile-based serving (`TemplateFieldsIgnored` condition) |
 
-**AIMService (v1alpha1, legacy template pipeline):**
-
-| Reason | Type | Description |
-|--------|------|-------------|
-| `ModelResolved` | Normal | Model found and ready |
-| `ModelNotFound` | Warning | Referenced model does not exist |
-| `Resolved` | Normal | Template resolved successfully |
-| `TemplateSelectionAmbiguous` | Warning | Multiple templates scored equally |
-
-**AIMModel / AIMClusterModel (v1alpha2):**
+**AIMModel / AIMClusterModel:**
 
 | Reason | Type | Description |
 |--------|------|-------------|
@@ -135,13 +128,12 @@ Events use the condition's `reason` field as the event reason. Common event reas
 | `AllProfilesFailed` | Warning | All managed profiles failed |
 | `NoMatchingProfiles` | Warning | Derivation selector matched zero sources |
 | `MetadataExtractionFailed` | Warning | Failed to extract model metadata |
-
-**AIMModel (v1alpha1):**
-
-| Reason | Type | Description |
-|--------|------|-------------|
-| `AllTemplatesReady` | Normal | All discovered templates are ready |
-| `AllTemplatesFailed` | Warning | All discovered templates failed |
+| `InvalidImageReference` | Warning | `spec.image` is not a valid image reference |
+| `ImageNotFound` | Warning | The registry has no such repository or tag (HTTP 404) |
+| `ImagePullAuthFailure` | Warning | The registry refused access (HTTP 401 or 403) |
+| `DiscoveryImagePullFailed` | Normal | The discovery pod can't pull the image; the Job is deleted and the attempt backs off |
+| `NoDeployableProfiles` | Warning | The model's spec produces no AIMProfiles |
+| `TemplateFieldsSet` | Warning | The model sets fields that have no effect on profile-based serving (`TemplateFieldsIgnored` condition) |
 
 **AIMArtifact:**
 
@@ -156,10 +148,10 @@ Events use the condition's `reason` field as the event reason. Common event reas
 # Events for a specific resource
 kubectl describe aimservice qwen-chat -n <namespace>
 
-# All AIM-related events in a namespace (v1alpha2)
+# Events for AIMService, AIMModel and the profile kinds in a namespace
 kubectl get events -n <namespace> --field-selector involvedObject.apiVersion=aim.eai.amd.com/v1alpha2
 
-# Or for v1alpha1 resources still being reconciled
+# Events for the kinds served at v1alpha1, such as AIMArtifact
 kubectl get events -n <namespace> --field-selector involvedObject.apiVersion=aim.eai.amd.com/v1alpha1
 ```
 

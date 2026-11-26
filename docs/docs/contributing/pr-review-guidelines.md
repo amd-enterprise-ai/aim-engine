@@ -183,7 +183,7 @@ Follow [Coding Guidelines](coding-guidelines.md) and [Controller Patterns](contr
 - [ ] Validation expressed via kubebuilder markers / CEL where possible.
 - [ ] Defaults are explicit and least-surprising; empty string handling tested.
 - [ ] Enum changes reject unknown values at startup or admission, not silently.
-- [ ] Backward compatibility preserved within the supported version window (v1alpha1 ↔ v1alpha2 coexistence rules in [Upgrading](../admin/upgrading.md)).
+- [ ] Backward compatibility preserved within the supported version window (the API version each kind serves, in [Upgrading](../admin/upgrading.md#version-compatibility)).
 
 ### Configuration and flags
 
@@ -246,14 +246,14 @@ There is no fixed coverage percentage, but **behavior changes without tests** re
 - [ ] ADR updated or referenced when architectural decisions change.
 - [ ] Generated reference docs updated via generators, not hand-edited copies.
 - [ ] Samples and doc examples copy-paste cleanly (valid YAML, correct apiVersion).
-- [ ] Migration window / upgrading docs updated when dispatch rules, annotations, or defaults change.
+- [ ] Upgrading docs updated when served API versions, annotations, or defaults change.
 - [ ] **Docs and samples stand alone** — no references to internal registries, proprietary label namespaces, or closed-source tooling an external contributor cannot resolve ([Coding Guidelines](coding-guidelines.md#docs-and-samples-must-stand-alone)). Internal-only install notes, if any, are isolated and labeled.
 
 ### Documentation quality bar
 
 - Explains **why** an operator would choose a setting, not only what it does.
 - Callouts for breaking or behavior-changing defaults.
-- Links to canonical sections (avoid duplicating dispatch tables that live in [Upgrading](../admin/upgrading.md)).
+- Links to canonical sections (avoid duplicating tables that live in [Upgrading](../admin/upgrading.md)).
 - Overloaded terms are qualified the same way as in code.
 
 ---
@@ -399,11 +399,6 @@ These areas have historically high coupling and deserve extra scrutiny:
 - Qualify "runtime" carefully: projected `ServingRuntime` objects vs `AIMRuntimeConfig` vs reconcile behavior.
 - `autoSelect` semantics: all projected runtimes keep `autoSelect: false` — flag doc/table drift.
 - Lazy vs eager projection: mode-governed vs always-on paths must not be conflated in docs or tests.
-
-### v1alpha1 ↔ v1alpha2 migration window
-
-- AIMService dispatch is by **spec shape**, not apiVersion alone — see [Upgrading](../admin/upgrading.md).
-- New v1alpha2 tests must not use v1alpha1 templates as scaffolds (see `CLAUDE.md`).
 
 ### Artifact download / S3
 

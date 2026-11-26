@@ -56,11 +56,7 @@ type ClusterModelSourceFetch struct {
 
 	// existingModels are all AIMClusterModels in the cluster, regardless of creator,
 	// so overlapping sources respect a model that already exists for an image.
-	//
-	// Listed as v1alpha1. v1alpha2 is the storage version, so this returns every
-	// AIMClusterModel including modelId-backed ones — CEL runs on write, not on
-	// read, and both versions project the same AIMModelSpec.
-	existingModels controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]
+	existingModels controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]
 
 	// filterResults contains per-filter registry query results
 	filterResults []FilterResult
@@ -81,7 +77,7 @@ func (r *ClusterModelSourceReconciler) FetchRemoteState(
 
 	// 1. List all cluster models (not just this source's) so existing images are respected.
 	fetch.existingModels = controllerutils.FetchList(ctx, c,
-		&aimv1alpha1.AIMClusterModelList{},
+		&aimv1alpha2.AIMClusterModelList{},
 	)
 
 	// 2. Query registry for each filter
@@ -98,7 +94,7 @@ func (r *ClusterModelSourceReconciler) FetchRemoteState(
 // This follows the aimmodel pattern where fetch results provide health directly.
 func (fetch ClusterModelSourceFetch) GetComponentHealth() []controllerutils.ComponentHealth {
 	existingModelsHealth := fetch.existingModels.ToComponentHealth("ExistingModels",
-		func(list *aimv1alpha1.AIMClusterModelList) controllerutils.ComponentHealth {
+		func(list *aimv1alpha2.AIMClusterModelList) controllerutils.ComponentHealth {
 			return controllerutils.ComponentHealth{
 				State:   constants.AIMStatusReady,
 				Reason:  "Listed",
@@ -179,8 +175,8 @@ type ClusterModelSourceObservation struct {
 	newImages        []RegistryImage
 	desiredModels    []*aimv1alpha2.AIMClusterModel
 	newDeclaredCount int
-	existingByURI    map[string]*aimv1alpha1.AIMClusterModel
-	existingByModel  map[string]*aimv1alpha1.AIMClusterModel
+	existingByURI    map[string]*aimv1alpha2.AIMClusterModel
+	existingByModel  map[string]*aimv1alpha2.AIMClusterModel
 
 	// Computed during ComposeState for DecorateStatus
 	totalFiltered     int
@@ -196,8 +192,8 @@ func (r *ClusterModelSourceReconciler) ComposeState(
 ) ClusterModelSourceObservation {
 	obs := ClusterModelSourceObservation{
 		ClusterModelSourceFetch: fetch,
-		existingByURI:           make(map[string]*aimv1alpha1.AIMClusterModel),
-		existingByModel:         make(map[string]*aimv1alpha1.AIMClusterModel),
+		existingByURI:           make(map[string]*aimv1alpha2.AIMClusterModel),
+		existingByModel:         make(map[string]*aimv1alpha2.AIMClusterModel),
 	}
 
 	// Build a lookup of images that already have an AIMClusterModel, keyed by image URI.

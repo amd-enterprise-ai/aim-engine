@@ -24,6 +24,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	discoverylock "github.com/amd-enterprise-ai/aim-engine/internal/discovery/lock"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofileset"
 )
@@ -53,6 +55,28 @@ func runTypedReconcile[T client.Object](
 		return ctrl.Result{}, err
 	}
 	return run(ctx, obj)
+}
+
+// modelMaxConcurrentReconciles lets the AIMModel and AIMClusterModel
+// controllers read other images while one registry read waits out its timeout.
+// The registry read runs before the discovery lock, which still serializes the
+// pipeline of image models.
+const modelMaxConcurrentReconciles = 4
+
+// runWithDiscoveryLock returns run's result and error unchanged, so pipeline
+// errors back off in the rate limiter. Only a discovery lock that cannot be
+// taken gets the short fixed requeue.
+func runWithDiscoveryLock(ctx context.Context, c client.Client, run func() (ctrl.Result, error)) (ctrl.Result, error) {
+	var result ctrl.Result
+	var runErr error
+	if err := discoverylock.WithDiscoveryLock(ctx, c, 30*time.Second, func() error {
+		result, runErr = run()
+		return nil
+	}); err != nil {
+		log.FromContext(ctx).V(1).Info("could not acquire discovery lock, requeuing")
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+	return result, runErr
 }
 
 func registerObjectIndex[T client.Object](

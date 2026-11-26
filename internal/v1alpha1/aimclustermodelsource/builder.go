@@ -46,15 +46,11 @@ const (
 )
 
 // buildClusterModel creates an AIMClusterModel from a source and discovered image.
-//
-// Registry discovery writes through v1alpha1, unchanged. Only modelId
-// declarations need the v1alpha2 client (see buildDeclaredClusterModel), so
-// image discovery is left on the version it has always used.
 func buildClusterModel(
 	source *aimv1alpha1.AIMClusterModelSource,
 	img RegistryImage,
-) *aimv1alpha1.AIMClusterModel {
-	return &aimv1alpha1.AIMClusterModel{
+) *aimv1alpha2.AIMClusterModel {
+	return &aimv1alpha2.AIMClusterModel{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: generateModelName(img),
 			Labels: map[string]string{
@@ -75,11 +71,6 @@ func buildClusterModel(
 }
 
 // buildDeclaredClusterModel materializes a spec.models entry.
-//
-// This one must be written as v1alpha2: the v1alpha1 AIMClusterModel CEL rejects
-// spec.modelId outright ("spec.modelId is only supported on v1alpha2"). Reads
-// are unaffected either way — v1alpha2 is the storage version and CEL runs on
-// write — so the rest of this controller stays on v1alpha1.
 func buildDeclaredClusterModel(
 	source *aimv1alpha1.AIMClusterModelSource,
 	declaration aimv1alpha1.AIMClusterModelSourceModel,
@@ -120,7 +111,7 @@ func generateDeclaredModelName(modelID string) (string, error) {
 	return name, nil
 }
 
-func isModelOwnedBySource(model *aimv1alpha1.AIMClusterModel, sourceName string) bool {
+func isModelOwnedBySource(model *aimv1alpha2.AIMClusterModel, sourceName string) bool {
 	if model == nil {
 		return false
 	}

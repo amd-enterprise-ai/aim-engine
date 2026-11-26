@@ -19,8 +19,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen3-32b
@@ -30,11 +28,6 @@ AIM images (like `amdenterpriseai/aim-qwen-qwen3-32b`) package a serving runtime
 
 The `AIMModel` runs discovery on the image and publishes one `AIMProfile` per supported (GPU, precision, metric) combination. The `AIMService` resolves to the best deployable profile for your hardware, pre-warms the model cache, and creates a KServe `InferenceService`.
 
-:::{admonition} Why the `reconciler-pipeline: profile` annotation?
-:class: note
-
-AIMService dispatch is decided by **spec shape**, not by `apiVersion`. During the v1alpha1 → v1alpha2 migration window, `spec.model.name` and `spec.model.image` default to the legacy template pipeline so existing deployments keep working unchanged. The annotation forces this service onto the v1alpha2 profile pipeline, which resolves `qwen3-32b` to one of the `AIMClusterProfile`s produced by the `AIMClusterModel` above. The annotation becomes unnecessary once v1alpha1 is removed — see [Migration window](admin/upgrading.md#migration-window) for the full dispatch table.
-:::
 ## Four model flows
 
 How you onboard a model depends on its source and the runtime available for the
@@ -115,7 +108,6 @@ Task-oriented walkthroughs for common workflows:
 - [GPU Management](admin/gpu-management.md) — GPU allocation, node selectors, topology
 - [Storage Configuration](admin/storage-configuration.md) — PVCs, shared storage for caching
 - [Upgrading](admin/upgrading.md) — Version migration and CRD upgrades
-- [Bounded v1alpha1 Template Migration](admin/template-migration.md) — Controlled Plan/Apply and manual recovery
 - [Monitoring](admin/monitoring.md) — Metrics, observability, log formats
 - [Troubleshooting](admin/troubleshooting.md) — Common issues and diagnostic steps
 - [Security](admin/security.md) — RBAC, network policies, secrets management
@@ -136,17 +128,9 @@ Task-oriented walkthroughs for common workflows:
 ### Reference
 
 - [CRD API (v1alpha2)](reference/api/v1alpha2.md) — API specification for Models, Profiles, ProfileSets, Services
-- [CRD API (v1alpha1)](reference/api/v1alpha1.md) — Legacy API specification
+- [CRD API (v1alpha1)](reference/api/v1alpha1.md) — API specification for Artifacts, RuntimeConfigs, ModelSources and the shared spec types
 - [Helm Chart Values](reference/helm-values.md) — All configurable Helm chart values
 - [CLI and Operator Flags](reference/cli.md) — Operator binary flags and endpoints
 - [Environment Variables](reference/environment-variables.md) — Operator and downloader configuration
 - [Naming and Labels](reference/naming-and-labels.md) — Derived naming algorithm and label conventions
 - [Conditions](reference/conditions.md) — Full catalog of conditions across all CRDs
-
-### Legacy (v1alpha1)
-
-- [Overview](legacy/index.md) — Deprecation timeline and what changed
-- [Migrating to v1alpha2](legacy/migrating.md) — Field-by-field mapping and recipes
-- [Service Templates (v1alpha1)](legacy/service-templates.md) — The deprecated runtime-profile shape
-- [AIMService (v1alpha1)](legacy/aimservice-v1alpha1.md) — The deprecated template-based service shape
-- [AIMModel (v1alpha1)](legacy/aimmodel-v1alpha1.md) — The deprecated custom-model and `customTemplates` shapes

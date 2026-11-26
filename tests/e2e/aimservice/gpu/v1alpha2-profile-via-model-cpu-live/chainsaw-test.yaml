@@ -3,8 +3,7 @@
 # AIMService v1alpha2 E2E Test: AIMModel → AIMProfile (via discovery) → AIMService → HTTP
 #
 # Closes the AIMModel v1alpha2 coverage gap by driving the entire chain off
-# a single AIMModel, with no hand-applied AIMProfile / AIMServiceTemplate /
-# AIMProfileSet. The operator's image-discovery pipeline is the source of
+# a single AIMModel, with no hand-applied AIMProfile or AIMProfileSet. The operator's image-discovery pipeline is the source of
 # truth: it inspects the OCI labels of the configured image and synthesizes
 # one AIMProfile per supported profile entry. We then point a v1alpha2
 # AIMService at the resulting AIMProfile and validate that the inference
@@ -106,9 +105,7 @@ spec:
       description: |
         Discovery-produced AIMProfiles are annotated with
         aim.eai.amd.com/model-name=<model>. We pick the first Ready one in
-        the test namespace and apply an AIMService that targets it. We
-        always query v1alpha2 explicitly to avoid the storage-version
-        conversion stripping fields when kubectl picks v1alpha1.
+        the test namespace and apply an AIMService that targets it.
       try:
         - script:
             timeout: 60s
@@ -158,7 +155,7 @@ spec:
         - assert:
             timeout: 15m
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: test-via-model-cpu

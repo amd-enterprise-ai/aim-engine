@@ -47,7 +47,7 @@ Without clearing the default resource limits, AIM Engine deployments will fail.
 :::
 KServe applies default CPU and memory resources (`cpu: 1`, `memory: 2Gi`) to InferenceService containers when those keys are omitted. AIM Engine sets CPU requests based on GPU count (4 CPUs per GPU) but intentionally does not set CPU limits, allowing inference workloads to burst and fully utilize available CPU for optimal throughput. KServe's default CPU limit of `1` conflicts with larger calculated requests, while its `2Gi` memory limit can OOM-kill model servers whose profile does not override memory.
 
-For GPU workloads, both v1alpha1 templates and v1alpha2 profiles set defaults per GPU (`requests.cpu: 4`, `requests.memory: 32Gi`, `limits.memory: 48Gi`), unless overridden by profile/template/service resources. Clearing KServe defaults avoids accidental request/limit mismatches and hidden caps when resources are omitted or partially overridden.
+For GPU workloads, profiles set defaults per GPU (`requests.cpu: 4`, `requests.memory: 32Gi`, `limits.memory: 48Gi`), unless overridden by profile or service resources. Clearing KServe defaults avoids accidental request/limit mismatches and hidden caps when resources are omitted or partially overridden.
 
 Setting limits and requests to `""` removes the defaults so AIM Engine controls per-workload CPU/memory behavior.
 
@@ -57,7 +57,7 @@ AIM Engine uses KServe in Standard mode (without Knative) to support KEDA-based 
 
 ### Local Model Cache
 
-AIM Engine manages model caching independently via `AIMArtifact` and `AIMProfileCache` (v1alpha2) / `AIMTemplateCache` (v1alpha1) resources. KServe's built-in local model feature must be disabled to avoid conflicts.
+AIM Engine manages model caching independently via `AIMArtifact` and `AIMProfileCache` resources. KServe's built-in local model feature must be disabled to avoid conflicts.
 
 This is already configured in the values snippet above via `kserve.localmodel.enabled: false` (and in the repository's local dependency Helmfile).
 

@@ -13,7 +13,7 @@ An **AIM profile** is a self-contained runtime configuration for an inference wo
 :::{admonition} v1alpha2
 :class: note
 
-Profiles are part of `aim.eai.amd.com/v1alpha2`. They replace v1alpha1 [Service Templates](../legacy/service-templates.md), which are deprecated.
+Profiles are part of `aim.eai.amd.com/v1alpha2`.
 :::
 ## Where profiles come from
 
@@ -78,7 +78,7 @@ The matching `status` fields mirror the labels for kubectl-friendly access:
 - `status.sourceModel.{name,kind,namespace}` mirrors `source-model` + `source-model-scope`
 - `status.deployable` derives from spec (also implicit from `profile-role`)
 
-See [Naming and Labels → Profile labels](../reference/naming-and-labels.md#profile-labels) for the canonical list (including label setters and selector recipes).
+See [Naming and Labels → Profile labels](../reference/naming-and-labels.md#v1alpha2-profile-provenance-labels) for the canonical list (including label setters and selector recipes).
 
 ## Projected profile YAML compatibility
 
@@ -102,7 +102,7 @@ Profile sets, custom-model derivation, and AIMService overlays inherit the compl
 
 `metadata.features` and `metadata.capabilities` are intentionally distinct. Features advertise runtime/container integration contracts, currently LoRA adapter support (`adapters` or `adapters-scale-only`). AIM Engine models features in `AIMProfile.spec.features` because service composition depends on them. Capabilities describe model/API behavior such as tool calling, structured outputs, and reasoning. AIM runtime validation consumes those flags, while AIM Engine currently preserves the complete capabilities block as an opaque source-owned extension. A profile may declare either field, both, or neither.
 
-A model-specific source profile may declare a top-level `download_filter` with `include` and `exclude` glob lists. Discovery copies it onto the profile's model source as `downloadFilter`, so the profile cache downloads only the matching files. The declaration takes precedence over a runtime config's `storage.downloadFilter`, and a glob ending in `/` selects every file under that directory. `download_filter: {}` downloads the complete repository; prefer it over an enumerated `include` list for models that need every file, because download verification is strict only when both lists are empty. Only v1alpha2 profile discovery reads the declaration; v1alpha1 `AIMServiceTemplate` discovery does not. AIM Engine applies the filter itself and does not project it into the runtime profile. Given a filter, aim-runtime reconciles the model against Hugging Face at every startup, which would require network access from serving pods and write access to a cache that other replicas share.
+A model-specific source profile may declare a top-level `download_filter` with `include` and `exclude` glob lists. Discovery copies it onto the profile's model source as `downloadFilter`, so the profile cache downloads only the matching files. The declaration takes precedence over a runtime config's `storage.downloadFilter`, and a glob ending in `/` selects every file under that directory. `download_filter: {}` downloads the complete repository; prefer it over an enumerated `include` list for models that need every file, because download verification is strict only when both lists are empty. AIM Engine applies the filter itself and does not project it into the runtime profile. Given a filter, aim-runtime reconciles the model against Hugging Face at every startup, which would require network access from serving pods and write access to a cache that other replicas share.
 
 If a later AIM Engine release starts modeling a field that an older contract stored as an extension, the existing opaque value remains authoritative until the source profile is inspected again. Re-inspection moves the value into the canonical CRD and records modeled field presence. This avoids replacing preserved future data with a zero-valued typed field during an upgrade.
 
@@ -493,4 +493,3 @@ If the service uses `spec.profile.selector` or `spec.model.name`, the selector m
 - [Naming and Labels](../reference/naming-and-labels.md) — Full label catalogue
 - [CRD API Reference (v1alpha2)](../reference/api/v1alpha2.md) — Full schema
 - [Conditions Reference](../reference/conditions.md) — Condition catalogue
-- [Legacy Service Templates](../legacy/service-templates.md) — The deprecated v1alpha1 equivalent

@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -442,6 +443,106 @@ func TestAutoscalingTriggerComponentHealth(t *testing.T) {
 			}
 			if cat := controllerutils.CategorizeError(got.Errors[0]).Category(); cat != controllerutils.ErrorCategoryInvalidSpec {
 				t.Errorf("error category=%v, want InvalidSpec", cat)
+			}
+		})
+	}
+}
+
+func TestHPAComponentHealth_ScaleToZero(t *testing.T) {
+	tests := []struct {
+		name          string
+		minReplicas   int32
+		hpa           *autoscalingv2.HorizontalPodAutoscaler
+		podCount      int
+		expectState   constants.AIMStatus
+		expectReason  string
+		expectMessage string
+	}{
+		{
+			name:          "scale-to-zero idle is healthy via authoritative ScalingDisabled",
+			minReplicas:   0,
+			hpa:           hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled),
+			expectState:   constants.AIMStatusReady,
+			expectReason:  aimv1alpha1.AIMServiceReasonScaledToZero,
+			expectMessage: "Service is idle: KEDA has scaled the deployment to zero replicas; will scale up when the configured trigger becomes active",
+		},
+		{
+			name:         "scale-to-zero opted in, HPA actively scaling - HPAOperational",
+			minReplicas:  0,
+			hpa:          hpaWithScalingActive(corev1.ConditionTrue, "ValidMetricFound"),
+			expectState:  constants.AIMStatusReady,
+			expectReason: "HPAOperational",
+		},
+		{
+			name:         "minReplicas>=1 with ScalingDisabled is still MetricsFailed (not a legitimate idle)",
+			minReplicas:  1,
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled),
+			expectState:  constants.AIMStatusFailed,
+			expectReason: "MetricsFailed",
+		},
+		{
+			name:         "minReplicas>=1 with a real metrics error is still MetricsFailed",
+			minReplicas:  1,
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			expectState:  constants.AIMStatusFailed,
+			expectReason: "MetricsFailed",
+		},
+		{
+			name:         "scale-to-zero with FailedGetExternalMetric AND zero pods is healthy idle",
+			minReplicas:  0,
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			expectState:  constants.AIMStatusReady,
+			expectReason: aimv1alpha1.AIMServiceReasonScaledToZero,
+		},
+		{
+			name:         "scale-to-zero with FailedGetExternalMetric AND running pods is HPAOperational (does not gate readiness)",
+			minReplicas:  0,
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			podCount:     1,
+			expectState:  constants.AIMStatusReady,
+			expectReason: "HPAOperational",
+		},
+		{
+			name:         "scale-to-zero with no ScalingActive condition AND zero pods is healthy idle",
+			minReplicas:  0,
+			hpa:          &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "hpa"}},
+			expectState:  constants.AIMStatusReady,
+			expectReason: aimv1alpha1.AIMServiceReasonScaledToZero,
+		},
+		{
+			name:         "scale-to-zero with no ScalingActive condition AND running pods is HPAOperational (does not gate readiness)",
+			minReplicas:  0,
+			hpa:          &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "hpa"}},
+			podCount:     1,
+			expectState:  constants.AIMStatusReady,
+			expectReason: "HPAOperational",
+		},
+		{
+			name:         "scale-to-zero with pods running and aim-dummy not emitting the user metric stays Ready (regression: was Activating/Progressing)",
+			minReplicas:  0,
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			podCount:     2,
+			expectState:  constants.AIMStatusReady,
+			expectReason: "HPAOperational",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService("svc").WithModelImage("test-image:v1").Build()
+			svc.Spec.MinReplicas = ptr.To(tt.minReplicas)
+			svc.Spec.MaxReplicas = ptr.To(int32(3))
+			hpa := controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{Value: tt.hpa}
+
+			got := HPAComponentHealth(svc, hpa, tt.podCount, true)
+			if got.State != tt.expectState {
+				t.Errorf("state=%q, want %q (msg=%q)", got.State, tt.expectState, got.Message)
+			}
+			if got.Reason != tt.expectReason {
+				t.Errorf("reason=%q, want %q (msg=%q)", got.Reason, tt.expectReason, got.Message)
+			}
+			if tt.expectMessage != "" && got.Message != tt.expectMessage {
+				t.Errorf("message=%q, want %q", got.Message, tt.expectMessage)
 			}
 		})
 	}

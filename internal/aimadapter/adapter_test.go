@@ -38,6 +38,7 @@ import (
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
@@ -80,7 +81,7 @@ func failedJob(name, reason, message string) *batchv1.Job {
 
 // withSyncedSubtree marks the per-service subtree-sync Job as succeeded so
 // Compose reports SubtreeReady (the ISVC mount gate).
-func withSyncedSubtree(deps Dependencies, svc *aimv1alpha1.AIMService) Dependencies {
+func withSyncedSubtree(deps Dependencies, svc *aimv1alpha2.AIMService) Dependencies {
 	deps.SubtreeSyncJob = controllerutils.FetchResult[*batchv1.Job]{
 		Value: succeededJob(SubtreeSyncJobName(svc, deps.AdapterDiskPVC, deps.AdapterDiskPVCUID)),
 	}
@@ -132,26 +133,24 @@ func modelParent(pvc string) *aimv1alpha1.AIMArtifact {
 	}
 }
 
-// isvcWithContainer builds a minimal InferenceService with a single predictor
+// isvcWithContainer builds a minimal InferenceService with a predictor model
 // container so AddVolumeMount has somewhere to attach the adapter disk.
 func isvcWithContainer() *servingv1beta1.InferenceService {
 	return &servingv1beta1.InferenceService{
 		Spec: servingv1beta1.InferenceServiceSpec{
 			Predictor: servingv1beta1.PredictorSpec{
-				PodSpec: servingv1beta1.PodSpec{
-					Containers: []corev1.Container{{Name: "main"}},
-				},
+				Model: &servingv1beta1.ModelSpec{},
 			},
 		},
 	}
 }
 
-func serviceWithAdapters(names ...string) *aimv1alpha1.AIMService {
+func serviceWithAdapters(names ...string) *aimv1alpha2.AIMService {
 	refs := make([]aimv1alpha1.AIMServiceAdapterReference, 0, len(names))
 	for _, n := range names {
 		refs = append(refs, aimv1alpha1.AIMServiceAdapterReference{Name: n, Kind: aimv1alpha1.AdapterKindAIMArtifact})
 	}
-	return &aimv1alpha1.AIMService{
+	return &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "default", UID: types.UID("svc-uid-1")},
 		Spec:       aimv1alpha1.AIMServiceSpec{Adapters: refs},
 	}
@@ -667,7 +666,7 @@ func TestComposeFailedStagingJob(t *testing.T) {
 // mountable), while static must wait for downloads because the runtime
 // enumerates the adapter directory once at launch.
 func TestMountableWhenSubtreeEnsured(t *testing.T) {
-	mkDeps := func(svc *aimv1alpha1.AIMService) Dependencies {
+	mkDeps := func(svc *aimv1alpha2.AIMService) Dependencies {
 		return withSyncedSubtree(
 			depsWith(modelParent(testAdapterPVC), map[string]*aimv1alpha1.AIMArtifact{
 				"lora-a": adapterArtifact("lora-a", "base"),
@@ -1297,7 +1296,7 @@ func TestAddVolumeMountReadOnlySubPath(t *testing.T) {
 	if vol.PersistentVolumeClaim == nil || !vol.PersistentVolumeClaim.ReadOnly {
 		t.Error("adapter volume must be read-only")
 	}
-	mounts := isvc.Spec.Predictor.Containers[0].VolumeMounts
+	mounts := isvc.Spec.Predictor.Model.VolumeMounts
 	if len(mounts) != 1 {
 		t.Fatalf("expected one mount, got %d", len(mounts))
 	}
@@ -1313,7 +1312,7 @@ func TestAddVolumeMountReadOnlySubPath(t *testing.T) {
 	}
 
 	// Default (static) service emits the source/mode/cap envs but no refresh interval.
-	env := envMap(isvc.Spec.Predictor.Containers[0].Env)
+	env := envMap(isvc.Spec.Predictor.Model.Env)
 	if env[constants.EnvAIMAdapterSource] != constants.AIMAdapterMountPath {
 		t.Errorf("AIM_ADAPTER_SOURCE = %q, want %q", env[constants.EnvAIMAdapterSource], constants.AIMAdapterMountPath)
 	}
@@ -1334,7 +1333,7 @@ func TestAddVolumeMountDynamicSetsRefreshInterval(t *testing.T) {
 	isvc := isvcWithContainer()
 	AddVolumeMount(isvc, svc, testAdapterPVC, constants.DefaultAIMAdapterMaxRank)
 
-	env := envMap(isvc.Spec.Predictor.Containers[0].Env)
+	env := envMap(isvc.Spec.Predictor.Model.Env)
 	if env[constants.EnvAIMAdapterMode] != string(aimv1alpha1.AdapterModeDynamic) {
 		t.Errorf("AIM_ADAPTER_MODE = %q, want dynamic", env[constants.EnvAIMAdapterMode])
 	}
@@ -1437,7 +1436,7 @@ func TestComposeAdapterModeEmptyProvisionsSubtree(t *testing.T) {
 	}
 	isvc := isvcWithContainer()
 	AddVolumeMount(isvc, svc, st.AdapterDiskPVC, st.MaxRank)
-	if len(isvc.Spec.Predictor.Containers[0].VolumeMounts) != 1 {
+	if len(isvc.Spec.Predictor.Model.VolumeMounts) != 1 {
 		t.Error("adapter disk must be mounted even with zero adapters declared")
 	}
 }

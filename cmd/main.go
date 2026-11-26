@@ -25,6 +25,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 
 	"go.uber.org/zap/zapcore"
@@ -40,6 +41,7 @@ import (
 
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	kservev1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -83,7 +85,6 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// nolint:gocyclo
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -227,13 +228,10 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	// Deduplicate API-server warning headers so each unique deprecation
-	// warning (notably "aim.eai.amd.com/v1alpha1 AIMService is
-	// deprecated; ...") is logged once per process lifetime instead of
-	// once per reconcile. F9 in the v1alpha2 validation walk recorded
-	// 2055 occurrences over a single ~3h controller lifetime against a
-	// single v1alpha1 AIMService — pure log spam since the actionable
-	// info doesn't change between reconciles.
+	// Deduplicate API-server warning headers so each unique warning, such
+	// as a deprecated API version, is logged once per process lifetime
+	// instead of once per reconcile; its content doesn't change between
+	// reconciles.
 	//
 	// Use controller-runtime's KubeAPIWarningLogger (a
 	// rest.WarningHandlerWithContext) so the warning still benefits from
@@ -260,7 +258,9 @@ func main() {
 		// ServingRuntime's colocated ConfigMap, and an administrator CA bundle —
 		// go through the uncached APIReader instead. User-managed inputs are read
 		// on demand, but their edits do not create a live watch event.
-		Cache:                  configMapCacheOptions(),
+		// Deployments are scoped the same way: the operator only reads predictor
+		// Deployments, which KServe labels with their InferenceService's labels.
+		Cache:                  cacheOptions(),
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
@@ -282,150 +282,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create Kubernetes clientset for controllers that need direct API access (e.g., registry operations)
-	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
-	if err != nil {
-		setupLog.Error(err, "unable to create Kubernetes clientset")
+	if err := setupControllers(mgr, runtimeProjectionMode); err != nil {
+		setupLog.Error(err, "unable to set up controllers")
 		os.Exit(1)
 	}
-
-	if err := (&v1alpha1controller.AIMRuntimeConfigReconciler{
-		Client:   mgr.GetClient(),
-		Recorder: mgr.GetEventRecorderFor("aimruntimeconfig"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMRuntimeConfig")
-		os.Exit(1)
-	}
-
-	if err := (&v1alpha1controller.AIMClusterRuntimeConfigReconciler{
-		Client:   mgr.GetClient(),
-		Recorder: mgr.GetEventRecorderFor("aimclusterruntimeconfig"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterRuntimeConfig")
-		os.Exit(1)
-	}
-
-	// Setup AIMClusterModelSource controller
-	if err = (&v1alpha1controller.AIMClusterModelSourceReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterModelSource")
-		os.Exit(1)
-	}
-
-	if err := (&v1alpha1controller.AIMArtifactReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMArtifact")
-		os.Exit(1)
-	}
-
-	if err := (&v1alpha1controller.AIMTemplateCacheReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMTemplateCache")
-		os.Exit(1)
-	}
-
-	if err := (&v1alpha1controller.AIMServiceTemplateReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMServiceTemplate")
-		os.Exit(1)
-	}
-
-	if err := (&v1alpha1controller.AIMClusterServiceTemplateReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterServiceTemplate")
-		os.Exit(1)
-	}
-
-	if err := (&sharedcontroller.AIMServiceReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMService")
-		os.Exit(1)
-	}
-	if err := (&v1alpha2controller.AIMProfileReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		Clientset:      clientset,
-		ProjectionMode: runtimeProjectionMode,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMProfile")
-		os.Exit(1)
-	}
-	if err := (&v1alpha2controller.AIMClusterProfileReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		Clientset:      clientset,
-		ProjectionMode: runtimeProjectionMode,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterProfile")
-		os.Exit(1)
-	}
-	if err := (&v1alpha2controller.AIMProfileCacheReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMProfileCache")
-		os.Exit(1)
-	}
-	if err := (&v1alpha2controller.AIMModelReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMModel")
-		os.Exit(1)
-	}
-	if err := (&v1alpha2controller.AIMClusterModelReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterModel")
-		os.Exit(1)
-	}
-	if err := (&v1alpha2controller.AIMProfileSetReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMProfileSet")
-		os.Exit(1)
-	}
-	if err := (&v1alpha2controller.AIMClusterProfileSetReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterProfileSet")
-		os.Exit(1)
-	}
-	if err := (&v1alpha2controller.RuntimeProjectionReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "RuntimeProjection")
-		os.Exit(1)
-	}
-	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
@@ -443,14 +303,123 @@ func main() {
 	}
 }
 
-func configMapCacheOptions() cache.Options {
+// setupControllers registers every AIM controller with the manager.
+func setupControllers(mgr ctrl.Manager, runtimeProjectionMode aimv1alpha2.RuntimeProjectionMode) error {
+	// Create Kubernetes clientset for controllers that need direct API access (e.g., registry operations)
+	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		return fmt.Errorf("create Kubernetes clientset: %w", err)
+	}
+
+	if err := (&v1alpha1controller.AIMRuntimeConfigReconciler{
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorderFor("aimruntimeconfig"),
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMRuntimeConfig: %w", err)
+	}
+
+	if err := (&v1alpha1controller.AIMClusterRuntimeConfigReconciler{
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorderFor("aimclusterruntimeconfig"),
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMClusterRuntimeConfig: %w", err)
+	}
+
+	// Setup AIMClusterModelSource controller
+	if err = (&v1alpha1controller.AIMClusterModelSourceReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMClusterModelSource: %w", err)
+	}
+
+	if err := (&v1alpha1controller.AIMArtifactReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMArtifact: %w", err)
+	}
+
+	if err := (&sharedcontroller.AIMServiceReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMService: %w", err)
+	}
+	if err := (&v1alpha2controller.AIMProfileReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Clientset:      clientset,
+		ProjectionMode: runtimeProjectionMode,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMProfile: %w", err)
+	}
+	if err := (&v1alpha2controller.AIMClusterProfileReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Clientset:      clientset,
+		ProjectionMode: runtimeProjectionMode,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMClusterProfile: %w", err)
+	}
+	if err := (&v1alpha2controller.AIMProfileCacheReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMProfileCache: %w", err)
+	}
+	if err := (&v1alpha2controller.AIMModelReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMModel: %w", err)
+	}
+	if err := (&v1alpha2controller.AIMClusterModelReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMClusterModel: %w", err)
+	}
+	if err := (&v1alpha2controller.AIMProfileSetReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMProfileSet: %w", err)
+	}
+	if err := (&v1alpha2controller.AIMClusterProfileSetReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("AIMClusterProfileSet: %w", err)
+	}
+	if err := (&v1alpha2controller.RuntimeProjectionReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("RuntimeProjection: %w", err)
+	}
+	// +kubebuilder:scaffold:builder
+
+	return nil
+}
+
+func cacheOptions() cache.Options {
+	managedByAIM := labels.SelectorFromSet(labels.Set{
+		constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+	})
 	return cache.Options{
 		ByObject: map[client.Object]cache.ByObject{
-			&corev1.ConfigMap{}: {
-				Label: labels.SelectorFromSet(labels.Set{
-					constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
-				}),
-			},
+			&corev1.ConfigMap{}:  {Label: managedByAIM},
+			&appsv1.Deployment{}: {Label: managedByAIM},
 		},
 	}
 }

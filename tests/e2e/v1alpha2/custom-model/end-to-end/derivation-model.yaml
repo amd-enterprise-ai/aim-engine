@@ -23,8 +23,7 @@
 #
 # Source weights are pulled from Hugging Face. The original draft used an
 # s3:// URI against a fake bucket, but this test's purpose is the
-# base → deployable derivation flow, not the s3 protocol — there's a
-# dedicated s3 fixture under tests/e2e/aimservice/gpu/custom-model-s3.
+# base → deployable derivation flow, not the s3 protocol.
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMModel
 metadata:

@@ -47,7 +47,7 @@ NVIDIA_DEVICE_PLUGIN_VERSION ?= 0.19.3
 
 # --- ttl.sh ephemeral-registry fallback for external GPU clusters ------------
 # AIMModel discovery reads a model image's OCI labels *inside the operator* via
-# go-containerregistry remote.Get (see internal/v1alpha1/aimmodel/inspector.go).
+# go-containerregistry remote.Get (see internal/imagemetadata/inspector.go).
 # `kind load` only satisfies kubelet pod pulls, NOT that in-operator registry
 # read, so discovery against a not-yet-public ref (e.g. the new
 # docker.io/amdenterpriseai mirror before it's published) fails with
@@ -59,7 +59,7 @@ NVIDIA_DEVICE_PLUGIN_VERSION ?= 0.19.3
 # expanded (=) so the find/hash only runs when a ttl target is invoked.
 #
 # The TAG is preserved per fixture: the operator derives
-# AIMProfile/AIMServiceTemplate .status.version from the image tag (see image
+# AIMProfile .status.version from the image tag (see image
 # discovery), and some fixtures assert version == their tag (e.g. 0.2.0).
 # Fixtures may reference multiple tags (e.g. 0.2.0 and 0.2.1) because aim-dummy
 # is backwards- but not always forward-compatible: tests written against an
@@ -160,17 +160,29 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet test-artifact-downloader ## Run tests.
-	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+test: manifests generate fmt vet test-artifact-downloader test-upgrade-preflight ## Run tests.
+	KUBEBUILDER_ASSETS="$$($(MAKE) -s envtest)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
-.PHONY: test-bridge-contract
-test-bridge-contract: ## Verify the minimal v1alpha1 bridge contract.
-	go test ./internal/bridgecontract -run '^TestBridgeContract$$' -count=1
+# Kubernetes version of the envtest control plane (kube-apiserver, etcd) that
+# the operator-start test in cmd/ runs against.
+ENVTEST_K8S_VERSION ?= 1.34.1
+
+.PHONY: envtest
+envtest: ## Download the envtest control plane if needed and print its path (the KUBEBUILDER_ASSETS value).
+	@setup-envtest use $(ENVTEST_K8S_VERSION) -p path
+
+.PHONY: test-rbac-contract
+test-rbac-contract: ## Verify the generated operator ClusterRole stays least-privilege.
+	go test ./internal/rbaccontract -run '^TestRBACContract$$' -count=1
 
 .PHONY: test-artifact-downloader
 test-artifact-downloader: ## Run dependency-free artifact-downloader script tests.
 	PYTHONPATH=images/artifact-downloader python3 -m unittest discover \
 		-s images/artifact-downloader/tests -p 'test_combine_ca.py'
+
+.PHONY: test-upgrade-preflight
+test-upgrade-preflight: ## Run the upgrade preflight script tests against a fake kubectl.
+	python3 -B hack/test_upgrade_preflight.py
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.

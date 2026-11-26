@@ -4107,7 +4107,7 @@ spec:
           rule: '!has(self.spec.modelId)'
         - message: spec.accelerator is only supported on v1alpha2
           rule: '!has(self.spec.accelerator)'
-    served: true
+    served: false
     storage: false
     subresources:
       status: {}

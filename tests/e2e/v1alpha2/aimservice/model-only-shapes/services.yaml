@@ -1,0 +1,29 @@
+# caching.env switches the AIMProfileCache's download Job into simulation mode
+# so the cache reaches Ready without a real download.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: by-model-name
+spec:
+  model:
+    name: model-only-shapes
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: by-model-image
+spec:
+  model:
+    image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"

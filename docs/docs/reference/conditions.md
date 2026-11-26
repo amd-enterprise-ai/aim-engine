@@ -61,13 +61,22 @@ Overall readiness — the aggregate of all other conditions and component health
 | `False` | `ComponentsNotReady` | One or more components are not ready |
 | `False` | `Progressing` | Waiting for components to become ready |
 
-## Migration condition
+When a component fails, `Ready` takes that component's reason. `AIMService` also reports `Ready=False` with reason `RolloutInProgress` while a new predictor revision is not ready and the previous revision still serves, or `RolloutStalled` once that revision can't progress. See [InferenceServiceReady](#inferenceserviceready).
 
-### MigrationRequired
+## Template-era fields condition
 
-`MigrationRequired=True` with reason `TemplateAPIDeprecated` identifies a live resource that still uses the deprecated template API or produces template outputs. It appears on template-pipeline `AIMService` objects, legacy-shaped `AIMModel` / `AIMClusterModel` objects (including deprecated `profileCopy` and flat `derivedFrom` shapes, plus image models that still emit templates), `AIMServiceTemplate`, `AIMClusterServiceTemplate`, and `AIMTemplateCache`. Follow the [bounded template migration runbook](../admin/template-migration.md) before removing the v1alpha1 template APIs.
+### TemplateFieldsIgnored
 
-This condition is informational and does not participate in the `Ready` rollup. It is removed when an overlapping service uses the profile pipeline or a model uses only native profile inputs and no longer emits templates. `AIMArtifact`, `AIMRuntimeConfig`, `AIMClusterRuntimeConfig`, and `AIMClusterModelSource` do not report it because native profile pipelines still use those APIs or their outputs.
+`TemplateFieldsIgnored=True` with reason `TemplateFieldsSet` lists spec fields that only configured templates and have no effect on profile-based serving. A `Warning` event is emitted when the condition appears; the operator logs it at info level, not as an error. It does not participate in the `Ready` rollup and is removed once the fields are removed.
+
+`spec.model` can't be edited in place, so for `spec.model.custom` the message names the merge patch that removes it and selects an `AIMProfile` in one step, `{"spec":{"model":null,"profile":{"name":"<AIMProfile>"}}}`. See [Replace unservable services](../admin/upgrading.md#replace-unservable-services).
+
+| Resource | Reported fields |
+|---|---|
+| `AIMService` | `spec.template`, `spec.overrides`, `spec.model.custom` |
+| `AIMModel` / `AIMClusterModel` | `spec.discovery.createServiceTemplates` (when `false`), `spec.defaultServiceTemplate`, `spec.custom`, `spec.customTemplates`, `spec.env`, `spec.resources` |
+
+See [Template-era fields](../concepts/models.md#template-era-fields) for the model equivalents.
 
 ## AIMService conditions (v1alpha2)
 
@@ -78,23 +87,15 @@ This condition is informational and does not participate in the `Ready` rollup. 
 | Status | Reason | Description |
 |---|---|---|
 | `True` | `ProfileResolved` | Profile found and is deployable |
-| `False` | `ProfileNotFound` | No matching `AIMProfile` / `AIMClusterProfile`. For the image shape (`spec.model.image` + reconciler-pipeline annotation), this also covers the transient "auto-creating AIMModel; waiting for discovery" window — the message text disambiguates. |
+| `False` | `ProfileNotFound` | No matching `AIMProfile` / `AIMClusterProfile`. For the image shape (`spec.model.image`), this also covers the transient "auto-creating AIMModel; waiting for discovery" window — the message text disambiguates. |
+| `False` | `ModelHasNoProfiles` | The `AIMModel` or `AIMClusterModel` the service resolves through reports [`ProfilesAvailable=False`](#profilesavailable); the message names the model and the cause |
 | `False` | `ProfileNotReady` | Profile exists but its own `Ready` condition is false |
 | `False` | `BaseProfile` | `spec.profile.name` resolved to a base profile (not deployable) |
 | `False` | `ProfileSelectorAmbiguous` | Selector returned multiple equally-scored candidates |
 
 When `ProfileReady=False`, the controller suppresses downstream component conditions (`InferenceServiceReady`, `HTTPRouteReady`) — the resources aren't being created until profile resolution succeeds.
 
-### ModelReady
-
-Set when `spec.model` is used (by-model, model+selector, or model.image with the v1alpha2 profile-pipeline annotation).
-
-| Status | Reason | Description |
-|---|---|---|
-| `True` | `ModelResolved` | Model found and ready |
-| `False` | `ModelNotFound` | Referenced model does not exist |
-| `False` | `ModelNotReady` | Model exists but is not ready |
-| `False` | `CreatingModel` | Auto-creating a model from `spec.model.image` (v1alpha1 template pipeline). v1alpha2's image-shape auto-create does not currently set this reason — the transient state is surfaced through `ProfileReady=False / ProfileNotFound` with a message that explains the auto-create. |
+`ProfileNotFound` and `ModelHasNoProfiles` only clear after a spec change or a new `AIMProfile`, so they emit a `Warning` event when they appear and are logged at info level, not as errors.
 
 ### RuntimeConfigReady
 
@@ -105,15 +106,14 @@ Set when `spec.model` is used (by-model, model+selector, or model.image with the
 
 ### ProfileCacheReady
 
-Replaces v1alpha1's `CacheReady`. Tracks the `AIMProfileCache` lifecycle.
+Tracks the `AIMProfileCache` lifecycle.
 
 | Status | Reason | Description |
 |---|---|---|
-| `True` | `CacheReady` | All cache artifacts are downloaded and verified |
-| `False` | `CacheCreating` | Creating the profile cache |
-| `False` | `CacheNotReady` | Cache exists but download is incomplete |
-| `False` | `CacheFailed` | Cache download failed |
-| `False` | `CacheLost` | Previously-ready cache is no longer available |
+| `True` | `ProfileCacheReady` | The profile cache is Ready |
+| `False` | `ProfileCacheNotFound` | The profile cache is not created yet |
+| `False` | `ProfileCacheNotReady` | The profile cache exists but is not Ready; the message includes the cache's own Ready message, such as a failed download |
+| `False` | `FetchError` | The operator could not read the profile cache |
 
 ### ProfileRuntimeReady
 
@@ -133,9 +133,11 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 | Status | Reason | Description |
 |---|---|---|
 | `True` | `RuntimeReady` | KServe `InferenceService` is serving |
+| `True` | `RuntimeScaling` | Predictor pods on the current revision are ready while KServe reports the InferenceService not ready, for example during a scale-up |
 | `False` | `CreatingRuntime` | Creating or updating the InferenceService |
-| `False` | `RuntimeScaling` | Replica scaling in progress |
-| `False` | `PodCreationFailed` | The predictor Deployment cannot create a pod because the API server or an admission policy refuses it, for example because of a LimitRange or a ResourceQuota. The message contains the refusal text. The service status is `Failed` until a pod can be created. While an older predictor pod is ready, the reason stays `RuntimeScaling` and its message contains the refusal text. While a new predictor pod starts, the reason is `CreatingRuntime` and its message contains the refusal text |
+| `False` | `PodCreationFailed` | The predictor Deployment cannot create a pod because the API server or an admission policy refuses it, for example because of a LimitRange or a ResourceQuota. The message contains the refusal text. The service status is `Failed` until a pod can be created. While an older predictor pod is ready, the reason stays `RuntimeScaling`, or `RolloutInProgress` during a rollout, and its message contains the refusal text. While a new predictor pod starts, the reason is `CreatingRuntime` and its message contains the refusal text |
+| `False` | `RolloutInProgress` | A new predictor revision is not ready yet while previous-revision pods keep serving. `status.status` stays `Running` and `Ready` is `False` with this reason. The message names a Pending pod and, when the scheduler reports one, its reason, such as `Unschedulable`, and the refusal text when the predictor Deployment cannot create a pod |
+| `False` | `RolloutStalled` | The new predictor revision can't progress while previous-revision pods keep serving: one of its pods is in `CrashLoopBackOff`, or the predictor Deployment reports `ProgressDeadlineExceeded`. `status.status` stays `Running` and the service emits a Warning event. The message names the Deployment and the blocking pod with its reason, and the refusal text when the predictor Deployment cannot create a pod. It returns to `RolloutInProgress` or `True` on its own once the rollout resumes or finishes |
 
 ### InferenceServicePodsReady
 
@@ -216,10 +218,49 @@ Set for image-backed models (`spec.image` set), including models with inline `sp
 | `False` | `LogParseFailed` | Discovery completed but logs could not be parsed |
 | `False` | `CacheParseFailed` | Discovery cache `ConfigMap` could not be parsed |
 | `False` | `DiscoveryFailed` | Discovery Job failed (image pull failure, registry auth, etc.) |
+| `False` | `DiscoveryImagePullFailed` | The discovery pod can't pull the image; the Job is deleted and the attempt backs off. An auth or not-found error deletes it right away; for other pull errors the kubelet retries for 10 minutes first |
 | `False` | `DiscoveryCountFailed` | Could not count current attempts |
 | `False` | `DiscoveryCapReached` | Concurrent discovery cap reached; waiting for slot |
+| `False` | `AwaitingDiscovery` | Waiting out the backoff after a failed discovery attempt |
+| `False` | `AwaitingImageMetadata` | A missing image or pull secret, or an invalid reference, holds off discovery; rechecked every minute |
 
-`status.discovery.lastFailureReason` records the most recent failure reason. The message includes the retry backoff window.
+`status.discovery.lastFailureReason` records the most recent failure reason. During backoff the message names the retry time and that failure. A discovery Job that hasn't finished after an hour fails, so a pod that never starts frees its slot.
+
+### ImageMetadataReady
+
+Set for image-backed models. Tracks the operator's registry read of the labels on `spec.image`. The labels are optional, because discovery runs the image in a Job, so only a missing image or pull secret, or an invalid reference, blocks the model. For any other failure the message starts with "Image labels were not read", and the discovery Job is still created: nodes may reach a registry that the operator cannot. Set `spec.imageMetadata` to supply the labels without a registry read.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `ImageMetadataFound` | The image labels describe the model |
+| `True` | `ImageFound` | The image was read but has no AIM model labels |
+| `False` | `ImageNotFound` | The registry has no such repository or tag (HTTP 404). The message names the image. Sets `ConfigValid=False` and blocks the discovery Job |
+| `False` | `InvalidImageReference` | `spec.image` is not a valid image reference. Sets `ConfigValid=False` |
+| `False` | `SecretNotFound` | A referenced `spec.imagePullSecrets` entry does not exist. Sets `ConfigValid=False` |
+| `False` | `ImagePullAuthFailure` | The registry refused access (HTTP 401 or 403). Sets `AuthValid=False`; discovery still runs. Some registries, such as Docker Hub, also answer 401 for a repository that does not exist |
+| `False` | `DNSFailure`, `ConnectionRefused`, `NetworkTimeout`, `ConnectionReset`, `NetworkError` | The operator cannot reach the registry. Discovery still runs |
+| `False` | `ImageInspectionFailed` | Any other registry failure, such as a 5xx response. Discovery still runs |
+
+The operator reads the image again one minute after an HTTP 401, 403 or 404; until then, only models in the same namespace with the same pull secrets get that answer. After any other registry failure it waits 15 minutes, and every model on the image gets the same failure meanwhile.
+
+For a model with `spec.modelSources`, which runs no discovery, auth and network failures block the model and set `AuthValid=False` or `DependenciesReachable=False`.
+
+### RuntimeImageLineage
+
+Set for image-backed models whose image metadata has no `AIM_BASE_IMAGE_REF`. Only weight-replacing profile copies need that reference, so the condition does not participate in the `Ready` rollup. It is removed once the model has a base image reference.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `BaseImageRefMissing` | The image does not declare `AIM_BASE_IMAGE_REF`, or is not inspected because `spec.discovery.extractMetadata` is `false`; set `spec.imageMetadata` with `baseImageRef` to allow weight-replacing copies |
+| `False` | `BaseImageRefInspectionFailed` | Re-inspecting metadata cached by an earlier release failed; the message includes the registry error, and the cached metadata stays in use |
+
+### ProfilesAvailable
+
+Set to `False` when the model's spec produces no `AIMProfiles`. The model stays `Ready`, because the condition does not participate in the `Ready` rollup; an `AIMService` that resolves through the model fails with `ModelHasNoProfiles` instead. A `Warning` event is emitted when the condition appears. The condition is removed once the spec produces `AIMProfiles` or managed `AIMProfiles` exist.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `NoDeployableProfiles` | The message names the cause and the fix: `spec.discovery.extractMetadata` is `false` (set it to `true`); `spec.modelSources` is set on an image model; or none of `spec.image`, `spec.modelId` and `spec.profiles` is set. For the last two, see [Replace models without a native path](../admin/upgrading.md#replace-models-without-a-native-path). |
 
 ### DerivationReady
 
@@ -341,26 +382,9 @@ Appears when an artifact the cache serves no longer matches its model source, ty
 | `False` | `RetryBackoff` | Waiting before retrying a failed download |
 | `False` | `Failed` | Terminal failure |
 
-## v1alpha1 conditions
-
-Legacy v1alpha1 controllers (template-based AIMService, AIMServiceTemplate, AIMTemplateCache) still emit their own condition catalog during the deprecation window. See [Legacy Conditions](../legacy/conditions-v1alpha1.md) for the full reference.
-
-### v1alpha1 AIMService (template path)
-
-When an AIMService uses `spec.template` (v1alpha1) the controller emits `TemplateReady` and `CacheReady` instead of `ProfileReady` and `ProfileCacheReady`:
-
-| Condition | Reasons |
-|---|---|
-| `TemplateReady` | `Resolved`, `TemplateNotFound`, `TemplateNotReady`, `TemplateSelectionAmbiguous` |
-| `CacheReady` | `CacheReady`, `CacheCreating`, `CacheNotReady`, `CacheFailed`, `CacheLost` |
-
-### v1alpha1 AIMModel (template-emitting path)
-
-When an AIMModel still emits `AIMServiceTemplate` resources, its `Ready` rollup uses the v1alpha1 reason catalog (`AllTemplatesReady`, `SomeTemplatesReady`, etc.). See the legacy reference for the full list.
-
 ## Condition polarity
 
-Readiness and health conditions follow positive polarity — `status: True` means healthy. `MigrationRequired` is the explicit non-health exception: `True` means administrator action is still required, and it never gates readiness. When building dashboards or alerting:
+Readiness and health conditions follow positive polarity — `status: True` means healthy. `TemplateFieldsIgnored` is the explicit non-health exception: `True` means template-only fields are set, and it never gates readiness. When building dashboards or alerting:
 
 - **Green** — condition `status: True`
 - **Yellow** — condition `status: False` with reason containing `Progressing`, `Creating`, `Awaiting`, `Started`

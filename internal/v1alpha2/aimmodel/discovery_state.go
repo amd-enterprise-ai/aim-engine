@@ -39,6 +39,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	discoverylock "github.com/amd-enterprise-ai/aim-engine/internal/discovery/lock"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 )
 
@@ -47,6 +48,8 @@ import (
 type DiscoveryFetch struct {
 	Cache controllerutils.FetchResult[*corev1.ConfigMap]
 	Job   controllerutils.FetchResult[*batchv1.Job]
+	// PullError is the image pull error of a running Job's pod, if any.
+	PullError controllerutils.FetchResult[*utils.ImagePullError]
 }
 
 // DiscoveryDecision is the composed output of the discovery state machine. Exactly
@@ -103,6 +106,10 @@ type DiscoveryInputs struct {
 	OwnerRef         metav1.OwnerReference
 	CurrentState     *aimv1alpha1.ModelDiscoveryState
 	Clientset        kubernetes.Interface
+
+	// BlockedByImageMetadata holds off new discovery Jobs while a missing image
+	// or pull secret, or an invalid reference, blocks the model.
+	BlockedByImageMetadata bool
 }
 
 // FetchDiscoveryState pulls the latest cache + Job for the model. It never returns
@@ -115,7 +122,12 @@ func FetchDiscoveryState(ctx context.Context, c client.Client, in DiscoveryInput
 	}
 	cache := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: cacheName, Namespace: in.Namespace}, &corev1.ConfigMap{})
 	job := FetchDiscoveryJob(ctx, c, in.Kind, in.Namespace, in.ModelName)
-	return DiscoveryFetch{Cache: cache, Job: job}
+	fetch := DiscoveryFetch{Cache: cache, Job: job}
+	if job.Value != nil && !IsDiscoveryJobComplete(job.Value) {
+		pullErr, err := utils.CheckJobPodImagePullStatus(ctx, c, job.Value, job.Value.Namespace)
+		fetch.PullError = controllerutils.FetchResult[*utils.ImagePullError]{Value: pullErr, Error: err}
+	}
+	return fetch
 }
 
 // DecideDiscovery evaluates the current cache / Job / state tuple and returns
@@ -166,6 +178,29 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 			}
 		}
 		if !IsDiscoveryJobComplete(job) {
+			// A pod that can't pull its image never fails on its own. Deleting
+			// the Job frees its slot under the global cap without waiting for
+			// the Job deadline. Auth and not-found errors don't clear by
+			// themselves; other pull errors get discoveryPullRetryGrace.
+			pullErr := fetch.PullError.Value
+			pullFailed := pullErr != nil && (pullErr.Type == utils.ImagePullErrorAuth ||
+				pullErr.Type == utils.ImagePullErrorNotFound ||
+				(job.Status.StartTime != nil && time.Since(job.Status.StartTime.Time) >= discoveryPullRetryGrace))
+			if pullFailed {
+				failure := fmt.Sprintf("cannot pull image %s (%s)", in.Image, pullErr.Reason)
+				if pullErr.Message != "" {
+					failure += ": " + pullErr.Message
+				}
+				recordDiscoveryFailure(nextState, job, failure)
+				return DiscoveryDecision{
+					State:                nextState,
+					CompletedJobToDelete: job,
+					Progressing:          true,
+					RequeueAfter:         5 * time.Second,
+					Reason:               "DiscoveryImagePullFailed",
+					Message:              fmt.Sprintf("Deleting discovery Job %s: %s", job.Name, failure),
+				}
+			}
 			// Job is still running; just wait.
 			return DiscoveryDecision{
 				State:        nextState,
@@ -180,9 +215,7 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 			// Pod logs should be available. Parse them and produce a cache.
 			cm, parseErr := buildCacheFromJob(ctx, c, in, job, specHash)
 			if parseErr != nil {
-				nextState.Attempts++
-				nextState.LastAttemptTime = nowPtr()
-				nextState.LastFailureReason = "LogParseFailed"
+				recordDiscoveryFailure(nextState, job, "LogParseFailed")
 				logger.Error(parseErr, "failed to parse discovery logs", "job", job.Name)
 				return DiscoveryDecision{
 					State:                nextState,
@@ -220,9 +253,7 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 
 		// Job failed: record the reason, bump attempts, let backoff gate the retry.
 		reason := GetDiscoveryJobFailureReason(job)
-		nextState.Attempts++
-		nextState.LastAttemptTime = nowPtr()
-		nextState.LastFailureReason = reason
+		recordDiscoveryFailure(nextState, job, reason)
 		return DiscoveryDecision{
 			State:                nextState,
 			CompletedJobToDelete: job,
@@ -233,13 +264,26 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 		}
 	}
 
+	// The model's blocked apply would drop a new Job, so no attempt is counted.
+	// The requeue re-reads the image: neither the registry nor pull secrets are
+	// watched, and the inspector caches a 404 for no longer than this requeue.
+	if in.BlockedByImageMetadata {
+		return DiscoveryDecision{
+			State:        nextState,
+			Progressing:  true,
+			RequeueAfter: time.Duration(constants.DiscoveryBaseBackoffSeconds) * time.Second,
+			Reason:       "AwaitingImageMetadata",
+			Message:      "Waiting for ImageMetadataReady before starting a discovery Job",
+		}
+	}
+
 	// No valid cache and no Job: decide whether to create one now (respecting backoff + cap).
-	shouldCreate, backoffReason, backoffMsg := ShouldCreateDiscoveryJob(in.CurrentState, specHash, time.Now())
+	shouldCreate, retryIn, backoffReason, backoffMsg := ShouldCreateDiscoveryJob(in.CurrentState, specHash, time.Now())
 	if !shouldCreate {
 		return DiscoveryDecision{
 			State:        nextState,
 			Progressing:  true,
-			RequeueAfter: 5 * time.Second,
+			RequeueAfter: retryIn,
 			Reason:       backoffReason,
 			Message:      backoffMsg,
 		}
@@ -332,6 +376,19 @@ func buildCacheFromJob(ctx context.Context, c client.Client, in DiscoveryInputs,
 		return nil, err
 	}
 	return cm, nil
+}
+
+// recordDiscoveryFailure counts the failure of job toward the backoff once.
+// The status write re-enqueues the model, and a reconcile that still sees the
+// deleted Job must not count it again: counting moves LastAttemptTime past the
+// Job's creation. Both times are stored in whole seconds, so a Job created in
+// the same second as the attempt that started it still counts.
+func recordDiscoveryFailure(state *aimv1alpha1.ModelDiscoveryState, job *batchv1.Job, reason string) {
+	if state.LastAttemptTime == nil || !state.LastAttemptTime.After(job.CreationTimestamp.Time) {
+		state.Attempts++
+		state.LastAttemptTime = nowPtr()
+	}
+	state.LastFailureReason = reason
 }
 
 func cloneOrNewDiscoveryState(in *aimv1alpha1.ModelDiscoveryState) *aimv1alpha1.ModelDiscoveryState {

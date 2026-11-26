@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  labelPropagation:
+    enabled: true
+    match:
+      - "team-*"
+      - "cost-center"
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: envoy-gateway-system
+    pathTemplate: "/integration/v1alpha2-label-propagation/{.metadata.namespace}/{.metadata.name}"

@@ -1,0 +1,23 @@
+# One runtime config per scope, both with label propagation disabled. Their
+# names differ, so each service reads exactly one of them and no namespace /
+# cluster merge is involved. The cluster config name is unique to this test so
+# it cannot affect services created by other tests.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: runtime-config-edit
+spec:
+  labelPropagation:
+    enabled: false
+    match:
+      - "team-*"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: test-runtime-config-edit
+spec:
+  labelPropagation:
+    enabled: false
+    match:
+      - "team-*"
