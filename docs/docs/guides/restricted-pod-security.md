@@ -72,6 +72,16 @@ The values 44 (`video`) and 110 (`render`) in the example are from one Ubuntu no
 
 If the runtime config sets `additionalCABundleRef`, the inference pods also get a CA init container. It runs as UID 1000 without privilege escalation and drops all capabilities, and the Pod `seccompProfile` applies to it.
 
+## LLMInferenceService-Served Services
+
+A service with `servingAPI: LLMInferenceService` uses the same settings. AIM Engine sets the security contexts and the runtime config `spec.env` on its `LLMInferenceService`, and they reach the `main` container.
+
+KServe's base template already sets `allowPrivilegeEscalation: false`, drops all capabilities and sets the `RuntimeDefault` seccomp profile on `main`. The profile's projected `LLMInferenceServiceConfig` sets `runAsNonRoot: false` on `main`, because AIM images run as root by default. When `podSecurityContext` sets `runAsNonRoot` and `securityContext` doesn't, AIM Engine repeats the Pod value on `main`, so the runtime config above works unchanged.
+
+KServe merges the security contexts field by field over its base template and the projected config. A value therefore replaces only the fields it sets: `securityContext: {}` keeps the values of the base template.
+
+If Pod Security admission refuses the workload Pod, the service is `Failed`, and its `LLMInferenceServiceReady` condition has the reason `PodCreationFailed` and the refusal text.
+
 ## Limitations
 
 Autoscaled services cannot run in a namespace that enforces `restricted`. For [autoscaling](scaling-and-autoscaling.md#autoscaling-with-keda), the inference Pod gets an OpenTelemetry collector sidecar container, `otc-container`. `spec.securityContext` applies only to the inference container, and you cannot set a security context for the sidecar. The sidecar does not set `allowPrivilegeEscalation: false` and does not drop all capabilities, so Pod Security admission refuses the Pod. Run autoscaled services in a namespace that enforces `baseline`.

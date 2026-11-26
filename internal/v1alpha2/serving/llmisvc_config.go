@@ -133,7 +133,7 @@ func buildLLMInferenceServiceConfig(
 		return nil, err
 	}
 
-	configSpec, err := escapeKServeTemplateActions(kservev1alpha2.LLMInferenceServiceSpec{
+	configSpec, err := EscapeKServeTemplateActions(kservev1alpha2.LLMInferenceServiceSpec{
 		Model: kservev1alpha2.LLMModelSpec{
 			URI:  *modelURI,
 			Name: ptr.To(ResolvedServedModelID(spec)),
@@ -244,16 +244,17 @@ func llmHealthProbe(periodSeconds, timeoutSeconds, failureThreshold int32) *core
 	}
 }
 
-// escapeKServeTemplateActions protects literal "{{" in the config. KServe
-// renders every merged LLMInferenceServiceConfig as a Go text/template over its
-// JSON encoding (missingkey=error), so a Jinja chat template or any other
+// EscapeKServeTemplateActions protects literal "{{" in an
+// LLMInferenceServiceConfig or LLMInferenceService spec. KServe renders the
+// merged spec, its own fields included, as a Go text/template over its JSON
+// encoding (missingkey=error), so a Jinja chat template or any other
 // value containing "{{" would otherwise be evaluated or rejected. Each "{{"
 // becomes a raw-string action that renders back to "{{"; backquotes survive
 // the JSON encoding unescaped, unlike a double-quoted string action.
-func escapeKServeTemplateActions(spec kservev1alpha2.LLMInferenceServiceSpec) (kservev1alpha2.LLMInferenceServiceSpec, error) {
+func EscapeKServeTemplateActions(spec kservev1alpha2.LLMInferenceServiceSpec) (kservev1alpha2.LLMInferenceServiceSpec, error) {
 	raw, err := json.Marshal(spec)
 	if err != nil {
-		return spec, fmt.Errorf("marshal LLMInferenceServiceConfig spec: %w", err)
+		return spec, fmt.Errorf("marshal spec: %w", err)
 	}
 	if !bytes.Contains(raw, []byte("{{")) {
 		return spec, nil
@@ -261,7 +262,7 @@ func escapeKServeTemplateActions(spec kservev1alpha2.LLMInferenceServiceSpec) (k
 	escaped := bytes.ReplaceAll(raw, []byte("{{"), []byte("{{`{{`}}"))
 	var out kservev1alpha2.LLMInferenceServiceSpec
 	if err := json.Unmarshal(escaped, &out); err != nil {
-		return spec, fmt.Errorf("unmarshal escaped LLMInferenceServiceConfig spec: %w", err)
+		return spec, fmt.Errorf("unmarshal escaped spec: %w", err)
 	}
 	return out, nil
 }

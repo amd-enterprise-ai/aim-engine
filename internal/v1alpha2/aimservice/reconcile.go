@@ -104,6 +104,10 @@ type ServiceFetchResult struct {
 
 	llmInferenceService     controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]
 	llmInferenceServicePods *controllerutils.FetchResult[*corev1.PodList]
+	// llmWorkloadDeployment is the LLMInferenceService workload Deployment,
+	// fetched only while the LLMInferenceService is not ready, to report a
+	// refused Pod. KServe does not copy its ReplicaFailure condition.
+	llmWorkloadDeployment controllerutils.FetchResult[*appsv1.Deployment]
 	// profileLLMConfig is the namespaced LLMInferenceServiceConfig the
 	// LLMInferenceService references. Like profileRuntime, it must be current
 	// before the LLMInferenceService is created so KServe never renders a pod
@@ -350,7 +354,9 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 		health = append(health, obs.getInferenceServiceHealth())
 	}
 	if obs.llmInferenceService.Value != nil || obs.llmInferenceService.Error != nil {
-		health = append(health, llmInferenceServiceComponentHealth(obs.llmInferenceService))
+		health = append(health, llmInferenceServiceComponentHealth(
+			obs.llmInferenceService, obs.llmInferenceServicePods, obs.llmWorkloadDeployment,
+		))
 	}
 	if podsHealth, ok := llmWorkloadPodsComponentHealth(ctx, clientset, obs.service, obs.hpa, obs.llmInferenceServicePods); ok {
 		health = append(health, podsHealth)
@@ -700,6 +706,17 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			result.hpa = v1alpha1service.FetchHPAForDeployment(ctx, c, llmService.Namespace, llmDeploymentName(llmService.Name))
 			pods := fetchLLMWorkloadPods(ctx, c, llmService)
 			result.llmInferenceServicePods = &pods
+			if !llmInferenceServiceReady(result.llmInferenceService) {
+				// The Deployment carries no AIM labels, so the cache leaves it out.
+				reader := client.Reader(c)
+				if r.APIReader != nil {
+					reader = r.APIReader
+				}
+				result.llmWorkloadDeployment = controllerutils.FetchDirect(ctx, reader, client.ObjectKey{
+					Namespace: llmService.Namespace,
+					Name:      llmDeploymentName(llmService.Name),
+				}, &appsv1.Deployment{})
+			}
 		}
 	} else {
 		result.inferenceService = fetchInferenceService(ctx, c, service)
@@ -1588,20 +1605,18 @@ func planLegacyProfileConfigMapCleanup(plan *controllerutils.PlanResult, obs Ser
 
 // planStaleChildCleanup deletes the Dedicated AIMProfileCaches and overlay
 // AIMProfiles this service created for an AIMProfile other than the current
-// one. It waits until the predictor rollout has finished and neither the
-// InferenceService nor any predictor pod is labeled with that AIMProfile,
-// because those pods mount its cache PVC and its profile ConfigMap, and going
-// back to it before the new revision serves would download its weights again.
+// one. It waits until the workload serves the current AIMProfile and neither
+// the workload nor any of its pods is labeled with that AIMProfile, because
+// those pods mount its cache PVC and its profile ConfigMap, and going back to
+// it before the new revision serves would download its weights again.
 func planStaleChildCleanup(plan *controllerutils.PlanResult, obs ServiceObservation, logger logr.Logger) {
-	isvc, pods := obs.inferenceService.Value, obs.inferenceServicePods
 	caches, overlays := obs.serviceProfileCaches, obs.serviceOverlayProfiles
-	if isvc == nil || pods == nil || pods.HasError() || caches.HasError() || overlays.HasError() ||
-		caches.Value == nil || overlays.Value == nil || !predictorRolloutFinished(obs) {
+	if caches.HasError() || overlays.HasError() || caches.Value == nil || overlays.Value == nil {
 		return
 	}
-	inUse := map[string]bool{isvc.Labels[constants.LabelProfile]: true}
-	for _, pod := range pods.Value.Items {
-		inUse[pod.Labels[constants.LabelProfile]] = true
+	inUse, settled := workloadProfilesInUse(obs)
+	if !settled {
+		return
 	}
 	stale := func(child client.Object, profileName string) bool {
 		label, _ := utils.SanitizeLabelValue(profileName)
@@ -1619,6 +1634,60 @@ func planStaleChildCleanup(plan *controllerutils.PlanResult, obs ServiceObservat
 			plan.Delete(overlay)
 		}
 	}
+}
+
+// workloadProfilesInUse returns the AIMProfile labels of the serving workload
+// and its pods. It reports false until the workload serves the current
+// AIMProfile.
+func workloadProfilesInUse(obs ServiceObservation) (map[string]bool, bool) {
+	if obs.servesLLM {
+		return llmWorkloadProfilesInUse(obs)
+	}
+	isvc, pods := obs.inferenceService.Value, obs.inferenceServicePods
+	if isvc == nil || pods == nil || pods.HasError() || !predictorRolloutFinished(obs) {
+		return nil, false
+	}
+	inUse := map[string]bool{isvc.Labels[constants.LabelProfile]: true}
+	for _, pod := range pods.Value.Items {
+		inUse[pod.Labels[constants.LabelProfile]] = true
+	}
+	return inUse, true
+}
+
+// llmWorkloadProfilesInUse is workloadProfilesInUse for an LLMInferenceService.
+// The workload Deployment is not in the operator's cache, so the rollout is
+// read from the pods: the LLMInferenceService is Ready for its generation and
+// a ready pod serves the current AIMProfile. A pod without the AIMProfile
+// label could use any AIMProfile, so it holds back the cleanup.
+func llmWorkloadProfilesInUse(obs ServiceObservation) (map[string]bool, bool) {
+	llmService, pods := obs.llmInferenceService.Value, obs.llmInferenceServicePods
+	if llmService == nil || pods == nil || pods.HasError() || !llmInferenceServiceReady(obs.llmInferenceService) {
+		return nil, false
+	}
+	current := llmService.Labels[constants.LabelProfile]
+	inUse := map[string]bool{current: true}
+	servesCurrent := false
+	for i := range pods.Value.Items {
+		pod := &pods.Value.Items[i]
+		profile, labeled := pod.Labels[constants.LabelProfile]
+		if !labeled {
+			return nil, false
+		}
+		inUse[profile] = true
+		if profile == current && pod.DeletionTimestamp == nil && podReady(pod) {
+			servesCurrent = true
+		}
+	}
+	return inUse, servesCurrent
+}
+
+func podReady(pod *corev1.Pod) bool {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // predictorRolloutFinished reports whether the observed InferenceService spec

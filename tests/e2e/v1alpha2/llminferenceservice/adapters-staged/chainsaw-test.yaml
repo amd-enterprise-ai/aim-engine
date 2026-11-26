@@ -123,7 +123,7 @@ spec:
         - assert:
             timeout: 120s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: llmisvc-adapters
@@ -222,7 +222,7 @@ spec:
         - assert:
             timeout: 60s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: llmisvc-adapters

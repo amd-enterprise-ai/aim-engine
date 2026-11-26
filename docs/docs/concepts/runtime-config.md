@@ -458,6 +458,8 @@ A Job keeps the tolerations that it was created with. After you change the list,
 
 Changing a runtime config's list restarts the inference pods of every service that inherits it, even when no pod would move to another node: the tolerations are part of each predictor's pod template, and a Deployment replaces its pods whenever that template changes. Services with their own `spec.tolerations` are not affected. If the rollout starts new pods before it stops the old ones, GPU services need free GPUs to complete it.
 
+For a service with `servingAPI: LLMInferenceService`, AIM Engine sets the list on the `LLMInferenceService`. It replaces the tolerations of the configs in `spec.llmInferenceService.baseRefs`.
+
 ## Security contexts
 
 `spec.podSecurityContext` sets the Pod security context of AIMService inference pods. `spec.securityContext` sets the security context of their inference container, `kserve-container`. If no level sets a value, AIM Engine does not set a security context, and the pods run as the image and the cluster defaults specify.
@@ -471,6 +473,8 @@ AIMService.spec  >  namespace AIMRuntimeConfig  >  cluster AIMClusterRuntimeConf
 An empty object (`{}`) also replaces the inherited value. For example, `securityContext: {}` on an AIMService removes the runtime config's container security context for that service. The two fields are independent: a service can set `podSecurityContext` and inherit `securityContext`.
 
 These fields apply only to the inference pods. They do not apply to the Jobs that prepare a model or stage adapters.
+
+For a service with `servingAPI: LLMInferenceService`, the inference container is `main`, and KServe merges the two values field by field over its base template and the profile's projected config, instead of replacing them. The base template already sets a restricted container security context, apart from `runAsNonRoot: false`, which the projected config sets because AIM images run as root by default. When the Pod value sets `runAsNonRoot` and the container value doesn't, AIM Engine repeats the Pod value on `main`. See [Restricted Pod Security](../guides/restricted-pod-security.md#llminferenceservice-served-services).
 
 AIM Engine refuses the values in these fields that the Pod Security Standard `baseline` forbids. The API server refuses an AIMService, AIMRuntimeConfig or AIMClusterRuntimeConfig that has one of these values:
 
@@ -518,7 +522,7 @@ The env of an inference container has two levels.
 5. The `AIMRuntimeConfig` `spec.env`.
 6. The `AIMClusterRuntimeConfig` `spec.env`.
 
-The AIMService and runtime config env go on the service's InferenceService, and KServe merges them over the env of the profile's ServingRuntime by name. They don't change the profile, the profile cache or the ServingRuntime, so a new variable doesn't download the model again.
+The AIMService and runtime config env go on the service's InferenceService, and KServe merges them over the env of the profile's ServingRuntime by name. They don't change the profile, the profile cache or the ServingRuntime, so a new variable doesn't download the model again. For a service with `servingAPI: LLMInferenceService`, they go on the `LLMInferenceService` in the same order, and KServe merges them over its base template, the profile's projected config and the configs in `spec.llmInferenceService.baseRefs`. AIM Engine escapes `{{` in their values, because KServe renders the merged spec as a Go template.
 
 KServe merges two entries with the same name field by field. Because of this, a `spec.env` entry replaces a profile `containerEnv` entry only when both are literal values (`value`, not `valueFrom`) and the `spec.env` value isn't empty. AIM Engine leaves out, without a warning, a `spec.env` entry for a name that the profile sets when the entry uses `valueFrom`, when the profile entry uses `valueFrom`, or when the entry has an empty value. The profile value stays then. A `spec.env` entry for a name that the profile doesn't set is always used.
 

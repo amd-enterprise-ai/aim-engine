@@ -237,8 +237,9 @@ type AIMServiceLLMInferenceServiceConfig struct {
 	// BaseRefs lists additional KServe LLMInferenceServiceConfigs to merge into
 	// the LLMInferenceService after the resolved profile's projected config.
 	// Later entries override earlier ones, and they may override any profile
-	// field. Fields set on the AIMService (replicas, spec.resources, caching,
-	// pull secrets, service account, priority class, CA trust) still take
+	// field. Fields set on the AIMService or its runtime config (replicas,
+	// spec.resources, env, tolerations, security contexts, caching, pull
+	// secrets, service account, priority class, CA trust) still take
 	// precedence. Each name resolves in the service namespace first, then in the
 	// KServe namespace, as KServe resolves baseRefs. Names under the reserved
 	// aim- prefix are rejected. A config that sets spec.router, spec.replicas,
@@ -938,7 +939,7 @@ const (
 
 	// AIMServiceReasonServingAPIUnsupported indicates the requested
 	// spec.servingAPI cannot serve the service: its CRDs are not installed, or
-	// the service resolves through a pipeline that does not support it.
+	// the operator runs with LLMInferenceService support disabled.
 	// Drives ConfigValid=False.
 	AIMServiceReasonServingAPIUnsupported = "ServingAPIUnsupported"
 

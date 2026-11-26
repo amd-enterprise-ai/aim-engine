@@ -25,11 +25,13 @@ package aimservice
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
 	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	kserveconstants "github.com/kserve/kserve/pkg/constants"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,6 +44,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimadapter"
+	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
@@ -56,6 +59,8 @@ const (
 	servingAPIComponent              = "ServingAPI"
 
 	reasonLLMInferenceServiceNotReady = "LLMInferenceServiceNotReady"
+
+	llmWorkloadDeploymentPollInterval = 30 * time.Second
 )
 
 // resolveServingAPI returns the KServe API that serves the service. A recorded
@@ -155,8 +160,14 @@ func llmInferenceServiceReady(fetch controllerutils.FetchResult[*kservev1alpha2.
 	return ready != nil && ready.IsTrue()
 }
 
+// llmInferenceServiceComponentHealth is the LLMInferenceService health
+// verdict. A workload Deployment that cannot create a Pod makes the service
+// Failed with the refusal text, as for the InferenceService predictor, unless
+// a pod exists that can still become ready.
 func llmInferenceServiceComponentHealth(
 	fetch controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService],
+	pods *controllerutils.FetchResult[*corev1.PodList],
+	deployment controllerutils.FetchResult[*appsv1.Deployment],
 ) controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      llmInferenceServiceComponent,
@@ -179,6 +190,20 @@ func llmInferenceServiceComponentHealth(
 		health.State = constants.AIMStatusReady
 		health.Reason = aimv1alpha1.AIMServiceReasonRuntimeReady
 		health.Message = "LLMInferenceService is ready"
+		return health
+	}
+
+	if refusal, refused := v1alpha1svc.DeploymentPodCreationFailure(deployment.Value); refused {
+		if starting := v1alpha1svc.ActivePodCount(pods); starting > 0 {
+			health.State = constants.AIMStatusProgressing
+			health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
+			health.Message = fmt.Sprintf("LLMInferenceService has %d starting pod(s); "+
+				"the workload Deployment cannot create a pod: %s", starting, refusal)
+			return health
+		}
+		health.State = constants.AIMStatusFailed
+		health.Reason = aimv1alpha1.AIMServiceReasonPodCreationFailed
+		health.Message = "The workload Deployment cannot create a pod: " + refusal
 		return health
 	}
 
@@ -224,9 +249,11 @@ func llmWorkloadPodsComponentHealth(
 // LLMInferenceService that serves the resolved profile. It references the
 // profile's projected LLMInferenceServiceConfig (same name as its
 // ServingRuntime) through spec.baseRefs and overlays only service-owned
-// fields on the main container, mirroring buildInferenceServiceFromProfile:
-// replicas, a resource override, pull secrets, the service account, the
-// priority class, a service-owned (Dedicated) cache, and additional CA trust.
+// fields, mirroring buildInferenceServiceFromProfile: replicas, a resource
+// override, the runtime config and service env, tolerations, security
+// contexts, pull secrets, the service account, the priority class, a
+// service-owned (Dedicated) cache, and additional CA trust. The workload pods
+// carry the AIM labels of the LLMInferenceService.
 func buildLLMInferenceServiceFromProfile(
 	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
@@ -252,9 +279,16 @@ func buildLLMInferenceServiceFromProfile(
 			container.Resources = resolveResourcesFromProfile(service, profileSpec, profileStatus)
 		}
 	}
-	env, volumes, mounts := serviceOwnedCacheOverlay(service, obs)
-	container.Env = env
+	// The cache env is applied after the runtime config and service env, so it
+	// wins, as on the InferenceService.
+	cacheEnv, volumes, mounts := serviceOwnedCacheOverlay(service, obs)
+	container.Env = upsertEnvVars(
+		runtimeConfigEnv(service, obs.mergedRuntimeConfig.Value, profileSpec, obs.desiredProfileRuntime),
+		cacheEnv,
+	)
 	container.VolumeMounts = mounts
+	podSecurityContext, containerSecurityContext := servicepolicy.InferenceSecurityContexts(service, obs.mergedRuntimeConfig.Value)
+	container.SecurityContext = llmContainerSecurityContext(podSecurityContext, containerSecurityContext)
 
 	serviceAccountName := service.Spec.ServiceAccountName
 	if serviceAccountName == "" {
@@ -264,6 +298,8 @@ func buildLLMInferenceServiceFromProfile(
 		ImagePullSecrets:   utils.CopyPullSecrets(service.Spec.ImagePullSecrets),
 		ServiceAccountName: serviceAccountName,
 		PriorityClassName:  service.Spec.PriorityClassName,
+		Tolerations:        servicepolicy.InferenceTolerations(service, obs.mergedRuntimeConfig.Value),
+		SecurityContext:    podSecurityContext,
 		Volumes:            volumes,
 	}
 	if projection := runtimeTrustProjection(obs.mergedRuntimeConfig.Value, obs.additionalCABundle.Value); projection != nil {
@@ -288,6 +324,28 @@ func buildLLMInferenceServiceFromProfile(
 		replicas = ptr.To(*service.Spec.Replicas)
 	}
 
+	labels := buildInferenceServiceLabels(service, obs, profileSpec)
+	spec, err := serving.EscapeKServeTemplateActions(kservev1alpha2.LLMInferenceServiceSpec{
+		Model: kservev1alpha2.LLMModelSpec{
+			URI:  *modelURI,
+			Name: ptr.To(serving.ResolvedServedModelID(profileSpec)),
+		},
+		StorageInitializer: &kservev1alpha2.StorageInitializerSpec{Enabled: ptr.To(false)},
+		BaseRefs: append(
+			[]corev1.LocalObjectReference{{Name: serving.RuntimeName(obs.profileName)}},
+			userLLMBaseRefs(service)...,
+		),
+		WorkloadSpec: kservev1alpha2.WorkloadSpec{
+			Replicas:    replicas,
+			Labels:      llmWorkloadPodAIMLabels(labels),
+			Annotations: podAnnotations,
+			Template:    template,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &kservev1alpha2.LLMInferenceService{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: kservev1alpha2.SchemeGroupVersion.String(),
@@ -296,26 +354,46 @@ func buildLLMInferenceServiceFromProfile(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        obs.isvcName,
 			Namespace:   service.Namespace,
-			Labels:      buildInferenceServiceLabels(service, obs, profileSpec),
+			Labels:      labels,
 			Annotations: buildInferenceServiceAnnotations(service, obs, profileSpec),
 		},
-		Spec: kservev1alpha2.LLMInferenceServiceSpec{
-			Model: kservev1alpha2.LLMModelSpec{
-				URI:  *modelURI,
-				Name: ptr.To(serving.ResolvedServedModelID(profileSpec)),
-			},
-			StorageInitializer: &kservev1alpha2.StorageInitializerSpec{Enabled: ptr.To(false)},
-			BaseRefs: append(
-				[]corev1.LocalObjectReference{{Name: serving.RuntimeName(obs.profileName)}},
-				userLLMBaseRefs(service)...,
-			),
-			WorkloadSpec: kservev1alpha2.WorkloadSpec{
-				Replicas:    replicas,
-				Annotations: podAnnotations,
-				Template:    template,
-			},
-		},
+		Spec: spec,
 	}, nil
+}
+
+// llmContainerSecurityContext returns the security context AIM Engine sets on
+// the main container. KServe merges it field by field over its base template
+// and the profile's projected config, and the projected config sets
+// runAsNonRoot: false for AIM images, which run as root by default. A merge
+// can't unset that value, and a container value wins over the Pod value, so a
+// runAsNonRoot that only the Pod security context sets is repeated on the
+// container. Otherwise the Pod would run as root, and Pod Security restricted
+// would refuse it.
+func llmContainerSecurityContext(
+	pod *corev1.PodSecurityContext,
+	container *corev1.SecurityContext,
+) *corev1.SecurityContext {
+	if pod == nil || pod.RunAsNonRoot == nil || (container != nil && container.RunAsNonRoot != nil) {
+		return container
+	}
+	if container == nil {
+		container = &corev1.SecurityContext{}
+	}
+	container.RunAsNonRoot = ptr.To(*pod.RunAsNonRoot)
+	return container
+}
+
+// llmWorkloadPodAIMLabels returns the AIM labels for the workload pods. KServe
+// copies spec.labels over the pod labels it sets, which include its Deployment
+// selector, so only labels in the AIM domain are passed on.
+func llmWorkloadPodAIMLabels(labels map[string]string) map[string]string {
+	out := map[string]string{}
+	for key, value := range labels {
+		if strings.HasPrefix(key, constants.AimLabelDomain+"/") {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 // profileLLMConfigCurrent reports whether the namespaced LLMInferenceServiceConfig
@@ -347,6 +425,11 @@ func planLLMInferenceService(
 	llmServiceExists bool,
 	logger logr.Logger,
 ) {
+	if obs.llmWorkloadDeployment.OK() && obs.llmWorkloadDeployment.Value != nil {
+		// The workload Deployment is not cached, and KServe does not surface
+		// its ReplicaFailure condition, so a refused pod triggers no reconcile.
+		planResult.RequestRequeueAfter(llmWorkloadDeploymentPollInterval)
+	}
 	if !llmBaseRefsUsable(obs.llmBaseRefs) {
 		logger.V(1).Info("spec.llmInferenceService.baseRefs not usable; skipping LLMInferenceService")
 		return

@@ -185,7 +185,7 @@ kubectl patch aimservice <service> -n <namespace> --type merge \
 
 The first update rolls the service's InferenceService onto the new AIMProfile in place. The second keeps that binding, because the AIMProfile belongs to the new model. A service that already uses `spec.profile.name` changes model by pointing it at another AIMProfile. When both `spec.profile.name` and `spec.model` are set, `spec.profile.name` wins and `spec.model` is ignored.
 
-Once the predictor rollout finishes, the controller deletes the Dedicated AIMProfileCache and the overlay AIMProfile the service used for the old AIMProfile. Shared AIMProfileCaches stay; they belong to their AIMProfile.
+Once the predictor rollout finishes, the controller deletes the Dedicated AIMProfileCache and the overlay AIMProfile the service used for the old AIMProfile. Shared AIMProfileCaches stay; they belong to their AIMProfile. For a service with `servingAPI: LLMInferenceService`, the controller waits until the `LLMInferenceService` is Ready, a ready workload pod serves the new AIMProfile, and no workload pod still uses the old one.
 
 ## Profile overlays
 
@@ -321,7 +321,7 @@ spec:
       - name: team-tracing
 ```
 
-KServe merges, in order: its built-in templates, the profile's projected config, the listed configs in list order, and finally the fields AIM Engine sets on the `LLMInferenceService` (model, replicas, cache and adapter mounts, and resources when `spec.resources` is set). Later entries win, and maps such as resource lists merge per key while lists such as node selector terms are replaced. Each name resolves in the service's namespace first, then in KServe's system namespace, matching KServe's own lookup. Editing a referenced config rolls the workload.
+KServe merges, in order: its built-in templates, the profile's projected config, the listed configs in list order, and finally the fields AIM Engine sets on the `LLMInferenceService` (model, replicas, env, tolerations, security contexts, pull secrets, service account, priority class, cache, CA trust and adapter mounts, and resources when `spec.resources` is set). The env, tolerations and security contexts come from the AIMService and its runtime config, as for an InferenceService; see [Runtime Configuration](runtime-config.md#tolerations). Later entries win, and maps such as resource lists merge per key while lists such as node selector terms are replaced. Each name resolves in the service's namespace first, then in KServe's system namespace, matching KServe's own lookup. Editing a referenced config rolls the workload.
 
 Referenced configs must not set fields AIM Engine owns: `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, or `spec.model.lora`. Support for the endpoint picker (`spec.router.scheduler`), prefill/decode disaggregation (`spec.prefill`), and multi-node workers (`spec.worker`) is planned for a future release (see [Routing and autoscaling](../admin/kserve-configuration.md#routing-and-autoscaling)). A missing or conflicting config sets `LLMInferenceServiceBaseRefsReady=False` and `ConfigValid=False`, and AIM Engine does not create or update the `LLMInferenceService` until it is fixed. The list holds at most 16 unique names and the `aim-` prefix is reserved for configs AIM Engine projects.
 

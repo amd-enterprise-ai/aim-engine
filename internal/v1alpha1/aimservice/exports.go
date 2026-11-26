@@ -140,6 +140,28 @@ func InferenceServiceComponentHealth(
 	return inferenceServiceComponentHealth(inferenceService, inferenceServicePods, predictorDeployment)
 }
 
+// ActivePodCount counts the pods that a ReplicaSet counts as replicas: not
+// terminating and not in a terminal phase.
+func ActivePodCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
+	return activePodCount(pods)
+}
+
+// DeploymentPodCreationFailure returns the refusal message when the
+// Deployment's ReplicaFailure condition reports that the API server or an
+// admission policy refused a Pod.
+func DeploymentPodCreationFailure(deployment *appsv1.Deployment) (string, bool) {
+	if deployment == nil {
+		return "", false
+	}
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type == appsv1.DeploymentReplicaFailure && cond.Status == corev1.ConditionTrue &&
+			cond.Reason == deploymentReasonFailedCreate {
+			return cond.Message, true
+		}
+	}
+	return "", false
+}
+
 // InferenceServiceReady reports whether the fetched InferenceService has
 // Ready=True. Exported so the profile pipeline can contextualize HPA health.
 func InferenceServiceReady(

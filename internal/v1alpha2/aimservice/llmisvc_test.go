@@ -24,6 +24,7 @@ package aimservice
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,6 +32,7 @@ import (
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -296,6 +298,139 @@ func TestBuildLLMInferenceServiceFromProfile_serviceOverlays(t *testing.T) {
 	}
 }
 
+func llmRuntimeConfigObservation(t *testing.T) (*aimv1alpha2.AIMService, ServiceObservation) {
+	t.Helper()
+	service := llmTestService()
+	servingRuntime := &kservev1alpha1.ServingRuntime{}
+	servingRuntime.Spec.Containers = []corev1.Container{{
+		Name: constants.ContainerKServe,
+		Env:  []corev1.EnvVar{{Name: "PROFILE_VAR", Value: "profile"}},
+	}}
+	obs := ServiceObservation{
+		ServiceFetchResult:    ServiceFetchResult{service: service, servesLLM: true},
+		resolvedProfileSpec:   profileSpecWithModelSources(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+		profileName:           testProfileA,
+		profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
+		desiredProfileRuntime: servingRuntime,
+	}
+	(&ProfileServiceReconciler{}).composeDerivedNames(context.Background(), &obs)
+	return service, obs
+}
+
+func TestBuildLLMInferenceServiceFromProfile_runtimeConfigPolicies(t *testing.T) {
+	gpuTaint := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	service, obs := llmRuntimeConfigObservation(t)
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	template := llmService.Spec.Template
+	if template.Tolerations != nil || template.SecurityContext != nil || template.Containers[0].SecurityContext != nil {
+		t.Fatalf("without configuration the overlay must set no tolerations or security contexts; got %v, %v, %v",
+			template.Tolerations, template.SecurityContext, template.Containers[0].SecurityContext)
+	}
+
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.Tolerations = []corev1.Toleration{gpuTaint}
+	runtimeConfig.PodSecurityContext = &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To[int64](1000)}
+	runtimeConfig.SecurityContext = &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false)}
+	runtimeConfig.Env = []corev1.EnvVar{
+		{Name: "HOME", Value: "/tmp"},
+		{Name: "PROFILE_VAR", Value: "config"},
+	}
+	obs.mergedRuntimeConfig = controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig}
+	service.Spec.Env = []corev1.EnvVar{{Name: "CHAT_TEMPLATE", Value: "{{ messages }}"}}
+
+	llmService, err = buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() error = %v", err)
+	}
+	template = llmService.Spec.Template
+	container := template.Containers[0]
+	if len(template.Tolerations) != 1 || template.Tolerations[0] != gpuTaint {
+		t.Errorf("tolerations = %v, want the runtime config's [%v]", template.Tolerations, gpuTaint)
+	}
+	if !equalPtr(template.SecurityContext.RunAsUser, ptr.To[int64](1000)) {
+		t.Errorf("pod security context = %+v, want the runtime config's", template.SecurityContext)
+	}
+	if !equalPtr(container.SecurityContext.AllowPrivilegeEscalation, ptr.To(false)) {
+		t.Errorf("container security context = %+v, want the runtime config's", container.SecurityContext)
+	}
+	if !equalPtr(container.SecurityContext.RunAsNonRoot, ptr.To(true)) {
+		t.Error("the pod runAsNonRoot must be repeated on main, over the projected config's runAsNonRoot: false")
+	}
+
+	env := envMap(container.Env)
+	if env["HOME"] != "/tmp" {
+		t.Errorf("HOME = %q, want the runtime config value", env["HOME"])
+	}
+	if _, set := env["PROFILE_VAR"]; set {
+		t.Error("a runtime config entry the profile sets must leave the profile value in place")
+	}
+	if got := env["CHAT_TEMPLATE"]; got != "{{`{{`}} messages }}" {
+		t.Errorf("CHAT_TEMPLATE = %q, want its \"{{\" escaped for KServe's template rendering", got)
+	}
+}
+
+func equalPtr[T comparable](got, want *T) bool {
+	return got != nil && want != nil && *got == *want
+}
+
+func TestLLMContainerSecurityContext(t *testing.T) {
+	nonRootPod := &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true)}
+	for _, tc := range []struct {
+		name      string
+		pod       *corev1.PodSecurityContext
+		container *corev1.SecurityContext
+		want      *corev1.SecurityContext
+	}{
+		{"neither set", nil, nil, nil},
+		{"pod without runAsNonRoot", &corev1.PodSecurityContext{RunAsUser: ptr.To[int64](1000)}, nil, nil},
+		{"pod runAsNonRoot is repeated", nonRootPod, nil, &corev1.SecurityContext{RunAsNonRoot: ptr.To(true)}},
+		{
+			"pod runAsNonRoot joins the container value",
+			nonRootPod,
+			&corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false)},
+			&corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), RunAsNonRoot: ptr.To(true)},
+		},
+		{
+			"container runAsNonRoot wins",
+			nonRootPod,
+			&corev1.SecurityContext{RunAsNonRoot: ptr.To(false)},
+			&corev1.SecurityContext{RunAsNonRoot: ptr.To(false)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := llmContainerSecurityContext(tc.pod, tc.container); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("llmContainerSecurityContext() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildLLMInferenceServiceFromProfile_workloadPodsCarryAIMLabels(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	podLabels := llmService.Spec.Labels
+	if podLabels[constants.LabelProfile] != llmService.Labels[constants.LabelProfile] || podLabels[constants.LabelProfile] == "" {
+		t.Errorf("pod profile label = %q, want the LLMInferenceService's %q",
+			podLabels[constants.LabelProfile], llmService.Labels[constants.LabelProfile])
+	}
+	if podLabels[constants.LabelService] == "" {
+		t.Error("the pods must carry the service label")
+	}
+	for key := range podLabels {
+		if !strings.HasPrefix(key, constants.AimLabelDomain+"/") {
+			t.Errorf("pod label %q is outside the AIM domain; KServe would copy it over its own pod labels", key)
+		}
+	}
+}
+
 func TestLLMInferenceServiceComponentHealth(t *testing.T) {
 	readyService := func(status corev1.ConditionStatus, observedGeneration int64) *kservev1alpha2.LLMInferenceService {
 		llmService := &kservev1alpha2.LLMInferenceService{ObjectMeta: metav1.ObjectMeta{Name: "svc", Generation: 2}}
@@ -319,7 +454,7 @@ func TestLLMInferenceServiceComponentHealth(t *testing.T) {
 		{"not ready", controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]{Value: readyService(corev1.ConditionFalse, 2)}, constants.AIMStatusProgressing},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := llmInferenceServiceComponentHealth(tc.fetch); got.State != tc.wantState {
+			if got := llmInferenceServiceComponentHealth(tc.fetch, nil, controllerutils.FetchResult[*appsv1.Deployment]{}); got.State != tc.wantState {
 				t.Fatalf("state = %q (%s), want %q", got.State, got.Message, tc.wantState)
 			}
 		})
@@ -887,5 +1022,151 @@ func TestPlanLLMInferenceService_skipsWhenBaseRefsUnusable(t *testing.T) {
 
 	if appliedLLMInferenceService(plan.GetToApply()) != nil {
 		t.Fatal("the LLMInferenceService must not be planned with a missing preset")
+	}
+}
+
+func TestPlanStaleChildCleanup_llmInferenceService(t *testing.T) {
+	service := llmTestService()
+	owner := []metav1.OwnerReference{{Kind: "AIMService", Name: service.Name, UID: service.UID, Controller: ptr.To(true)}}
+	pod := func(profile string, ready bool, mutate ...func(*corev1.Pod)) corev1.Pod {
+		status := corev1.ConditionFalse
+		if ready {
+			status = corev1.ConditionTrue
+		}
+		p := corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{constants.LabelProfile: profile}},
+			Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: status}}},
+		}
+		for _, m := range mutate {
+			m(&p)
+		}
+		return p
+	}
+	unlabeled := func(p *corev1.Pod) { p.Labels = nil }
+	terminating := func(p *corev1.Pod) { p.DeletionTimestamp = ptr.To(metav1.Now()) }
+	pods := func(items ...corev1.Pod) *controllerutils.FetchResult[*corev1.PodList] {
+		return &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{Items: items}}
+	}
+
+	tests := []struct {
+		name       string
+		llmProfile string
+		llmReady   bool
+		pods       *controllerutils.FetchResult[*corev1.PodList]
+		want       []string
+	}{
+		{name: "a ready pod serves profile-b", llmProfile: "profile-b", llmReady: true, pods: pods(pod("profile-b", true)), want: []string{"cache-a", "profile-a"}},
+		{name: "LLMInferenceService still on profile-a", llmProfile: "profile-a", llmReady: true, pods: pods(pod("profile-a", true))},
+		{name: "LLMInferenceService not ready", llmProfile: "profile-b", pods: pods(pod("profile-b", true))},
+		{name: "pod on profile-a still running", llmProfile: "profile-b", llmReady: true, pods: pods(pod("profile-b", true), pod("profile-a", true))},
+		{name: "profile-b pod not ready", llmProfile: "profile-b", llmReady: true, pods: pods(pod("profile-b", false))},
+		{name: "only a terminating profile-b pod", llmProfile: "profile-b", llmReady: true, pods: pods(pod("profile-b", true, terminating))},
+		{name: "pod without the profile label", llmProfile: "profile-b", llmReady: true, pods: pods(pod("profile-b", true), pod("", true, unlabeled))},
+		{name: "scaled to zero", llmProfile: "profile-b", llmReady: true, pods: pods()},
+		{name: "pod list failed", llmProfile: "profile-b", llmReady: true, pods: &controllerutils.FetchResult[*corev1.PodList]{Error: notFoundError("pods", "x")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			readyStatus := corev1.ConditionFalse
+			if tt.llmReady {
+				readyStatus = corev1.ConditionTrue
+			}
+			llmService := &kservev1alpha2.LLMInferenceService{ObjectMeta: metav1.ObjectMeta{
+				Name: testServiceName, Generation: 1, Labels: map[string]string{constants.LabelProfile: tt.llmProfile},
+			}}
+			llmService.Status.Status = duckv1.Status{
+				ObservedGeneration: 1,
+				Conditions:         duckv1.Conditions{{Type: apis.ConditionReady, Status: readyStatus}},
+			}
+			obs := ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service:                 service,
+					servesLLM:               true,
+					llmInferenceService:     controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]{Value: llmService},
+					llmInferenceServicePods: tt.pods,
+					serviceProfileCaches: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]{Value: &aimv1alpha2.AIMProfileCacheList{
+						Items: []aimv1alpha2.AIMProfileCache{
+							{ObjectMeta: metav1.ObjectMeta{Name: "cache-a", OwnerReferences: owner}, Spec: aimv1alpha2.AIMProfileCacheSpec{ProfileName: "profile-a"}},
+							{ObjectMeta: metav1.ObjectMeta{Name: "cache-b", OwnerReferences: owner}, Spec: aimv1alpha2.AIMProfileCacheSpec{ProfileName: "profile-b"}},
+						},
+					}},
+					serviceOverlayProfiles: controllerutils.FetchResult[*aimv1alpha2.AIMProfileList]{Value: &aimv1alpha2.AIMProfileList{
+						Items: []aimv1alpha2.AIMProfile{
+							{ObjectMeta: metav1.ObjectMeta{Name: "profile-a", OwnerReferences: owner}},
+							{ObjectMeta: metav1.ObjectMeta{Name: "profile-b", OwnerReferences: owner}},
+						},
+					}},
+				},
+				profileName: "profile-b",
+			}
+
+			plan := controllerutils.PlanResult{}
+			planStaleChildCleanup(&plan, obs, logr.Discard())
+
+			var got []string
+			for _, obj := range plan.GetToDelete() {
+				got = append(got, obj.GetName())
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("deleted %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLLMInferenceServiceComponentHealth_refusedPod(t *testing.T) {
+	llmService := &kservev1alpha2.LLMInferenceService{ObjectMeta: metav1.ObjectMeta{Name: "svc", Generation: 1}}
+	llmService.Status.Status = duckv1.Status{
+		ObservedGeneration: 1,
+		Conditions:         duckv1.Conditions{{Type: apis.ConditionReady, Status: corev1.ConditionFalse}},
+	}
+	fetch := controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]{Value: llmService}
+	refusal := `pods "svc-kserve-abc" is forbidden: violates PodSecurity "restricted:latest": runAsNonRoot != true`
+	refused := controllerutils.FetchResult[*appsv1.Deployment]{Value: &appsv1.Deployment{
+		Status: appsv1.DeploymentStatus{Conditions: []appsv1.DeploymentCondition{{
+			Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: refusal,
+		}}},
+	}}
+	noPods := &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{}}
+	startingPod := &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{Items: []corev1.Pod{{
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}}}}
+
+	for _, tc := range []struct {
+		name       string
+		pods       *controllerutils.FetchResult[*corev1.PodList]
+		deployment controllerutils.FetchResult[*appsv1.Deployment]
+		wantState  constants.AIMStatus
+		wantReason string
+	}{
+		{"refused without pods", noPods, refused, constants.AIMStatusFailed, aimv1alpha1.AIMServiceReasonPodCreationFailed},
+		{"refused with a starting pod", startingPod, refused, constants.AIMStatusProgressing, aimv1alpha1.AIMServiceReasonCreatingRuntime},
+		{"Deployment not fetched", noPods, controllerutils.FetchResult[*appsv1.Deployment]{}, constants.AIMStatusProgressing, reasonLLMInferenceServiceNotReady},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := llmInferenceServiceComponentHealth(fetch, tc.pods, tc.deployment)
+			if got.State != tc.wantState || got.Reason != tc.wantReason {
+				t.Fatalf("health = %s/%s, want %s/%s", got.State, got.Reason, tc.wantState, tc.wantReason)
+			}
+			if tc.deployment.Value != nil && !strings.Contains(got.Message, refusal) {
+				t.Errorf("message %q must carry the refusal", got.Message)
+			}
+		})
+	}
+}
+
+func TestPlanLLMInferenceService_pollsWorkloadDeploymentWhileNotReady(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	plan := controllerutils.PlanResult{}
+	planLLMInferenceService(&plan, service, obs, true, logr.Discard())
+	if plan.RequeueAfter != 0 {
+		t.Fatalf("RequeueAfter = %s without a fetched workload Deployment, want 0", plan.RequeueAfter)
+	}
+
+	obs.llmWorkloadDeployment = controllerutils.FetchResult[*appsv1.Deployment]{Value: &appsv1.Deployment{}}
+	plan = controllerutils.PlanResult{}
+	planLLMInferenceService(&plan, service, obs, true, logr.Discard())
+	if plan.RequeueAfter != llmWorkloadDeploymentPollInterval {
+		t.Errorf("RequeueAfter = %s, want %s", plan.RequeueAfter, llmWorkloadDeploymentPollInterval)
 	}
 }

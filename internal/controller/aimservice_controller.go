@@ -328,7 +328,8 @@ func (r *AIMServiceReconciler) findServicesForGateway(ctx context.Context, _ cli
 
 // findServicesForPredictorObject maps a predictor pod or Deployment, through
 // the KServe InferenceService label, to the AIMService that owns it. An
-// LLMInferenceService workload object is mapped through its LLMInferenceService.
+// LLMInferenceService workload pod is mapped through its LLMInferenceService.
+// Its Deployment carries no AIM labels, so the operator's cache leaves it out.
 func (r *AIMServiceReconciler) findServicesForPredictorObject(ctx context.Context, obj client.Object) []reconcile.Request {
 	if r.LLMInferenceService.Enabled &&
 		obj.GetLabels()[kserveconstants.KubernetesPartOfLabelKey] == kserveconstants.LLMInferenceServicePartOfValue {
@@ -396,8 +397,8 @@ func (r *AIMServiceReconciler) findServicesForLLMBaseRef(ctx context.Context, ob
 // aimServiceKind is the owner reference kind of AIMService-owned KServe objects.
 const aimServiceKind = "AIMService"
 
-// findServicesForLLMWorkloadObject maps an LLMInferenceService workload pod or
-// Deployment to the AIMService that owns its LLMInferenceService.
+// findServicesForLLMWorkloadObject maps an LLMInferenceService workload object
+// to the AIMService that owns its LLMInferenceService.
 func (r *AIMServiceReconciler) findServicesForLLMWorkloadObject(ctx context.Context, obj client.Object) []reconcile.Request {
 	name := obj.GetLabels()[kserveconstants.KubernetesAppNameLabelKey]
 	if name == "" {

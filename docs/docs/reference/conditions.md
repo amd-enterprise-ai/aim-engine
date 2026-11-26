@@ -150,7 +150,8 @@ Replaces `InferenceServiceReady` when `status.servingAPI` is `LLMInferenceServic
 | Status | Reason | Description |
 |---|---|---|
 | `True` | `RuntimeReady` | KServe `LLMInferenceService` is ready |
-| `False` | `CreatingRuntime` | Creating the LLMInferenceService |
+| `False` | `CreatingRuntime` | Creating the LLMInferenceService. While a workload pod starts and the workload Deployment cannot create another one, the message contains the refusal text |
+| `False` | `PodCreationFailed` | The workload Deployment cannot create a pod because the API server or an admission policy refuses it, for example because of Pod Security admission or a ResourceQuota. The message contains the refusal text. The service status is `Failed` until a pod can be created |
 | `False` | `LLMInferenceServiceNotReady` | KServe reports the LLMInferenceService not ready; the message carries KServe's reason |
 
 ### LLMInferenceServiceBaseRefsReady
