@@ -41,30 +41,7 @@ spec:
 
 AIM images have no user entry for a non-root UID, so the inference container also needs `HOME` set to a writable directory and `USER` set to a name. Without `HOME`, vLLM tries to write its cache below `/`, and the container stops with `Permission denied: '/.cache'`. Without `USER`, PyTorch cannot find a user name for the UID, and the container stops with `getpwuid(): uid not found`.
 
-Where you set the two variables depends on the spec of the AIMService.
-
-**With `spec.profile`** (`name` or `selector`): the service uses the profile pipeline, which does not pass the runtime config `spec.env` to the inference container. Set the variables in `spec.profileOverrides.containerEnv` of the service:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMService
-metadata:
-  name: llama-3-1-8b
-  namespace: my-models
-spec:
-  profile:
-    name: my-profile
-  profileOverrides:
-    containerEnv:
-      - name: HOME
-        value: /tmp
-      - name: USER
-        value: aim
-```
-
-Set the profile overrides when you create the service. When you add them to a running service, the service moves to a new overlay profile with its own model cache, and the model weights can download again.
-
-**Without `spec.profile`** (for example `spec.model.name` or `spec.model.image` without the annotation `aim.eai.amd.com/reconciler-pipeline: profile`): the service uses the deprecated `AIMServiceTemplate` pipeline, which merges the runtime config `spec.env` into the inference container. Set the variables in the runtime config `spec.env`, next to the two security fields:
+Set the two variables in the runtime config `spec.env`, next to the two security fields. The runtime config `spec.env` reaches the inference container of every AIMService that uses the runtime config, with or without `spec.profile`:
 
 ```yaml
 spec:
@@ -75,9 +52,7 @@ spec:
       value: aim
 ```
 
-When you move such a service to `spec.profile`, also move `HOME` and `USER` to `spec.profileOverrides.containerEnv`. The profile pipeline does not use the runtime config `spec.env`.
-
-A service without `spec.profile` that has the annotation `aim.eai.amd.com/reconciler-pipeline: profile` (the by-model and by-image shapes in [Services](../concepts/services.md#resolution-shapes)) uses the profile pipeline, but the CRD accepts `spec.profileOverrides` only together with `spec.profile`. Thus neither method applies. Use a shape with `spec.profile` instead, for example [model + selector](../concepts/services.md#model--selector).
+A value for the same name in the AIMService `spec.env`, the AIMProfile `containerEnv` or the `AIMServiceTemplate` `env` wins over the runtime config value; see [Inference container env](../concepts/runtime-config.md#inference-container-env). To set the variables for one service only, use its `spec.env`. Unlike `spec.profileOverrides.containerEnv`, it doesn't create an overlay profile, so the model weights don't download again.
 
 ## AITER Kernels
 

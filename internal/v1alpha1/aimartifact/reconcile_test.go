@@ -32,8 +32,11 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func TestFoldStalledFilesystemHealth(t *testing.T) {
@@ -218,6 +221,116 @@ func TestTypedS3DisallowedAdapterEnvironmentIsInvalid(t *testing.T) {
 	if !found {
 		t.Fatal("adapter transfer configuration error was not surfaced")
 	}
+}
+
+// TestFailedArtifactRecreatesDownloadJobWithCurrentCachingEnv pins that a
+// Failed artifact retries once its failed download Job is gone (the Job's TTL
+// removes it): the new Job reads the runtime config spec.caching.env as it is
+// now, over the defaults and under the artifact's own spec.env.
+func TestFailedArtifactRecreatesDownloadJobWithCurrentCachingEnv(t *testing.T) {
+	artifact := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "model", Namespace: "team-a"},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			SourceURI: "hf://org/gated-model",
+			Size:      resource.MustParse("1Mi"),
+			Env:       []corev1.EnvVar{{Name: "HF_ENDPOINT", Value: "https://huggingface.example.com"}},
+		},
+		Status: aimv1alpha1.AIMArtifactStatus{Status: constants.AIMStatusFailed},
+	}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		Caching: &aimv1alpha1.AIMRuntimeConfigCachingConfig{
+			Env: []corev1.EnvVar{
+				{Name: "HF_TOKEN", Value: "added-after-the-failure"},
+				{Name: "HF_ENDPOINT", Value: "https://ignored.example.com"},
+			},
+		},
+	}
+	jobGone := controllerutils.FetchResult[*batchv1.Job]{
+		Error: apierrors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, "model-download"),
+	}
+	fetch := ArtifactFetchResult{
+		artifact:            artifact,
+		mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: config},
+		cachePvc:            controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{Value: &corev1.PersistentVolumeClaim{}},
+		roleBinding:         controllerutils.FetchResult[*rbacv1.RoleBinding]{Value: &rbacv1.RoleBinding{}},
+		downloadJob:         &jobGone,
+	}
+	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact]{Object: artifact}
+	obs := (&ArtifactReconciler{}).ComposeState(context.Background(), reconcileCtx, fetch)
+
+	for _, component := range obs.GetComponentHealth(context.Background(), nil) {
+		for _, err := range component.Errors {
+			switch controllerutils.CategorizeError(err).Category() {
+			case controllerutils.ErrorCategoryInvalidSpec, controllerutils.ErrorCategoryAuth,
+				controllerutils.ErrorCategoryMissingUpstreamDependency:
+				t.Fatalf("component %s blocks apply: %v", component.Component, err)
+			}
+		}
+	}
+
+	plan := (&ArtifactReconciler{}).PlanResources(context.Background(), reconcileCtx, obs)
+	var job *batchv1.Job
+	for _, obj := range plan.GetToApply() {
+		if j, ok := obj.(*batchv1.Job); ok {
+			job = j
+		}
+	}
+	if job == nil {
+		t.Fatalf("Failed artifact without a download Job planned no new Job: %#v", plan.GetToApply())
+	}
+	env := map[string]string{}
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	if env["HF_TOKEN"] != "added-after-the-failure" {
+		t.Errorf("HF_TOKEN = %q, want the current runtime config spec.caching.env value", env["HF_TOKEN"])
+	}
+	if env["HF_ENDPOINT"] != "https://huggingface.example.com" {
+		t.Errorf("HF_ENDPOINT = %q, want the artifact spec.env value", env["HF_ENDPOINT"])
+	}
+}
+
+// TestFailedSizeCheckIsRecreatedWithCurrentCachingEnv pins the same retry for
+// an artifact whose size check failed before any download started.
+func TestFailedSizeCheckIsRecreatedWithCurrentCachingEnv(t *testing.T) {
+	artifact := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "model", Namespace: "team-a"},
+		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/gated-model"},
+		Status:     aimv1alpha1.AIMArtifactStatus{Status: constants.AIMStatusFailed},
+	}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		Caching: &aimv1alpha1.AIMRuntimeConfigCachingConfig{
+			Env: []corev1.EnvVar{{Name: "HF_TOKEN", Value: "added-after-the-failure"}},
+		},
+	}
+	jobGone := controllerutils.FetchResult[*batchv1.Job]{
+		Error: apierrors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, "model-check-size"),
+	}
+	fetch := ArtifactFetchResult{
+		artifact:            artifact,
+		mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: config},
+		roleBinding:         controllerutils.FetchResult[*rbacv1.RoleBinding]{Value: &rbacv1.RoleBinding{}},
+		checkSizeJob:        &jobGone,
+	}
+	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact]{Object: artifact}
+	obs := (&ArtifactReconciler{}).ComposeState(context.Background(), reconcileCtx, fetch)
+
+	plan := (&ArtifactReconciler{}).PlanResources(context.Background(), reconcileCtx, obs)
+	var job *batchv1.Job
+	for _, obj := range plan.GetToApply() {
+		if j, ok := obj.(*batchv1.Job); ok && j.Labels[constants.LabelKeyComponent] == "check-size" {
+			job = j
+		}
+	}
+	if job == nil {
+		t.Fatalf("Failed artifact without a size-check Job planned no new one: %#v", plan.GetToApply())
+	}
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		if e.Name == "HF_TOKEN" && e.Value == "added-after-the-failure" {
+			return
+		}
+	}
+	t.Errorf("size-check Job env = %v, want the current runtime config spec.caching.env HF_TOKEN", job.Spec.Template.Spec.Containers[0].Env)
 }
 
 func TestPlanResourcesDoesNotReplaceExistingDownloadJobWhenTrustChanges(t *testing.T) {

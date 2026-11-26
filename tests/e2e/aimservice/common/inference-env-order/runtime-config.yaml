@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: inference-env-order
+spec:
+  env:
+    - name: RC_ONLY
+      value: rc
+    - name: SHARED_RC_PROFILE
+      value: rc
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "1"

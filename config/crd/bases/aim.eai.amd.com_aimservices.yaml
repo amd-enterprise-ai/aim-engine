@@ -485,9 +485,9 @@ spec:
                   rule: self.mode == oldSelf.mode
               env:
                 description: |-
-                  Env specifies environment variables for inference containers.
-                  When set on AIMService, these take highest precedence in the merge hierarchy.
-                  When set on RuntimeConfig, these provide namespace/cluster-level defaults.
+                  Env specifies environment variables for inference containers. On an
+                  AIMService they apply to that service; on a runtime config they set
+                  namespace or cluster defaults. Download Jobs don't read this field.
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.
@@ -3423,9 +3423,9 @@ spec:
                   rule: self.mode == oldSelf.mode
               env:
                 description: |-
-                  Env specifies environment variables for inference containers.
-                  When set on AIMService, these take highest precedence in the merge hierarchy.
-                  When set on RuntimeConfig, these provide namespace/cluster-level defaults.
+                  Env specifies environment variables for inference containers. On an
+                  AIMService they apply to that service; on a runtime config they set
+                  namespace or cluster defaults. Download Jobs don't read this field.
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.

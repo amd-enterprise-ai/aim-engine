@@ -144,7 +144,55 @@ reconciles exact producer lineage. For example, a previously synthesized
 that consume those profiles can therefore roll and pull a new image of about
 9 GB; plan registry bandwidth and rollout capacity accordingly.
 
-### 4. Upgrade the operator
+### 4. Move download settings to `spec.caching.env`
+
+Download Jobs read the runtime config `spec.caching.env` and no longer read the runtime config `spec.env`. A download credential or setting that a runtime config sets in `spec.env`, such as `HF_TOKEN`, `HF_ENDPOINT`, `AIM_DOWNLOADER_PROTOCOL`, an S3 credential such as `AWS_ACCESS_KEY_ID`, or a proxy variable, no longer reaches downloads after the operator upgrade. Move it before then. See [Download Job env](../concepts/runtime-config.md#download-job-env).
+
+After updating the CRDs but before upgrading the operator:
+
+1. List the runtime configs and the names in their `spec.env`:
+
+   ```bash
+   kubectl get aimclusterruntimeconfig -o json | \
+     jq -r '.items[] | select(.spec.env != null) | [.metadata.name, ([.spec.env[].name] | join(","))] | @tsv'
+   kubectl get aimruntimeconfig -A -o json | \
+     jq -r '.items[] | select(.spec.env != null) | [.metadata.namespace, .metadata.name, ([.spec.env[].name] | join(","))] | @tsv'
+   ```
+
+2. Copy each download setting into the `spec.caching.env` of the same runtime config. The operator before the upgrade doesn't read `spec.caching.env`, so the copy doesn't change running downloads:
+
+   ```yaml
+   apiVersion: aim.eai.amd.com/v1alpha1
+   kind: AIMRuntimeConfig
+   metadata:
+     name: default
+     namespace: ml-team
+   spec:
+     caching:
+       env:
+         - name: HF_TOKEN
+           valueFrom:
+             secretKeyRef:
+               name: hf-credentials
+               key: token
+   ```
+
+3. Remove the entries that only downloads need from `spec.env`, just before or after the operator upgrade. If you remove them before, downloads that the old operator starts in between run without them. The new operator adds the runtime config `spec.env` to the inference containers of profile services (see [Env for profile services](#env-for-profile-services)), so if you remove them after, those pods restart again. Keep an entry in `spec.env` as well when inference containers need it, for example `HF_TOKEN` for a model without `modelSources` (see [Choosing where to set a variable](../reference/environment-variables.md#choosing-where-to-set-a-variable)).
+
+With Helm, the chart renders `clusterRuntimeConfig.spec` as the spec of its `AIMClusterRuntimeConfig`, so download settings set through `clusterRuntimeConfig.spec.env` move to `clusterRuntimeConfig.spec.caching.env`:
+
+```yaml
+clusterRuntimeConfig:
+  spec:
+    caching:
+      env:
+        - name: AIM_DOWNLOADER_PROTOCOL
+          value: "HTTP,XET"
+```
+
+Helm applies this with the operator upgrade. `--reuse-values` keeps the stored `clusterRuntimeConfig.spec.env` and doesn't add the new path, so set it explicitly, for example with `--reuse-values --values download-env.yaml`. Helm replaces a list as a whole: to remove the download entries from `clusterRuntimeConfig.spec.env`, set the full list that remains.
+
+### 5. Upgrade the operator
 
 ```bash
 helm upgrade aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
@@ -215,7 +263,7 @@ kubectl delete clusterrolebinding envoy-gateway-metrics-collector \
   --ignore-not-found
 ```
 
-### 5. Verify
+### 6. Verify
 
 ```bash
 kubectl get pods -n aim-system
@@ -234,6 +282,8 @@ Roll back to the previous Helm release:
 ```bash
 helm rollback aim-engine -n aim-system
 ```
+
+An operator that predates `spec.caching.env` reads download settings only from the runtime config `spec.env`. If you roll back after removing them from `spec.env`, add them back.
 
 :::{note}
 Rolling back the operator does not roll back CRD changes. New CRD fields are additive and backward compatible. If a CRD change is not backward compatible, this will be noted in the release notes.
@@ -271,6 +321,21 @@ After the contract is backfilled, AIM Engine reconciles the projected ServingRun
 ```bash
 kubectl delete pod -n <namespace> \
   -l aim.eai.amd.com/service=<service-name>
+```
+
+### Env for profile services
+
+The `spec.env` of a runtime config and of the `AIMService` itself now reaches the inference container of an `AIMService` in the profile pipeline (`spec.profile`). Before, only template-based services received it. The AIMService `spec.env` wins over the profile `containerEnv`, which wins over the runtime config env. The operator-owned variables and the profile `engineEnv` win over all of them (see [Inference container env](../concepts/runtime-config.md#inference-container-env)). After the upgrade, the inference pods of each profile service that gets a variable from its runtime config or its `spec.env` restart once. A service whose `spec.env` sets a variable that the profile `containerEnv` also sets gets the `spec.env` value when both are literal values. Other services do not restart. AIM Engine sets no rollout strategy, so the predictor Deployment uses the KServe default: a rolling update with `maxSurge` and `maxUnavailable` of 25%, unless the KServe `deploy` configuration sets `deploymentRolloutStrategy`. With fewer than four replicas, this starts each new pod before it stops an old one, so a GPU service needs free GPUs for its new pods. Until the GPUs are free, the new pods stay `Pending` and the old pods continue to serve.
+
+Before the upgrade, examine the env that profile services will get. To list the runtime configs and the profile services that set `spec.env`:
+
+```bash
+kubectl get aimclusterruntimeconfig -o json | \
+  jq -r '.items[] | select(.spec.env != null) | .metadata.name'
+kubectl get aimruntimeconfig -A -o json | \
+  jq -r '.items[] | select(.spec.env != null) | [.metadata.namespace, .metadata.name] | @tsv'
+kubectl get aimservice -A -o json | \
+  jq -r '.items[] | select(.status.reconcilerPipeline == "profile" and .spec.env != null) | [.metadata.namespace, .metadata.name] | @tsv'
 ```
 
 ### Download filters declared by AIM images

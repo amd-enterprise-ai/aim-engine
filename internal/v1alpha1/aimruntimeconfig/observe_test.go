@@ -758,6 +758,82 @@ func TestMergeRuntimeConfigs_TolerationsNamespacePrecedence(t *testing.T) {
 	}
 }
 
+func TestMergeRuntimeConfigs_CachingEnvNamespaceOverClusterByName(t *testing.T) {
+	withCachingEnv := func(env []corev1.EnvVar) *aimv1alpha1.AIMRuntimeConfigCommon {
+		config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+		if env != nil {
+			config.Caching = &aimv1alpha1.AIMRuntimeConfigCachingConfig{Env: env}
+		}
+		return config
+	}
+	clusterEnv := []corev1.EnvVar{
+		{Name: "HTTPS_PROXY", Value: "http://cluster-proxy:3128"},
+		{Name: "AIM_DOWNLOADER_PROTOCOL", Value: "HTTP"},
+	}
+
+	tests := []struct {
+		name         string
+		clusterEnv   []corev1.EnvVar
+		namespaceEnv []corev1.EnvVar
+		want         []corev1.EnvVar
+	}{
+		{
+			name:       "namespace unset keeps cluster's",
+			clusterEnv: clusterEnv,
+			want:       clusterEnv,
+		},
+		{
+			name:         "cluster unset keeps namespace's",
+			namespaceEnv: []corev1.EnvVar{{Name: "HF_TOKEN", Value: "namespace-token"}},
+			want:         []corev1.EnvVar{{Name: "HF_TOKEN", Value: "namespace-token"}},
+		},
+		{
+			name:       "namespace wins by name and cluster-only names stay",
+			clusterEnv: clusterEnv,
+			namespaceEnv: []corev1.EnvVar{
+				{Name: "HTTPS_PROXY", Value: "http://namespace-proxy:3128"},
+				{Name: "HF_TOKEN", Value: "namespace-token"},
+			},
+			want: []corev1.EnvVar{
+				{Name: "HTTPS_PROXY", Value: "http://namespace-proxy:3128"},
+				{Name: "AIM_DOWNLOADER_PROTOCOL", Value: "HTTP"},
+				{Name: "HF_TOKEN", Value: "namespace-token"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			merged := mergeRuntimeConfigs(withCachingEnv(tt.namespaceEnv), withCachingEnv(tt.clusterEnv))
+
+			if got := CachingEnv(merged); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("caching env = %v, want %v", got, tt.want)
+			}
+			if len(merged.Env) != 0 {
+				t.Errorf("spec.env = %v, want caching env kept out of it", merged.Env)
+			}
+		})
+	}
+}
+
+func TestCachingEnv(t *testing.T) {
+	env := []corev1.EnvVar{{Name: "HF_TOKEN", Value: "token"}}
+	if got := CachingEnv(nil); got != nil {
+		t.Errorf("CachingEnv(nil) = %v, want nil", got)
+	}
+	if got := CachingEnv(&aimv1alpha1.AIMRuntimeConfigCommon{}); got != nil {
+		t.Errorf("CachingEnv(no caching) = %v, want nil", got)
+	}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+			Env: []corev1.EnvVar{{Name: "INFERENCE_ONLY", Value: "1"}},
+		},
+		Caching: &aimv1alpha1.AIMRuntimeConfigCachingConfig{Env: env},
+	}
+	if got := CachingEnv(config); !reflect.DeepEqual(got, env) {
+		t.Errorf("CachingEnv = %v, want %v", got, env)
+	}
+}
+
 func TestMergeRuntimeConfigs_SecurityContextsNamespacePrecedence(t *testing.T) {
 	newCluster := func() *aimv1alpha1.AIMRuntimeConfigCommon {
 		config := &aimv1alpha1.AIMRuntimeConfigCommon{}

@@ -24,9 +24,11 @@ The following identity and cache variables are framework-owned:
 - `AIM_MODEL_ID`
 - `AIM_CACHE_PATH`
 
-Values supplied through profile or service `containerEnv` cannot override these
-variables. Use profile fields such as `engine`, `profileId`, `aimId`, and
-`modelSources` instead.
+Values supplied through the profile `containerEnv`, including
+`spec.profileOverrides.containerEnv`, cannot override the values AIM Engine
+sets for these variables, and AIM Engine ignores these names in the AIMService
+and runtime config `spec.env`. Use profile
+fields such as `engine`, `profileId`, `aimId`, and `modelSources` instead.
 
 Engine configuration is split across two profile fields:
 

@@ -1,0 +1,20 @@
+# AIM_PROFILE_ID is operator-owned: AIM Engine ignores it in spec.env and the
+# container keeps the operator's value.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: inference-env-order
+spec:
+  profile:
+    name: test-inference-env-order
+  runtimeConfigName: inference-env-order
+  caching:
+    mode: Shared
+  env:
+    - name: SVC_ONLY
+      value: svc
+    - name: SHARED_PROFILE_SVC
+      value: svc
+    - name: AIM_PROFILE_ID
+      value: from-service
+  replicas: 1

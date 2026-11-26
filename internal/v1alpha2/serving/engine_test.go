@@ -23,9 +23,11 @@
 package serving
 
 import (
+	"maps"
 	"slices"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -125,6 +127,69 @@ func TestBuildRuntimeEnv_DirectVLLMWithoutCacheUsesOnlineModelID(t *testing.T) {
 	}
 	if _, exists := values["AIM_PROFILE_ID"]; exists {
 		t.Fatalf("direct vLLM must not receive AIM runtime identity env: %#v", values)
+	}
+}
+
+func TestOperatorOwnedEnvNames(t *testing.T) {
+	aimRuntimeSpec := func() *aimv1alpha2.AIMProfileSpecCommon {
+		spec := directVLLMSpec()
+		spec.AcceleratorVendor = aimv1alpha1.AcceleratorVendorAMD
+		spec.ContainerEnv = []corev1.EnvVar{{Name: "HOME", Value: "/home/aim"}}
+		spec.EngineEnv = map[string]string{"VLLM_LOGGING_LEVEL": "DEBUG"}
+		return spec
+	}
+	withoutModelSourcesOrEngine := aimRuntimeSpec()
+	withoutModelSourcesOrEngine.ModelSources = nil
+	withoutModelSourcesOrEngine.Engine = ""
+	directVLLM := directVLLMSpec()
+	directVLLM.ContainerEnv = []corev1.EnvVar{{Name: "HOME", Value: "/home/aim"}}
+	directVLLM.EngineEnv = map[string]string{"VLLM_LOGGING_LEVEL": "DEBUG"}
+
+	frameworkNames := []string{
+		constants.EnvAIMProfileID,
+		constants.EnvAIMEngine,
+		constants.EnvAIMID,
+		constants.EnvAIMModelID,
+		constants.EnvAIMCachePath,
+	}
+	tests := []struct {
+		name string
+		spec *aimv1alpha2.AIMProfileSpecCommon
+		want []string
+	}{
+		{
+			name: "AIM runtime with model sources",
+			spec: aimRuntimeSpec(),
+			want: frameworkNames,
+		},
+		{
+			name: "AIM runtime without model sources or engine",
+			spec: withoutModelSourcesOrEngine,
+			want: frameworkNames,
+		},
+		{
+			name: "direct vLLM",
+			spec: directVLLM,
+			want: append(slices.Clone(frameworkNames),
+				"VLLM_LOGGING_LEVEL", constants.EnvAIMVLLMModel, "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			names := OperatorOwnedEnvNames(tt.spec)
+			got := slices.Sorted(maps.Keys(names))
+			if want := slices.Sorted(slices.Values(tt.want)); !slices.Equal(got, want) {
+				t.Errorf("OperatorOwnedEnvNames = %v, want %v", got, want)
+			}
+
+			withoutContainerEnv := *tt.spec
+			withoutContainerEnv.ContainerEnv = nil
+			for _, env := range buildRuntimeEnv(&withoutContainerEnv, "profile.yaml", resolveVLLMModelReference(tt.spec, nil)) {
+				if !names[env.Name] {
+					t.Errorf("buildRuntimeEnv sets %s over containerEnv, want it in OperatorOwnedEnvNames %v", env.Name, got)
+				}
+			}
+		})
 	}
 }
 

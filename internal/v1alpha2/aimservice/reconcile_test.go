@@ -35,6 +35,7 @@ import (
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1127,6 +1128,344 @@ func TestPipelineRun_MaterializesProfileRuntimeBeforeInferenceService(t *testing
 	runProfileServicePipelineCycle(t, ctx, pipeline, currentService)
 	isvc = getObjectForTest(t, ctx, c, isvcKey, &servingv1beta1.InferenceService{})
 	assertInferenceServiceRuntime(t, isvc, updatedRuntimeName)
+}
+
+// TestPipelineRun_RuntimeConfigEnvReachesInferenceService pins the env order of
+// the profile pipeline: the operator-owned env wins, then the service
+// spec.env, then the profile containerEnv, then the namespace runtime config,
+// then the cluster runtime config. The env goes on the InferenceService and
+// KServe merges it over the ServingRuntime, so the shared ServingRuntime keeps
+// the profile values.
+func TestPipelineRun_RuntimeConfigEnvReachesInferenceService(t *testing.T) {
+	tests := []struct {
+		name           string
+		directVLLM     bool
+		containerEnv   []corev1.EnvVar
+		engineEnv      map[string]string
+		clusterEnv     []corev1.EnvVar
+		namespaceEnv   []corev1.EnvVar
+		serviceEnv     []corev1.EnvVar
+		wantModelEnv   map[string]string
+		wantRuntimeEnv map[string]string
+	}{
+		{
+			name:         "service, then profile containerEnv, then namespace, then cluster",
+			containerEnv: []corev1.EnvVar{{Name: "HOME", Value: "/profile-home"}},
+			clusterEnv: []corev1.EnvVar{
+				{Name: "HOME", Value: "/cluster"},
+				{Name: "USER", Value: "cluster"},
+				{Name: "LOGNAME", Value: "cluster"},
+				{Name: "TMPDIR", Value: "/cluster"},
+				{Name: constants.EnvAIMProfileID, Value: "custom/other/profile"},
+			},
+			namespaceEnv: []corev1.EnvVar{
+				{Name: "HOME", Value: "/namespace"},
+				{Name: "USER", Value: "namespace"},
+				{Name: "LOGNAME", Value: "namespace"},
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":4096}`},
+			},
+			serviceEnv: []corev1.EnvVar{
+				{Name: "HOME", Value: "/service"},
+				{Name: "USER", Value: "service"},
+				{Name: "AIM_ENGINE_ARGS", Value: `{"gpu-memory-utilization":0.8}`},
+			},
+			wantModelEnv: map[string]string{
+				"HOME":            "/service",
+				"USER":            "service",
+				"LOGNAME":         "namespace",
+				"TMPDIR":          "/cluster",
+				"AIM_ENGINE_ARGS": `{"gpu-memory-utilization":0.8,"max-model-len":4096}`,
+			},
+			wantRuntimeEnv: map[string]string{"HOME": "/profile-home"},
+		},
+		{
+			name: "runtime config name that the profile containerEnv sets keeps the profile value",
+			containerEnv: []corev1.EnvVar{
+				{Name: "HOME", Value: "/profile-home"},
+				{Name: "LANG", Value: "C.UTF-8"},
+			},
+			clusterEnv: []corev1.EnvVar{
+				{Name: "LANG", Value: "cluster"},
+				{Name: "USER", Value: "cluster"},
+			},
+			namespaceEnv: []corev1.EnvVar{{Name: "HOME", Value: "/namespace"}},
+			wantModelEnv: map[string]string{"USER": "cluster"},
+			wantRuntimeEnv: map[string]string{
+				"HOME": "/profile-home",
+				"LANG": "C.UTF-8",
+			},
+		},
+		{
+			name: "operator-owned name in service env is left out",
+			serviceEnv: []corev1.EnvVar{
+				{Name: constants.EnvAIMProfileID, Value: "custom/other/profile"},
+				{Name: constants.EnvAIMEngine, Value: "sglang"},
+				// The profile has no modelSources, so the operator doesn't set AIM_MODEL_ID.
+				{Name: constants.EnvAIMModelID, Value: "org/other-model"},
+				{Name: "USER", Value: "service"},
+			},
+			wantModelEnv:   map[string]string{"USER": "service"},
+			wantRuntimeEnv: map[string]string{constants.EnvAIMEngine: "vllm"},
+		},
+		{
+			name: "operator-owned name that the operator leaves unset in runtime config env is left out",
+			// The profile has no modelSources, so the operator sets neither
+			// AIM_MODEL_ID nor AIM_CACHE_PATH.
+			clusterEnv: []corev1.EnvVar{
+				{Name: constants.EnvAIMCachePath, Value: "/cluster-cache"},
+				{Name: "USER", Value: "cluster"},
+			},
+			namespaceEnv: []corev1.EnvVar{{Name: constants.EnvAIMModelID, Value: "org/other-model"}},
+			wantModelEnv: map[string]string{"USER": "cluster"},
+		},
+		{
+			name:       "direct-vLLM engineEnv name in service env is left out",
+			directVLLM: true,
+			engineEnv:  map[string]string{"VLLM_LOGGING_LEVEL": "DEBUG"},
+			serviceEnv: []corev1.EnvVar{
+				{Name: "VLLM_LOGGING_LEVEL", Value: "INFO"},
+				{Name: "HF_HUB_OFFLINE", Value: "1"},
+				{Name: "USER", Value: "service"},
+			},
+			wantModelEnv: map[string]string{"USER": "service"},
+			wantRuntimeEnv: map[string]string{
+				"VLLM_LOGGING_LEVEL": "DEBUG",
+				"HF_HUB_OFFLINE":     "0",
+			},
+		},
+		{
+			name: "AIM_ENGINE_ARGS in the profile containerEnv is merged per key with the runtime configs and service env",
+			containerEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"swap-space":4,"block-size":32}`},
+			},
+			clusterEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-num-seqs":64,"max-model-len":2048,"swap-space":1,"block-size":8}`},
+			},
+			namespaceEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":4096,"swap-space":2,"block-size":16}`},
+			},
+			serviceEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"block-size":64}`},
+			},
+			wantModelEnv: map[string]string{
+				"AIM_ENGINE_ARGS": `{"block-size":64,"max-model-len":4096,"max-num-seqs":64,"swap-space":4}`,
+			},
+			wantRuntimeEnv: map[string]string{"AIM_ENGINE_ARGS": `{"swap-space":4,"block-size":32}`},
+		},
+		{
+			name: "AIM_ENGINE_ARGS in the profile containerEnv and a runtime config",
+			containerEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":8192}`},
+			},
+			namespaceEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":4096,"max-num-seqs":64}`},
+			},
+			wantModelEnv: map[string]string{
+				"AIM_ENGINE_ARGS": `{"max-model-len":8192,"max-num-seqs":64}`,
+			},
+			wantRuntimeEnv: map[string]string{"AIM_ENGINE_ARGS": `{"max-model-len":8192}`},
+		},
+		{
+			name: "AIM_ENGINE_ARGS in the profile containerEnv and service env",
+			containerEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":8192,"swap-space":4}`},
+			},
+			serviceEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"swap-space":8}`},
+			},
+			wantModelEnv: map[string]string{
+				"AIM_ENGINE_ARGS": `{"max-model-len":8192,"swap-space":8}`,
+			},
+			wantRuntimeEnv: map[string]string{"AIM_ENGINE_ARGS": `{"max-model-len":8192,"swap-space":4}`},
+		},
+		{
+			name: "AIM_ENGINE_ARGS only in the profile containerEnv adds nothing",
+			containerEnv: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":8192}`},
+			},
+			clusterEnv:     []corev1.EnvVar{{Name: "USER", Value: "cluster"}},
+			wantModelEnv:   map[string]string{"USER": "cluster"},
+			wantRuntimeEnv: map[string]string{"AIM_ENGINE_ARGS": `{"max-model-len":8192}`},
+		},
+		{
+			name:         "no env anywhere leaves the InferenceService without env",
+			wantModelEnv: map[string]string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			service := &aimv1alpha1.AIMService{
+				ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+				Spec: aimv1alpha1.AIMServiceSpec{
+					Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testClusterProfileName},
+				},
+			}
+			service.Spec.Env = tt.serviceEnv
+			profileSpec := sampleProfileSpec()
+			profileSpec.ContainerEnv = tt.containerEnv
+			profileSpec.EngineEnv = tt.engineEnv
+			if tt.directVLLM {
+				profileSpec.AcceleratorVendor = aimv1alpha1.AcceleratorVendorNVIDIA
+			}
+			clusterProfile := &aimv1alpha2.AIMClusterProfile{
+				ObjectMeta: metav1.ObjectMeta{Name: testClusterProfileName, UID: "profile-uid"},
+				Spec:       aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: *profileSpec},
+				Status: aimv1alpha2.AIMProfileStatus{
+					Status:     constants.AIMStatusReady,
+					Deployable: true,
+				},
+			}
+			clusterConfig := &aimv1alpha1.AIMClusterRuntimeConfig{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+			clusterConfig.Spec.Env = tt.clusterEnv
+			namespaceConfig := &aimv1alpha1.AIMRuntimeConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "ns"}}
+			namespaceConfig.Spec.Env = tt.namespaceEnv
+
+			c, pipeline := newProfileRuntimePipelineFixture(t, service, clusterProfile)
+			for _, config := range []client.Object{clusterConfig, namespaceConfig} {
+				if err := c.Create(ctx, config); err != nil {
+					t.Fatalf("create %T: %v", config, err)
+				}
+			}
+			serviceKey := client.ObjectKey{Name: testServiceName, Namespace: "ns"}
+			for range 2 {
+				runProfileServicePipelineCycle(t, ctx, pipeline, getProfileServiceForTest(t, ctx, c, serviceKey))
+			}
+
+			isvcName, err := v1alpha1service.GenerateInferenceServiceName(testServiceName, "ns")
+			if err != nil {
+				t.Fatalf("generate InferenceService name: %v", err)
+			}
+			isvc := getObjectForTest(t, ctx, c, client.ObjectKey{Name: isvcName, Namespace: "ns"}, &servingv1beta1.InferenceService{})
+			got := isvc.Spec.Predictor.Model.Env
+			if len(got) != len(tt.wantModelEnv) || !equality.Semantic.DeepEqual(envMap(got), tt.wantModelEnv) {
+				t.Errorf("InferenceService model env = %v, want %v", got, tt.wantModelEnv)
+			}
+
+			runtimeKey := client.ObjectKey{Name: serving.RuntimeName(testClusterProfileName), Namespace: "ns"}
+			servingRuntime := getObjectForTest(t, ctx, c, runtimeKey, &kservev1alpha1.ServingRuntime{})
+			runtimeEnv := envMap(servingRuntime.Spec.Containers[0].Env)
+			for name, want := range tt.wantRuntimeEnv {
+				if runtimeEnv[name] != want {
+					t.Errorf("ServingRuntime %s = %q, want the profile value %q", name, runtimeEnv[name], want)
+				}
+			}
+			for name := range tt.wantModelEnv {
+				if _, fromProfile := tt.wantRuntimeEnv[name]; fromProfile {
+					continue
+				}
+				if _, found := runtimeEnv[name]; found {
+					t.Errorf("ServingRuntime env has %s, want it only on the InferenceService", name)
+				}
+			}
+		})
+	}
+}
+
+// TestRuntimeConfigEnv_KeepsServingRuntimeEntryKServeCannotReplace pins that a
+// service spec.env entry stays off the InferenceService when KServe's
+// field-by-field merge over the ServingRuntime entry would not give the
+// spec.env entry. The ServingRuntime keeps the profile value then, instead of
+// the pod getting an entry with both a value and a valueFrom.
+func TestRuntimeConfigEnv_KeepsServingRuntimeEntryKServeCannotReplace(t *testing.T) {
+	profileSecret := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "profile-token"},
+		Key:                  "token",
+	}}
+	serviceSecret := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "service-home"},
+		Key:                  "home",
+	}}
+	tests := []struct {
+		name       string
+		runtimeEnv []corev1.EnvVar
+		configEnv  []corev1.EnvVar
+		serviceEnv []corev1.EnvVar
+	}{
+		{
+			name:       "value over a profile valueFrom",
+			runtimeEnv: []corev1.EnvVar{{Name: "HF_TOKEN", ValueFrom: profileSecret}},
+			serviceEnv: []corev1.EnvVar{{Name: "HF_TOKEN", Value: "hf_service"}},
+		},
+		{
+			name:       "valueFrom over a profile value",
+			runtimeEnv: []corev1.EnvVar{{Name: "HOME", Value: "/profile-home"}},
+			serviceEnv: []corev1.EnvVar{{Name: "HOME", ValueFrom: serviceSecret}},
+		},
+		{
+			name:       "empty value over a profile value",
+			runtimeEnv: []corev1.EnvVar{{Name: "HOME", Value: "/profile-home"}},
+			serviceEnv: []corev1.EnvVar{{Name: "HOME", Value: ""}},
+		},
+		{
+			name:       "AIM_ENGINE_ARGS over a profile valueFrom",
+			runtimeEnv: []corev1.EnvVar{{Name: "AIM_ENGINE_ARGS", ValueFrom: profileSecret}},
+			configEnv:  []corev1.EnvVar{{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":4096}`}},
+			serviceEnv: []corev1.EnvVar{{Name: "AIM_ENGINE_ARGS", Value: `{"swap-space":8}`}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &aimv1alpha1.AIMService{
+				ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+			}
+			service.Spec.Env = tt.serviceEnv
+			runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+			runtimeConfig.Env = tt.configEnv
+			servingRuntime := &kservev1alpha1.ServingRuntime{}
+			servingRuntime.Spec.Containers = []corev1.Container{{Name: constants.ContainerKServe, Env: tt.runtimeEnv}}
+
+			if got := runtimeConfigEnv(service, runtimeConfig, sampleProfileSpec(), servingRuntime); len(got) != 0 {
+				t.Errorf("runtimeConfigEnv = %v, want no env", got)
+			}
+		})
+	}
+}
+
+// TestRuntimeConfigEnvDoesNotChangeOverlayOrCache pins that the runtime config
+// env and the service spec.env are not inputs of the overlay profile or of the
+// profile cache. A change to either would give the service a new cache, which
+// downloads the model weights again.
+func TestRuntimeConfigEnvDoesNotChangeOverlayOrCache(t *testing.T) {
+	build := func(env []corev1.EnvVar) (*aimv1alpha2.AIMProfile, *aimv1alpha2.AIMProfileCache) {
+		service := &aimv1alpha1.AIMService{
+			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+			Spec: aimv1alpha1.AIMServiceSpec{
+				Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+				ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
+					ContainerEnv: []corev1.EnvVar{{Name: "HOME", Value: "/tmp"}},
+				},
+				Caching: &aimv1alpha1.AIMServiceCachingConfig{Mode: aimv1alpha1.CachingModeDedicated},
+			},
+		}
+		service.Spec.Env = env
+		runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+		runtimeConfig.Env = env
+		obs := ServiceObservation{
+			ServiceFetchResult: ServiceFetchResult{
+				service:             service,
+				mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig},
+			},
+			resolvedProfileSpec:   profileSpecWithModelSources(),
+			resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+			profileName:           testProfileA,
+			profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
+		}
+		overlay, _, err := buildServiceOverlayProfile(service, obs)
+		if err != nil {
+			t.Fatalf("buildServiceOverlayProfile: %v", err)
+		}
+		return overlay, planProfileCache(service, obs)
+	}
+
+	overlay, cache := build(nil)
+	overlayWithEnv, cacheWithEnv := build([]corev1.EnvVar{{Name: "USER", Value: "aim"}})
+	if !equality.Semantic.DeepEqual(overlayWithEnv, overlay) {
+		t.Errorf("env changed the overlay profile:\n got %+v\nwant %+v", overlayWithEnv, overlay)
+	}
+	if cache == nil || !equality.Semantic.DeepEqual(cacheWithEnv, cache) {
+		t.Errorf("env changed the profile cache:\n got %+v\nwant %+v", cacheWithEnv, cache)
+	}
 }
 
 type profileRuntimeTestPipeline = controllerutils.Pipeline[
@@ -2518,9 +2857,9 @@ func TestPlanProfileCache_CreatesSharedCache(t *testing.T) {
 }
 
 // TestPlanProfileCache_ServiceCachingEnvReachesCache locks the regression fix:
-// for a cluster-scoped (or overlay) profile there is no profile caching.env, so
-// the service's spec.caching.env is the only credential source that reaches the
-// download Job. obs.profile.Value is nil here to model the cluster-scoped path.
+// a cluster-scoped profile has no caching.env, so the service's
+// spec.caching.env is the only credential source that reaches the download
+// Job. obs.profile.Value is nil here to model the cluster-scoped path.
 func TestPlanProfileCache_ServiceCachingEnvReachesCache(t *testing.T) {
 	token := corev1.EnvVar{
 		Name: "HF_TOKEN",
@@ -2609,6 +2948,89 @@ func TestPlanProfileCache_ServiceCachingEnvOverridesProfile(t *testing.T) {
 	}
 	if got["PROFILE_ONLY"] != "profile-only-val" {
 		t.Errorf("profile-only caching.env key must be preserved, got %q", got["PROFILE_ONLY"])
+	}
+}
+
+// TestPlanProfileCache_OverlayUsesSeedProfileCachingEnv pins that the cache of
+// a service overlay gets the caching.env of a namespace seed profile, under the
+// service spec.caching.env. The overlay AIMProfile itself has no caching
+// field, and a cluster seed has none either.
+func TestPlanProfileCache_OverlayUsesSeedProfileCachingEnv(t *testing.T) {
+	seedSpec := profileSpecWithModelSources()
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
+				ContainerEnv: []corev1.EnvVar{{Name: "HOME", Value: "/tmp"}},
+			},
+			Caching: &aimv1alpha1.AIMServiceCachingConfig{
+				Env: []corev1.EnvVar{{Name: "HF_TOKEN", Value: "from-service"}},
+			},
+		},
+	}
+	tests := []struct {
+		name  string
+		fetch ServiceFetchResult
+		want  map[string]string
+	}{
+		{
+			name: "namespace seed profile",
+			fetch: ServiceFetchResult{
+				service: service,
+				profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: &aimv1alpha2.AIMProfile{
+					ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
+					Spec: aimv1alpha2.AIMProfileSpec{
+						AIMProfileSpecCommon: *seedSpec,
+						Caching: &aimv1alpha2.AIMProfileCachingConfig{Env: []corev1.EnvVar{
+							{Name: "HF_TOKEN", Value: "from-profile"},
+							{Name: "HF_ENDPOINT", Value: "https://huggingface.example.com"},
+						}},
+					},
+				}},
+			},
+			want: map[string]string{
+				"HF_TOKEN":    "from-service",
+				"HF_ENDPOINT": "https://huggingface.example.com",
+			},
+		},
+		{
+			name: "cluster seed profile",
+			fetch: ServiceFetchResult{
+				service: service,
+				clusterProfile: controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{Value: &aimv1alpha2.AIMClusterProfile{
+					ObjectMeta: metav1.ObjectMeta{Name: testProfileA},
+					Spec:       aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: *seedSpec},
+				}},
+			},
+			want: map[string]string{"HF_TOKEN": "from-service"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obs := (&ProfileServiceReconciler{}).ComposeState(
+				context.Background(),
+				controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+				tt.fetch,
+			)
+			if obs.configErr != nil {
+				t.Fatalf("ComposeState: %v", obs.configErr)
+			}
+			if obs.desiredOverlayProfile == nil || obs.desiredOverlayProfile.Spec.Caching != nil {
+				t.Fatalf("want an overlay profile without a caching field, got %+v", obs.desiredOverlayProfile)
+			}
+
+			cache := planProfileCache(service, obs)
+			if cache == nil {
+				t.Fatalf("expected profile cache to be planned")
+			}
+			if cache.Spec.ProfileName != obs.desiredOverlayProfile.Name {
+				t.Errorf("cache profile = %q, want the overlay %q", cache.Spec.ProfileName, obs.desiredOverlayProfile.Name)
+			}
+			if got := envMap(cache.Spec.Env); !equality.Semantic.DeepEqual(got, tt.want) {
+				t.Errorf("cache env = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

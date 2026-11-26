@@ -1,0 +1,19 @@
+# spec.caching.env reaches only download Jobs and spec.env only inference
+# containers. The failure switch sits in spec.env, so the download succeeds only
+# if download Jobs ignore spec.env.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: download-env-split
+spec:
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "1"
+      - name: DOWNLOAD_ONLY
+        value: "1"
+  env:
+    - name: AIM_DEBUG_CAUSE_FAILURE
+      value: "true"
+    - name: INFERENCE_ONLY
+      value: "1"

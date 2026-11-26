@@ -29,7 +29,7 @@ Derived resource names are **not** predictable from the parent name alone. Alway
 | Derived `AIMProfile` | `AIMProfileSet` | `[profileSetName, accelOrAlias]` | logical source identity + effective configuration and overrides |
 | Overlay `AIMProfile` | `AIMService.spec.profileOverrides` | `[seedName, serviceName, "overlay"]` | service UID + overrides |
 | `AIMProfileCache` | `AIMService` (when caching enabled) | `[profileName]` | namespace |
-| `AIMArtifact` | `AIMProfileCache` | `[sourceURI]` | source URI + env + storage |
+| `AIMArtifact` | `AIMProfileCache` | `[sourceURI]` | source URI + env + storage class + download filter (+ runtime config for `s3://`, cache name for Dedicated) |
 | Discovery `ConfigMap` | `AIMModel` | `[modelName, "discovery"]` | model + spec hash |
 | Discovery `Job` | `AIMModel` | `[modelName, "discovery", "job"]` | spec hash |
 | `InferenceService` | `AIMService` | `[serviceName]` | namespace |

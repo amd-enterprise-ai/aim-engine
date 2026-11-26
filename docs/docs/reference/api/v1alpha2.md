@@ -368,7 +368,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enabled controls whether caching is enabled for this profile. | false |  |
-| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for model download during caching. If not set, falls back to the profile's ContainerEnv. |  | Optional: \{\} |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for the model download Jobs of this profile's caches, not for the inference container. The AIMService spec.caching.env and the model source env win over it, and it wins over the runtime config spec.caching.env. |  | Optional: \{\} |
 
 
 #### AIMProfileList

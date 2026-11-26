@@ -64,19 +64,20 @@ func DirectS3Connection(runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *aimv
 	return runtimeConfig.Artifact.S3
 }
 
-// ResolveS3PodSettings merges the legacy environment contract and then applies
+// ResolveS3PodSettings merges the legacy environment contract (defaults, then
+// the runtime config spec.caching.env, then the artifact env) and then applies
 // the typed connection as the final authority. A nil connection preserves the
 // existing environment-only behavior exactly.
 func ResolveS3PodSettings(
 	connection *aimv1alpha1.S3ConnectionConfig,
 	defaults []corev1.EnvVar,
-	runtimeEnv []corev1.EnvVar,
+	runtimeCachingEnv []corev1.EnvVar,
 	artifactEnv []corev1.EnvVar,
 ) S3PodSettings {
 	if connection != nil {
 		artifactEnv = filterTypedS3ArtifactEnv(artifactEnv)
 	}
-	env := utils.MergeEnvVars(defaults, runtimeEnv)
+	env := utils.MergeEnvVars(defaults, runtimeCachingEnv)
 	env = utils.MergeEnvVars(env, artifactEnv)
 
 	settings := S3PodSettings{Env: env}
@@ -213,8 +214,9 @@ func ResolveTrustProjection(
 
 // ValidateTypedS3ArtifactEnv rejects process, transport, trust, and credential
 // controls from an artifact when an administrator selected a typed S3
-// connection. RuntimeConfig env remains the administrator-owned place for
-// infrastructure settings such as proxies and SDK credential providers.
+// connection. The runtime config spec.caching.env remains the
+// administrator-owned place for download infrastructure settings such as
+// proxies and SDK credential providers.
 func ValidateTypedS3ArtifactEnv(artifactEnv []corev1.EnvVar) error {
 	var problems []string
 	for _, item := range artifactEnv {
@@ -229,7 +231,7 @@ func ValidateTypedS3ArtifactEnv(artifactEnv []corev1.EnvVar) error {
 	return fmt.Errorf(
 		"typed S3 connections only allow bounded downloader tuning in "+
 			"AIMArtifact.spec.env: %s; configure transport, proxy, trust, and "+
-			"credential-provider settings through RuntimeConfig",
+			"credential-provider settings in the runtime config spec.caching.env",
 		strings.Join(problems, "; "),
 	)
 }
