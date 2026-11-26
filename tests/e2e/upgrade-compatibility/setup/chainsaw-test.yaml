@@ -183,7 +183,7 @@ spec:
                       | [.metadata.ownerReferences[]?
                           | select(.kind == "AIMArtifact" and .name == "upgrade-model-artifact")
                           | .apiVersion]
-                    ] == [["aim.eai.amd.com/v1alpha1"], ["aim.eai.amd.com/v1alpha1"]]
+                    ] == [["aim.eai.amd.com/v1alpha2"], ["aim.eai.amd.com/v1alpha2"]]
                   ' >/dev/null
         - script:
             env:
@@ -195,7 +195,7 @@ spec:
               kubectl get aimartifact upgrade-adapter-artifact -n "$NAMESPACE" -o json \
                 | jq -e --arg uid "$uid" '
                     [.metadata.ownerReferences[]? | select(.uid == $uid) | .apiVersion]
-                    == ["aim.eai.amd.com/v1alpha1"]
+                    == ["aim.eai.amd.com/v1alpha2"]
                   ' >/dev/null
 
     - name: Wait for the discovered cluster model
@@ -216,5 +216,5 @@ spec:
               kubectl get aimclustermodel -l aim.eai.amd.com/model-source=upgrade-model-source -o json \
                 | jq -e --arg uid "$uid" '
                     [.items[] | .metadata.ownerReferences[]? | select(.uid == $uid) | .apiVersion]
-                    == ["aim.eai.amd.com/v1alpha1"]
+                    == ["aim.eai.amd.com/v1alpha2"]
                   ' >/dev/null
