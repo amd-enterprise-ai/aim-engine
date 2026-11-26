@@ -81,7 +81,7 @@ spec:
 AIM Engine automatically:
 
 1. Stamps the InferenceService with `autoscalerClass=external` so KServe writes no autoscaler of its own
-2. Creates a controller-owned `OpenTelemetryCollector` (`{isvc-name}-predictor`) that the OpenTelemetry Operator injects as a sidecar, `otc-container`, into the predictor pods. The sidecar scrapes the vLLM metrics of its pod and sends the metrics named in `metricNames` to keda-otel-add-on. The sidecar runs without privilege escalation and drops all capabilities; for namespaces that enforce the Pod Security Standard `restricted`, see [Restricted Pod Security](restricted-pod-security.md#autoscaling-sidecar)
+2. Creates a controller-owned `OpenTelemetryCollector` (`{isvc-name}-predictor`) that the OpenTelemetry Operator injects as a sidecar, `otc-container`, into the predictor pods. The sidecar scrapes the vLLM metrics of its pod every `5s` and sends the metrics named in `metricNames` to keda-otel-add-on. It requests `200m` CPU and `512Mi` memory and is limited to `1` CPU and `2Gi` memory. The sidecar runs without privilege escalation and drops all capabilities; for namespaces that enforce the Pod Security Standard `restricted`, see [Restricted Pod Security](restricted-pod-security.md#autoscaling-sidecar)
 3. Creates a controller-owned KEDA `ScaledObject` targeting the predictor `Deployment`; KEDA in turn manages the HPA (`keda-hpa-{isvc-name}-predictor`, based on the derived InferenceService name)
 
 ### Scale to Zero

@@ -89,7 +89,10 @@ kubectl get aimservice <name> -n my-models \
   -o jsonpath='{.status.conditions[?(@.type=="InferenceServiceReady")].message}'
 ```
 
-A message such as `violates PodSecurity "restricted:latest": runAsNonRoot != true` names the missing field and the container. A frequent cause is an AIMService that sets its own `podSecurityContext` or `securityContext`: this value replaces the runtime config value as a whole, also when it is `{}`. If the message names the container `otc-container`, see [Limitations](#limitations).
+A message such as `violates PodSecurity "restricted:latest": runAsNonRoot != true` names the missing field and the container. A frequent cause is an AIMService that sets its own `podSecurityContext` or `securityContext`: this value replaces the runtime config value as a whole, also when it is `{}`. If the message names the container `otc-container`, the reason tells which part is missing:
+
+- `runAsNonRoot != true` or `seccompProfile`: `spec.podSecurityContext` does not set the field, and the sidecar has no value of its own. See [Autoscaling Sidecar](#autoscaling-sidecar).
+- `allowPrivilegeEscalation != false` or `unrestricted capabilities`: the sidecar has no container security context. See [Limitations](#limitations).
 
 The ReplicaSet tries again to create the Pod, with an increasing delay of up to about 16 minutes. To try again at once after you fix the cause, restart the predictor Deployment:
 
