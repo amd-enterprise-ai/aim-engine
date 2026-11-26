@@ -325,6 +325,19 @@ The old artifact and its PVC stay behind after the switch. A shared artifact has
    kubectl delete aimartifact -n <namespace> <old-artifact-name>
    ```
 
+### Pod Security for operator Jobs on OpenShift
+
+The Jobs that the operator creates now meet the Pod Security Standard `restricted` (see [Operator Jobs](security.md#operator-jobs)). The size check, download and adapter Jobs set the `RuntimeDefault` seccomp profile, and the `AIMModel` and `AIMClusterModel` discovery Job runs as UID 65532 instead of root.
+
+An OpenShift installation that followed an earlier version of the [OpenShift guide](openshift.md) granted only `anyuid` to the model namespace. After the upgrade, `anyuid` refuses the size check, download and adapter Jobs because it allows no seccomp profile, and the default restricted SCC refuses their UID 1000. The default restricted SCC also refuses the `AIMClusterModel` discovery Job in the operator namespace, because UID 65532 is outside the namespace UID range. Before you upgrade the operator, grant the built-in `nonroot-v2` SCC to the service accounts that run these Jobs. With the namespaces and accounts of the OpenShift guide:
+
+```bash
+oc adm policy add-scc-to-user nonroot-v2 -z default -n aim-models
+oc adm policy add-scc-to-user nonroot-v2 -z default -n aim-system
+```
+
+Keep the `anyuid` grant for the predictor. If your models set `spec.serviceAccountName` or run in other namespaces, grant `nonroot-v2` to those service accounts.
+
 ## Migration window
 
 The bridge keeps supported predecessor objects reconciling while native

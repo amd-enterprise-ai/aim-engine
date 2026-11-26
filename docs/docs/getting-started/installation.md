@@ -127,8 +127,9 @@ helm install aim-engine ./dist/chart \
 ```
 
 :::{tip}
-This project uses [mise](https://mise.jdx.dev) to manage tool versions (Go, controller-gen, etc.). Run `mise install` and `eval "$(mise activate bash)"` to get the correct versions on your PATH. See [Development Setup](../contributing/development-setup.md) for details.
+This project uses [mise](https://mise.jdx.dev) to manage tool versions (Go, controller-gen, etc.). Run `mise install` and `eval "$(mise activate bash)"` to get the correct versions on your PATH. See [Development Setup](https://github.com/amd-enterprise-ai/aim-engine/blob/main/docs/docs/contributing/development-setup.md) for details.
 :::
+
 ## Common Configuration
 
 ### Customize Cluster Runtime Defaults

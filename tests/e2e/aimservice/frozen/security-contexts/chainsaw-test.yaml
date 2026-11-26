@@ -1,0 +1,330 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: inference pod security contexts (v1alpha2)
+#
+# A v1alpha2 AIMService first inherits the namespace runtime config's
+# podSecurityContext and securityContext on its InferenceService predictor.
+# The service then sets its own podSecurityContext and an empty
+# securityContext. Each must replace the inherited value as a whole: no
+# runtime config field may remain. The unit tests cover the merge rule; this
+# test covers what they cannot: that an explicit {} survives admission, storage
+# and version conversion as an empty object rather than an unset one, and that
+# the existing InferenceService changes to the service's values.
+#
+# Before that, the test checks that the CRDs refuse settings that Pod Security
+# baseline forbids: privileged on AIMService in both served versions, and one
+# Pod-level and one container-level value on AIMRuntimeConfig and on
+# AIMClusterRuntimeConfig. The namespace runtime config is the restricted
+# example of the docs, so its creation shows that the CRD accepts it.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterProfile (Ready, CPU-only), AIMProfileCache and
+# AIMArtifact (Ready)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: security-contexts
+  labels:
+    hf-access: live
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Refuse privileged on a v1alpha1 AIMService
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'securityContext.privileged must not be true')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-security-contexts-privileged-v1a1
+              spec:
+                model:
+                  name: some-model
+                securityContext:
+                  privileged: true
+
+    - name: Refuse privileged on a v1alpha2 AIMService
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'securityContext.privileged must not be true')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-security-contexts-privileged-v1a2
+              spec:
+                profile:
+                  name: test-security-contexts-profile
+                securityContext:
+                  privileged: true
+
+    - name: Refuse an Unconfined seccomp profile on AIMRuntimeConfig
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'podSecurityContext.seccompProfile.type must be RuntimeDefault or Localhost')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMRuntimeConfig
+              metadata:
+                name: test-security-contexts-refused
+              spec:
+                podSecurityContext:
+                  seccompProfile:
+                    type: Unconfined
+
+    - name: Refuse an added capability on AIMRuntimeConfig
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'securityContext.capabilities.add must be empty')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMRuntimeConfig
+              metadata:
+                name: test-security-contexts-refused
+              spec:
+                securityContext:
+                  capabilities:
+                    add: [SYS_ADMIN]
+
+    - name: Refuse a custom SELinux type on AIMClusterRuntimeConfig
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'podSecurityContext.seLinuxOptions.type must be empty')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterRuntimeConfig
+              metadata:
+                name: test-security-contexts-refused
+              spec:
+                podSecurityContext:
+                  seLinuxOptions:
+                    type: spc_t
+
+    - name: Refuse an Unmasked proc mount on AIMClusterRuntimeConfig
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'securityContext.procMount must be Default')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterRuntimeConfig
+              metadata:
+                name: test-security-contexts-refused
+              spec:
+                securityContext:
+                  procMount: Unmasked
+
+    - use:
+        template: ../../../_shared/hf-token-step.yaml
+
+    - name: Create the namespace runtime config with security contexts
+      # runtime-config.yaml is the restricted example of the docs, so this
+      # step also shows that the CRD accepts it.
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create frozen CPU cluster profile with Ready status
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create the service without its own security contexts
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Freeze profile cache and artifact to Ready
+      # The profile carries a real hf:// source; freeze the cache and artifact
+      # so the InferenceService is planned without a download.
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              for _ in $(seq 1 30); do
+                PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/service=test-security-contexts-service \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                ART_NAME=$(kubectl get aimartifact -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/profile.name=test-security-contexts-profile \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [ -n "$PC_NAME" ] && [ -n "$ART_NAME" ]; then
+                  break
+                fi
+                sleep 1
+              done
+
+              if [ -z "$PC_NAME" ] || [ -z "$ART_NAME" ]; then
+                echo "ERROR: profile cache or artifact not found in time"
+                kubectl get aimprofilecache,aimartifact -n "$NAMESPACE" -o wide || true
+                exit 1
+              fi
+              echo "Found AIMProfileCache=$PC_NAME AIMArtifact=$ART_NAME"
+
+              ART_UID=$(kubectl get aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                -o jsonpath='{.metadata.uid}')
+
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl annotate aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+
+              kubectl patch aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p '{
+                  "status": {
+                    "status": "Ready",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True",
+                        "reason": "Ready",
+                        "message": "Artifact frozen Ready by chainsaw test",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      }
+                    ],
+                    "persistentVolumeClaim": "'"$ART_NAME"'-pvc"
+                  }
+                }'
+
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p '{
+                  "status": {
+                    "status": "Ready",
+                    "conditions": [
+                      {
+                        "type": "ProfileFound",
+                        "status": "True",
+                        "reason": "ProfileResolved",
+                        "message": "Profile resolved",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      },
+                      {
+                        "type": "ArtifactsReady",
+                        "status": "True",
+                        "reason": "AllCachesReady",
+                        "message": "All artifacts are ready",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      },
+                      {
+                        "type": "Ready",
+                        "status": "True",
+                        "reason": "Ready",
+                        "message": "Profile cache frozen Ready by chainsaw test",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      }
+                    ],
+                    "artifacts": {
+                      "'"$ART_NAME"'": {
+                        "name": "'"$ART_NAME"'",
+                        "uid": "'"$ART_UID"'",
+                        "model": "Qwen/Qwen3-0.6B",
+                        "status": "Ready",
+                        "persistentVolumeClaim": "'"$ART_NAME"'-pvc",
+                        "mountPoint": "/workspace/cache/Qwen/Qwen3-0.6B"
+                      }
+                    }
+                  }
+                }'
+
+              echo "Patched $PC_NAME and $ART_NAME to Ready"
+
+    - name: Assert the InferenceService inherits the runtime config's security contexts
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-security-contexts-service
+              spec:
+                predictor:
+                  securityContext:
+                    runAsNonRoot: true
+                    runAsUser: 1000
+                    runAsGroup: 1000
+                    fsGroup: 1000
+                    supplementalGroups: [44, 110]
+                    seccompProfile:
+                      type: RuntimeDefault
+                  model:
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop: [ALL]
+
+    - name: Set the service's own pod security context and an empty container security context
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              # Target v1alpha2 explicitly; kubectl otherwise picks the first
+              # served version.
+              SVC_GV=aimservices.v1alpha2.aim.eai.amd.com
+              kubectl patch "$SVC_GV" test-security-contexts-service -n "$NAMESPACE" \
+                --type=merge \
+                -p '{"spec":{"podSecurityContext":{"runAsNonRoot":true,"runAsUser":2000},"securityContext":{}}}'
+
+              # An empty object must be stored as {}, not dropped to unset, in
+              # both served versions; unset would inherit the runtime config's.
+              for VERSION in v1alpha2 v1alpha1; do
+                STORED=$(kubectl get "aimservices.$VERSION.aim.eai.amd.com" test-security-contexts-service \
+                  -n "$NAMESPACE" -o json | jq -c -S '[.spec.podSecurityContext, .spec.securityContext]')
+                if [ "$STORED" != '[{"runAsNonRoot":true,"runAsUser":2000},{}]' ]; then
+                  echo "ERROR: $VERSION [spec.podSecurityContext, spec.securityContext] is $STORED"
+                  exit 1
+                fi
+              done
+              echo "OK: the service's security contexts are stored in v1alpha2 and v1alpha1"
+
+    - name: Assert the InferenceService has only the service's security contexts
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-security-contexts-service
+              spec:
+                predictor:
+                  securityContext:
+                    runAsNonRoot: true
+                    runAsUser: 2000
+                  # No runtime config field (fsGroup, supplementalGroups, ...)
+                  # may remain next to the service's two fields.
+                  (length(securityContext)): 2
+                  model:
+                    (length(securityContext || `{}`)): 0
