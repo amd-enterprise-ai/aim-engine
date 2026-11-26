@@ -30,6 +30,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
@@ -992,6 +994,85 @@ func TestRewriteV1alpha1OwnerReference(t *testing.T) {
 				}
 			} else if got.ResourceVersion != resourceVersion {
 				t.Errorf("resourceVersion = %s, want %s with no patch", got.ResourceVersion, resourceVersion)
+			}
+		})
+	}
+}
+
+func TestRewriteV1alpha1OwnerReferencePatchRaces(t *testing.T) {
+	ownerUID := types.UID("artifact-uid")
+	v1alpha1Ref := metav1.OwnerReference{
+		APIVersion: "aim.eai.amd.com/v1alpha1",
+		Kind:       "AIMArtifact",
+		Name:       "weights",
+		UID:        ownerUID,
+	}
+
+	tests := []struct {
+		name string
+		// race runs against the stored PVC just before the rewrite patch.
+		race    func(ctx context.Context, c client.Client, pvc client.Object) error
+		wantErr func(error) bool
+	}{
+		{
+			name: "deleted child has nothing to rewrite",
+			race: func(ctx context.Context, c client.Client, pvc client.Object) error {
+				return c.Delete(ctx, pvc.DeepCopyObject().(client.Object))
+			},
+			wantErr: func(err error) bool { return err == nil },
+		},
+		{
+			name: "changed child returns the conflict",
+			race: func(ctx context.Context, c client.Client, pvc client.Object) error {
+				current := &corev1.PersistentVolumeClaim{}
+				if err := c.Get(ctx, client.ObjectKeyFromObject(pvc), current); err != nil {
+					return err
+				}
+				current.Labels = map[string]string{"edited": "true"}
+				return c.Update(ctx, current)
+			},
+			wantErr: apierrors.IsConflict,
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "weights-cache",
+					Namespace:       "models",
+					OwnerReferences: []metav1.OwnerReference{v1alpha1Ref},
+				},
+			}
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(pvc).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+						if err := tt.race(ctx, c, obj); err != nil {
+							t.Fatalf("race: %v", err)
+						}
+						return c.Patch(ctx, obj, patch, opts...)
+					},
+				}).
+				Build()
+			stored := &corev1.PersistentVolumeClaim{}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(pvc), stored); err != nil {
+				t.Fatalf("get pvc: %v", err)
+			}
+
+			err := RewriteV1alpha1OwnerReference(ctx, c, stored, ownerUID)
+			if !tt.wantErr(err) {
+				t.Fatalf("rewrite error = %v", err)
+			}
+			if !reflect.DeepEqual(stored.OwnerReferences, []metav1.OwnerReference{v1alpha1Ref}) {
+				t.Errorf("in-memory owner references = %#v, want the unpatched reference", stored.OwnerReferences)
 			}
 		})
 	}

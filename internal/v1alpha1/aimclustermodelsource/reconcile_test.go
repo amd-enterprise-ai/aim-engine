@@ -30,12 +30,14 @@ import (
 	"reflect"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	k8sptr "k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -761,8 +763,8 @@ func TestFetchRemoteStateRewritesDiscoveredModelOwnerReferences(t *testing.T) {
 	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModelSource]{Object: source}
 
 	fetch := reconciler.FetchRemoteState(ctx, c, reconcileCtx)
-	if fetch.existingModels.Error != nil {
-		t.Fatalf("rewrite failed: %v", fetch.existingModels.Error)
+	if fetch.existingModels.Error != nil || fetch.ownerRefRewriteErr != nil {
+		t.Fatalf("fetch failed: list %v, rewrite %v", fetch.existingModels.Error, fetch.ownerRefRewriteErr)
 	}
 
 	wantOwner := owner
@@ -805,7 +807,7 @@ func TestFetchRemoteStateRewritesDiscoveredModelOwnerReferences(t *testing.T) {
 	assertUntouched(unowned.Name)
 
 	discoveredVersion := got.ResourceVersion
-	if err := reconciler.FetchRemoteState(ctx, c, reconcileCtx).existingModels.Error; err != nil {
+	if err := reconciler.FetchRemoteState(ctx, c, reconcileCtx).ownerRefRewriteErr; err != nil {
 		t.Fatalf("second fetch: %v", err)
 	}
 	if err := c.Get(ctx, client.ObjectKey{Name: discovered.Name}, got); err != nil {
@@ -813,5 +815,118 @@ func TestFetchRemoteStateRewritesDiscoveredModelOwnerReferences(t *testing.T) {
 	}
 	if got.ResourceVersion != discoveredVersion {
 		t.Errorf("second fetch changed resourceVersion from %s to %s", discoveredVersion, got.ResourceVersion)
+	}
+}
+
+func TestFetchRemoteStateKeepsExistingModelsWhenRewriteFails(t *testing.T) {
+	source := &aimv1alpha1.AIMClusterModelSource{
+		ObjectMeta: metav1.ObjectMeta{Name: "images", UID: types.UID("source-uid")},
+		Spec: aimv1alpha1.AIMClusterModelSourceSpec{
+			Models: []aimv1alpha1.AIMClusterModelSourceModel{{ModelID: "Qwen/Qwen3.5-0.8B"}},
+		},
+	}
+	image := RegistryImage{Registry: "docker.io", Repository: "amdenterpriseai/aim-dummy", Tag: "0.2.2"}
+
+	// stale still has this source's v1alpha1 owner reference, so its patch races.
+	stale := &aimv1alpha2.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "stale",
+			Labels: map[string]string{LabelKeyModelSource: source.Name},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "aim.eai.amd.com/v1alpha1",
+				Kind:       "AIMClusterModelSource",
+				Name:       source.Name,
+				UID:        source.UID,
+				Controller: k8sptr.To(true),
+			}},
+		},
+		Spec: aimv1alpha1.AIMModelSpec{Image: "amdenterpriseai/aim-old:0.1.0"},
+	}
+	otherSource := &aimv1alpha2.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "other-source",
+			Labels: map[string]string{LabelKeyModelSource: "someone-else"},
+		},
+		Spec: aimv1alpha1.AIMModelSpec{Image: image.ToImageURI()},
+	}
+	independent := &aimv1alpha2.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "independent"},
+		Spec:       aimv1alpha1.AIMModelSpec{ModelID: "Qwen/Qwen3.5-0.8B"},
+	}
+
+	tests := []struct {
+		name string
+		// race runs against the stored model just before the rewrite patch.
+		race          func(ctx context.Context, c client.Client, model client.Object) error
+		wantRewriteOK bool
+	}{
+		{
+			name: "model deleted before the patch",
+			race: func(ctx context.Context, c client.Client, model client.Object) error {
+				return c.Delete(ctx, model.DeepCopyObject().(client.Object))
+			},
+			wantRewriteOK: true,
+		},
+		{
+			name: "model changed before the patch",
+			race: func(ctx context.Context, c client.Client, model client.Object) error {
+				current := &aimv1alpha2.AIMClusterModel{}
+				if err := c.Get(ctx, client.ObjectKeyFromObject(model), current); err != nil {
+					return err
+				}
+				current.Labels["edited"] = "true"
+				return c.Update(ctx, current)
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	if err := aimv1alpha2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add to scheme: %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(stale.DeepCopy(), otherSource.DeepCopy(), independent.DeepCopy()).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+						if err := tt.race(ctx, c, obj); err != nil {
+							t.Fatalf("race: %v", err)
+						}
+						return c.Patch(ctx, obj, patch, opts...)
+					},
+				}).
+				Build()
+			reconciler := &ClusterModelSourceReconciler{}
+			reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModelSource]{Object: source}
+
+			fetch := reconciler.FetchRemoteState(ctx, c, reconcileCtx)
+			if !fetch.existingModels.OK() || len(fetch.existingModels.Value.Items) != 3 {
+				t.Fatalf("existing models = %+v, want all 3 listed", fetch.existingModels)
+			}
+			health := fetch.GetComponentHealth()[0]
+			if tt.wantRewriteOK {
+				if fetch.ownerRefRewriteErr != nil || len(health.Errors) != 0 {
+					t.Fatalf("rewrite error = %v, health errors = %v, want none", fetch.ownerRefRewriteErr, health.Errors)
+				}
+			} else {
+				if !apierrors.IsConflict(fetch.ownerRefRewriteErr) {
+					t.Fatalf("rewrite error = %v, want conflict", fetch.ownerRefRewriteErr)
+				}
+				if health.Component != "ExistingModels" || len(health.Errors) != 1 || !apierrors.IsConflict(health.Errors[0]) {
+					t.Fatalf("health = %+v, want ExistingModels to report the conflict", health)
+				}
+			}
+
+			fetch.filterResults = []FilterResult{{Images: []RegistryImage{image}}}
+			obs := reconciler.ComposeState(ctx, reconcileCtx, fetch)
+			plan := reconciler.PlanResources(ctx, reconcileCtx, obs)
+			if len(plan.GetToApply()) != 0 {
+				t.Fatalf("toApply = %d objects, want the other source's and the independent model respected", len(plan.GetToApply()))
+			}
+		})
 	}
 }

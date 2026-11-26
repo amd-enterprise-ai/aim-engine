@@ -354,7 +354,8 @@ func canonicalOwnerGVK(ownerGVK schema.GroupVersionKind) schema.GroupVersionKind
 // one canonicalOwnerGVK rewrites. The reference's APIVersion becomes the
 // version canonicalOwnerGVK returns. Controller, blockOwnerDeletion, and every
 // other reference are left unchanged. It does not call the API when nothing
-// needs rewriting.
+// needs rewriting. A child deleted since it was read has nothing left to
+// rewrite, so NotFound returns nil.
 //
 // Remove this in the release that deletes the v1alpha1 entries.
 func RewriteV1alpha1OwnerReference(ctx context.Context, c client.Client, child client.Object, ownerUID types.UID) error {
@@ -386,6 +387,9 @@ func RewriteV1alpha1OwnerReference(ctx context.Context, c client.Client, child c
 	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
 	if err := c.Patch(ctx, child, patch); err != nil {
 		child.SetOwnerReferences(current)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("rewrite v1alpha1 owner reference on %s: %w", client.ObjectKeyFromObject(child), err)
 	}
 	return nil

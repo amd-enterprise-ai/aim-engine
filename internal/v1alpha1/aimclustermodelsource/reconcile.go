@@ -58,6 +58,12 @@ type ClusterModelSourceFetch struct {
 	// so overlapping sources respect a model that already exists for an image.
 	existingModels controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]
 
+	// ownerRefRewriteErr is kept apart from existingModels. ComposeState reads a
+	// failed list as no existing models and would plan every image and
+	// declaration as new, re-owning or duplicating models this source does not
+	// own.
+	ownerRefRewriteErr error
+
 	// filterResults contains per-filter registry query results
 	filterResults []FilterResult
 }
@@ -94,7 +100,7 @@ func (r *ClusterModelSourceReconciler) FetchRemoteState(
 		for i := range fetch.existingModels.Value.Items {
 			model := &fetch.existingModels.Value.Items[i]
 			if err := controllerutils.RewriteV1alpha1OwnerReference(ctx, c, model, source.GetUID()); err != nil {
-				fetch.existingModels.Error = err
+				fetch.ownerRefRewriteErr = err
 				break
 			}
 		}
@@ -115,6 +121,12 @@ func (fetch ClusterModelSourceFetch) GetComponentHealth() []controllerutils.Comp
 			}
 		},
 	)
+	if fetch.ownerRefRewriteErr != nil {
+		existingModelsHealth = controllerutils.ComponentHealth{
+			Component: "ExistingModels",
+			Errors:    []error{fetch.ownerRefRewriteErr},
+		}
+	}
 
 	filterHealth := composeFilterHealth(fetch.filterResults, len(fetch.source.Spec.Models) > 0)
 
