@@ -1,0 +1,40 @@
+# Denies predictor pods (labelled serving.kserve.io/inferenceservice) in this
+# test namespace when kserve-container carries cpu limit 100m. Leaves download
+# and discovery Job pods untouched, and allows a later spec.resources update to
+# create a replacement pod on a new ReplicaSet.
+#
+# Both objects are cluster-scoped, so their names embed $namespace to stay
+# unique across parallel runs, and the binding scopes enforcement strictly to
+# this test namespace.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: (join('-', ['pod-creation-failed', $namespace]))
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+    objectSelector:
+      matchExpressions:
+        - key: serving.kserve.io/inferenceservice
+          operator: Exists
+  validations:
+    - expression: "object.spec.containers.all(c, c.name != 'kserve-container' || !has(c.resources) || !has(c.resources.limits) || !('cpu' in c.resources.limits) || c.resources.limits['cpu'] != '100m')"
+      message: "predictor pod cpu limit 100m is denied by test admission policy"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: (join('-', ['pod-creation-failed', $namespace]))
+spec:
+  policyName: (join('-', ['pod-creation-failed', $namespace]))
+  validationActions:
+    - Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: ($namespace)

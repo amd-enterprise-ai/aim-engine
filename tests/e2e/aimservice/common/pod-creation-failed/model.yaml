@@ -1,0 +1,13 @@
+# AIMModel that derives a child AIMProfile from the seed via spec.profiles.
+# Matches by aimId/modelId without running a discovery Job.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: pod-creation-failed-model
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: test/pod-creation-failed
+        modelId: Qwen/Qwen3-0.6B
+    versionPolicy: latest

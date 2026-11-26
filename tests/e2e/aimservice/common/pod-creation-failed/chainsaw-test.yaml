@@ -1,0 +1,233 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Refused Predictor Pod (PodCreationFailed) and Recovery
+#
+# Verifies end-to-end against real KServe (RawDeployment mode) that:
+# 1. When a ValidatingAdmissionPolicy denies predictor pod creation, KServe
+#    propagates Deployment ReplicaFailure (FailedCreate) into PredictorReady,
+#    and the AIMService reports status=Failed with InferenceServiceReady and
+#    Ready reason PodCreationFailed plus the refusal message.
+# 2. Updating spec.resources is not blocked by Failed status: the operator
+#    updates the InferenceService, KServe rolls out a new ReplicaSet whose pod
+#    is admitted, and the AIMService leaves Failed while the old refused
+#    ReplicaSet still carries FailedCreate, then reaches Running. In kind the
+#    service shows Pending, not Starting, while the new pod is Pending: the
+#    image is preloaded, so no Pulling event occurs, and aim-dummy is ready
+#    almost at once. The test thus accepts Pending or Starting, and requires
+#    the "starting pod(s)" message that only the refusal branch writes.
+#
+# No accelerator fields are set on the seed profile and cache download is
+# simulated, so this test runs in the default kind CI lane without requiring
+# NFD or live Hugging Face access.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-pod-creation-failed
+spec:
+  description: Verify PodCreationFailed status on refused predictor pod and recovery to Running
+  timeouts:
+    assert: 120s
+    cleanup: 240s
+  steps:
+    - name: Apply the ValidatingAdmissionPolicy scoped to this namespace
+      try:
+        - apply:
+            file: admission-policy.yaml
+
+    - name: Seed the copyable source AIMProfile
+      try:
+        - apply:
+            file: seed-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: pod-creation-failed-seed
+              status:
+                status: Ready
+
+    - name: Create the AIMModel that derives a profile from the seed
+      try:
+        - apply:
+            file: model.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: pod-creation-failed-model
+              status:
+                status: Ready
+                aimId: test/pod-creation-failed
+                (profileSetRef.name != ''): true
+                managedProfiles:
+                  total: 1
+                  ready: 1
+
+    - name: Resolve the derived profile and create the AIMService with a denied cpu limit
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              set -eu
+
+              MODEL_GV=aimmodels.v1alpha2.aim.eai.amd.com
+              PROFILE_GV=aimprofiles.v1alpha2.aim.eai.amd.com
+
+              PROFILE_SET=$(kubectl get "$MODEL_GV" -n "$NAMESPACE" pod-creation-failed-model \
+                -o jsonpath='{.status.profileSetRef.name}')
+              if [ -z "$PROFILE_SET" ]; then
+                echo "ERROR: model.status.profileSetRef.name is empty"
+                kubectl get "$MODEL_GV" -n "$NAMESPACE" pod-creation-failed-model -o yaml
+                exit 1
+              fi
+
+              DERIVED=$(kubectl get "$PROFILE_GV" -n "$NAMESPACE" -o json \
+                | jq -r --arg set "$PROFILE_SET" \
+                    '.items[]
+                      | select(.metadata.annotations["aim.eai.amd.com/profile-set-name"] == $set)
+                      | .metadata.name' \
+                | head -1)
+              if [ -z "$DERIVED" ]; then
+                echo "ERROR: no AIMProfile found with profile-set-name annotation $PROFILE_SET"
+                kubectl get "$PROFILE_GV" -n "$NAMESPACE" -o yaml
+                exit 1
+              fi
+              echo "Derived profile: $DERIVED"
+
+              kubectl wait --for=jsonpath='{.status.status}'=Ready \
+                --timeout=60s \
+                -n "$NAMESPACE" "$PROFILE_GV/$DERIVED"
+
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: pod-creation-failed-service
+              spec:
+                profile:
+                  name: $DERIVED
+                replicas: 1
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 64Mi
+                  limits:
+                    cpu: 100m
+                    memory: 128Mi
+                caching:
+                  env:
+                    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+                      value: "true"
+                    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+                      value: "2"
+              EOF
+
+    - name: Assert the service fails with PodCreationFailed and the refusal message
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: pod-creation-failed-service
+              status:
+                status: Failed
+                (conditions[?type == 'InferenceServiceReady']):
+                  - status: "False"
+                    reason: PodCreationFailed
+                    (contains(message || '', 'predictor pod cpu limit 100m is denied by test admission policy')): true
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: PodCreationFailed
+                    (contains(message || '', 'predictor pod cpu limit 100m is denied by test admission policy')): true
+
+    - name: Update spec.resources and verify recovery to Running
+      description: |
+        Start watching AIMService status before patching spec.resources so the
+        brief state with an active replacement pod, while the old refused
+        ReplicaSet still reports FailedCreate, is not missed before aim-dummy
+        becomes Ready.
+      try:
+        - script:
+            timeout: 240s
+            content: |
+              set -eu
+
+              SVC="pod-creation-failed-service"
+              SERVICE_GV=aimservices.v1alpha2.aim.eai.amd.com
+              WATCH_LOG=$(mktemp)
+              kubectl get "$SERVICE_GV" "$SVC" -n "$NAMESPACE" \
+                --watch \
+                -o jsonpath='{.status.status} {.status.conditions[?(@.type=="InferenceServiceReady")].reason} {.status.conditions[?(@.type=="InferenceServiceReady")].message}{"\n"}' \
+                >"$WATCH_LOG" 2>&1 &
+              WATCH_PID=$!
+              trap 'kill "$WATCH_PID" 2>/dev/null || true; rm -f "$WATCH_LOG"' EXIT
+
+              READY_DEADLINE=$(( $(date +%s) + 15 ))
+              while [ "$(date +%s)" -lt "$READY_DEADLINE" ]; do
+                if grep -q '^Failed ' "$WATCH_LOG"; then
+                  break
+                fi
+                sleep 1
+              done
+              if ! grep -q '^Failed ' "$WATCH_LOG"; then
+                echo "ERROR: watch did not observe initial Failed state"
+                cat "$WATCH_LOG"
+                exit 1
+              fi
+
+              kubectl patch "$SERVICE_GV" "$SVC" -n "$NAMESPACE" --type merge -p \
+                '{"spec":{"resources":{"requests":{"cpu":"50m","memory":"64Mi"},"limits":{"cpu":"200m","memory":"128Mi"}}}}'
+
+              DEADLINE=$(( $(date +%s) + 180 ))
+              while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+                if grep -q '^Running ' "$WATCH_LOG"; then
+                  break
+                fi
+                if ! kill -0 "$WATCH_PID" 2>/dev/null; then
+                  echo "ERROR: kubectl watch exited before the AIMService reached Running"
+                  cat "$WATCH_LOG"
+                  exit 1
+                fi
+                sleep 1
+              done
+
+              kill "$WATCH_PID" 2>/dev/null || true
+              wait "$WATCH_PID" 2>/dev/null || true
+
+              echo "Observed AIMService transitions:"
+              cat "$WATCH_LOG"
+
+              if ! grep -Eq '^(Pending|Starting) CreatingRuntime InferenceService has [0-9]+ starting pod' "$WATCH_LOG"; then
+                echo "ERROR: expected AIMService to leave Failed through Pending or Starting with CreatingRuntime and a starting pod after spec.resources update"
+                kubectl get "$SERVICE_GV" "$SVC" -n "$NAMESPACE" -o yaml
+                exit 1
+              fi
+              if ! grep -q '^Running ' "$WATCH_LOG"; then
+                echo "ERROR: AIMService did not reach Running within 180s"
+                kubectl get "$SERVICE_GV" "$SVC" -n "$NAMESPACE" -o yaml
+                kubectl get pods -n "$NAMESPACE" -o wide
+                exit 1
+              fi
+
+    - name: Assert the service is Running with RuntimeReady
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: pod-creation-failed-service
+              status:
+                status: Running
+                (conditions[?type == 'InferenceServiceReady']):
+                  - status: "True"
+                    reason: RuntimeReady
+                (conditions[?type == 'Ready']):
+                  - status: "True"

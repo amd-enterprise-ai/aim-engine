@@ -24,6 +24,7 @@ package aimservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -2064,6 +2065,192 @@ func TestGetInferenceServiceHealth_ReadyPodsOverrideStaleGeneration(t *testing.T
 			}
 		})
 	}
+}
+
+func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
+	const refusal = `Pod "svc-predictor-6d8f-abcde" is invalid: ` +
+		`spec.containers[0].resources.requests: Invalid value: "4": ` +
+		`must be less than or equal to cpu limit of 300m`
+
+	tests := []struct {
+		name          string
+		reason        string
+		generationLag bool
+		pods          *corev1.PodList
+		podsErr       error
+		wantState     constants.AIMStatus
+		wantReason    string
+		wantInMessage string
+	}{
+		{
+			name:          "refused predictor pod is reported with the API server message",
+			reason:        "FailedCreate",
+			pods:          &corev1.PodList{},
+			wantState:     constants.AIMStatusFailed,
+			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
+			wantInMessage: refusal,
+		},
+		{
+			// KServe copies the observedGeneration of the Deployment, which
+			// also changes when the replica count changes.
+			name:          "refusal is reported while the observed generation differs",
+			reason:        "FailedCreate",
+			generationLag: true,
+			pods:          &corev1.PodList{},
+			wantState:     constants.AIMStatusFailed,
+			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
+			wantInMessage: refusal,
+		},
+		{
+			// A rollout or a scale-up is refused while an older pod serves.
+			name:          "a ready predictor pod keeps the service running and the refusal is shown",
+			reason:        "FailedCreate",
+			pods:          podsWithReady(1, 1),
+			wantState:     constants.AIMStatusReady,
+			wantReason:    aimv1alpha1.AIMServiceReasonRuntimeScaling,
+			wantInMessage: refusal,
+		},
+		{
+			// After a spec fix, the Deployment keeps the refused old
+			// ReplicaSet until the pod of the new ReplicaSet is ready.
+			name:          "a starting pod keeps the service progressing and the refusal is shown",
+			reason:        "FailedCreate",
+			pods:          podsInPhase(corev1.PodPending, false),
+			wantState:     constants.AIMStatusProgressing,
+			wantReason:    aimv1alpha1.AIMServiceReasonCreatingRuntime,
+			wantInMessage: refusal,
+		},
+		{
+			name:          "a terminating pod does not count as starting",
+			reason:        "FailedCreate",
+			pods:          podsInPhase(corev1.PodRunning, true),
+			wantState:     constants.AIMStatusFailed,
+			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
+			wantInMessage: refusal,
+		},
+		{
+			name:          "a failed pod does not count as starting",
+			reason:        "FailedCreate",
+			pods:          podsInPhase(corev1.PodFailed, false),
+			wantState:     constants.AIMStatusFailed,
+			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
+			wantInMessage: refusal,
+		},
+		// An active pod next to the error makes the test fail if the error is ignored.
+		{
+			name:          "a failed pod-list fetch still reports PodCreationFailed",
+			reason:        "FailedCreate",
+			pods:          podsInPhase(corev1.PodPending, false),
+			podsErr:       errors.New("pod list failed"),
+			wantState:     constants.AIMStatusFailed,
+			wantReason:    aimv1alpha1.AIMServiceReasonPodCreationFailed,
+			wantInMessage: refusal,
+		},
+		{
+			name:       "a predictor that is only starting is not a failure",
+			reason:     "MinimumReplicasUnavailable",
+			pods:       &corev1.PodList{},
+			wantState:  constants.AIMStatusProgressing,
+			wantReason: aimv1alpha1.AIMServiceReasonCreatingRuntime,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isvc := predictorNotReadyISVC("svc", tt.reason, refusal)
+			if tt.generationLag {
+				isvc.Status.ObservedGeneration = 2
+			}
+			fetch := ServiceFetchResult{
+				inferenceService:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: isvc},
+				inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{Value: tt.pods, Error: tt.podsErr},
+			}
+
+			health := fetch.getInferenceServiceHealth()
+
+			if health.State != tt.wantState || health.Reason != tt.wantReason {
+				t.Fatalf("health = %s/%s, want %s/%s: %#v",
+					health.State, health.Reason, tt.wantState, tt.wantReason, health)
+			}
+			if !strings.Contains(health.Message, tt.wantInMessage) {
+				t.Errorf("message = %q, want it to contain %q", health.Message, tt.wantInMessage)
+			}
+			if len(health.Errors) != 0 {
+				t.Errorf("errors = %v, want none: an error category would block applying a fixed spec", health.Errors)
+			}
+		})
+	}
+}
+
+func TestGetInferenceServiceHealth_ScaleToZeroWithFailedCreate(t *testing.T) {
+	const refusal = `pods "svc-predictor-6d8f-abcde" is forbidden: exceeded quota`
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: testNamespace},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			MinReplicas: ptr.To(int32(0)),
+			MaxReplicas: ptr.To(int32(3)),
+		},
+	}
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service:              service,
+			inferenceService:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: predictorNotReadyISVC("svc", "FailedCreate", refusal)},
+			inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{}},
+			hpa:                  controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{Value: hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled)},
+		},
+	}
+
+	isvcHealth := obs.getInferenceServiceHealth()
+	if isvcHealth.State != constants.AIMStatusFailed ||
+		isvcHealth.Reason != aimv1alpha1.AIMServiceReasonPodCreationFailed {
+		t.Fatalf("InferenceService = %s/%s, want Failed/PodCreationFailed", isvcHealth.State, isvcHealth.Reason)
+	}
+	if !strings.Contains(isvcHealth.Message, refusal) {
+		t.Errorf("InferenceService message = %q, want it to contain %q", isvcHealth.Message, refusal)
+	}
+
+	podsHealth, ok := inferenceServicePodsHealth(context.Background(), nil, service, obs.hpa, obs.inferenceServicePods)
+	if !ok || podsHealth.State != constants.AIMStatusReady ||
+		podsHealth.Reason != aimv1alpha1.AIMServiceReasonScaledToZero {
+		t.Errorf("InferenceServicePods = (%v, %s/%s), want (true, Ready/ScaledToZero)", ok, podsHealth.State, podsHealth.Reason)
+	}
+
+	hpaHealth := obs.getHPAHealth()
+	if hpaHealth.State != constants.AIMStatusReady ||
+		hpaHealth.Reason != aimv1alpha1.AIMServiceReasonScaledToZero {
+		t.Errorf("HPA = %s/%s, want Ready/ScaledToZero", hpaHealth.State, hpaHealth.Reason)
+	}
+}
+
+// podsInPhase returns one predictor pod that is not ready.
+func podsInPhase(phase corev1.PodPhase, terminating bool) *corev1.PodList {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-predictor-new", Namespace: testNamespace},
+		Status:     corev1.PodStatus{Phase: phase},
+	}
+	if terminating {
+		pod.DeletionTimestamp = ptr.To(metav1.Now())
+	}
+	return &corev1.PodList{Items: []corev1.Pod{pod}}
+}
+
+// predictorNotReadyISVC returns an InferenceService as KServe reports it in
+// RawDeployment mode when the predictor Deployment is not available: KServe
+// copies the reason and message of the Deployment condition into
+// PredictorReady and Ready.
+func predictorNotReadyISVC(name, reason, message string) *servingv1beta1.InferenceService {
+	isvc := &servingv1beta1.InferenceService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       name,
+			Namespace:  testNamespace,
+			Generation: 1,
+		},
+	}
+	isvc.Status.ObservedGeneration = isvc.Generation
+	isvc.Status.Conditions = duckv1.Conditions{
+		{Type: servingv1beta1.PredictorReady, Status: corev1.ConditionFalse, Reason: reason, Message: message},
+		{Type: "Ready", Status: corev1.ConditionFalse, Reason: reason, Message: message},
+	}
+	return isvc
 }
 
 // readyISVC returns an InferenceService whose Ready condition is True.
