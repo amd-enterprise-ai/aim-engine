@@ -924,16 +924,18 @@ func BuildSubtreeSyncJob(
 					Tolerations:      servicepolicy.InferenceTolerations(service, runtimeConfig),
 					ImagePullSecrets: service.Spec.ImagePullSecrets,
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    ptr.To(int64(1000)),
-						RunAsGroup:   ptr.To(int64(1000)),
-						RunAsNonRoot: ptr.To(true),
-						FSGroup:      ptr.To(int64(1000)),
+						RunAsUser:      ptr.To(int64(1000)),
+						RunAsGroup:     ptr.To(int64(1000)),
+						RunAsNonRoot:   ptr.To(true),
+						FSGroup:        ptr.To(int64(1000)),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{
 						{
 							Name:            "adapter-subtree-sync",
 							Image:           image,
 							ImagePullPolicy: aimartifact.PullPolicyForImage(image),
+							SecurityContext: utils.RestrictedContainerSecurityContext(),
 							Command:         []string{"/adapter-subtree-sync.sh"},
 							Env:             env,
 							VolumeMounts: []corev1.VolumeMount{
@@ -1053,16 +1055,18 @@ func BuildStagingJob(
 					Tolerations:      servicepolicy.InferenceTolerations(service, runtimeConfig),
 					ImagePullSecrets: service.Spec.ImagePullSecrets,
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    ptr.To(int64(1000)),
-						RunAsGroup:   ptr.To(int64(1000)),
-						RunAsNonRoot: ptr.To(true),
-						FSGroup:      ptr.To(int64(1000)),
+						RunAsUser:      ptr.To(int64(1000)),
+						RunAsGroup:     ptr.To(int64(1000)),
+						RunAsNonRoot:   ptr.To(true),
+						FSGroup:        ptr.To(int64(1000)),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{
 						{
 							Name:            "adapter-stage",
 							Image:           image,
 							ImagePullPolicy: aimartifact.PullPolicyForImage(image),
+							SecurityContext: utils.RestrictedContainerSecurityContext(),
 							Command:         []string{"/adapter-stage.sh"},
 							Args:            []string{ad.SourceURI},
 							Env:             env,

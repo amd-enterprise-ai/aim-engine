@@ -463,6 +463,38 @@ A Job keeps the tolerations that it was created with. After you change the list,
 
 Changing a runtime config's list restarts the inference pods of every service that inherits it, even when no pod would move to another node: the tolerations are part of each predictor's pod template, and a Deployment replaces its pods whenever that template changes. Services with their own `spec.tolerations` are not affected. If the rollout starts new pods before it stops the old ones, GPU services need free GPUs to complete it.
 
+## Security contexts
+
+`spec.podSecurityContext` sets the Pod security context of AIMService inference pods. `spec.securityContext` sets the security context of their inference container, `kserve-container`. If no level sets a value, AIM Engine does not set a security context, and the pods run as the image and the cluster defaults specify.
+
+Each level replaces the value of the level below it as a whole. The fields of the two values are not merged:
+
+```
+AIMService.spec  >  namespace AIMRuntimeConfig  >  cluster AIMClusterRuntimeConfig
+```
+
+An empty object (`{}`) also replaces the inherited value. For example, `securityContext: {}` on an AIMService removes the runtime config's container security context for that service. The two fields are independent: a service can set `podSecurityContext` and inherit `securityContext`.
+
+These fields apply only to the inference pods. They do not apply to the Jobs that prepare a model or stage adapters.
+
+AIM Engine refuses the values in these fields that the Pod Security Standard `baseline` forbids. The API server refuses an AIMService, AIMRuntimeConfig or AIMClusterRuntimeConfig that has one of these values:
+
+- `podSecurityContext.sysctls` with an entry. AIM Engine refuses all sysctls, also those that `baseline` allows.
+- `securityContext.privileged: true`.
+- `securityContext.capabilities.add` with an entry. AIM Engine refuses all added capabilities, also those that `baseline` allows.
+- `securityContext.procMount` with a value other than `Default`.
+- In both fields:
+  - `seccompProfile.type` or `appArmorProfile.type` with a value other than `RuntimeDefault` or `Localhost`.
+  - `windowsOptions.hostProcess: true`.
+  - `seLinuxOptions.type` with a value other than empty, `container_t`, `container_init_t`, `container_kvm_t` or `container_engine_t`.
+  - `seLinuxOptions.user` or `seLinuxOptions.role` with a value.
+
+For what these rules do not prevent, see the [warning in Team RBAC](../admin/security.md#team-rbac-security-contexts).
+
+Changing a runtime config's security context restarts the inference pods of every service that inherits it, because the security contexts are part of each predictor's pod template. Services that set their own value are not affected.
+
+To run inference pods in a namespace that enforces Pod Security `restricted`, see [Restricted Pod Security](../guides/restricted-pod-security.md).
+
 ## Environment variable overrides
 
 A runtime config has two env fields, one for each kind of workload:

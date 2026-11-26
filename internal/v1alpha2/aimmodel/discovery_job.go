@@ -39,12 +39,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	discoverylock "github.com/amd-enterprise-ai/aim-engine/internal/discovery/lock"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 const (
@@ -126,9 +128,6 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 
 	command := DiscoveryShellCommand()
 
-	allowPrivilegeEscalation := false
-	runAsNonRoot := false
-
 	labels := map[string]string{
 		"app.kubernetes.io/name":       discoverylock.DiscoveryLabelName,
 		"app.kubernetes.io/component":  constants.LabelValueComponentDiscovery,
@@ -165,19 +164,22 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 					ImagePullSecrets:   spec.ImagePullSecrets,
 					ServiceAccountName: spec.ServiceAccount,
 					Tolerations:        spec.Tolerations,
+					// AIM images run as root by default. The script only reads
+					// the profile files, so it runs as the same non-root UID as
+					// the AIMServiceTemplate discovery Job, which reads the same
+					// files from the same images.
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot:   ptr.To(true),
+						RunAsUser:      ptr.To(int64(65532)),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+					},
 					Containers: []corev1.Container{
 						{
-							Name:    discoveryContainerName,
-							Image:   spec.Image,
-							Command: []string{"/bin/sh", "-c"},
-							Args:    []string{command},
-							SecurityContext: &corev1.SecurityContext{
-								AllowPrivilegeEscalation: &allowPrivilegeEscalation,
-								RunAsNonRoot:             &runAsNonRoot,
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-							},
+							Name:            discoveryContainerName,
+							Image:           spec.Image,
+							Command:         []string{"/bin/sh", "-c"},
+							Args:            []string{command},
+							SecurityContext: utils.RestrictedContainerSecurityContext(),
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    mustParseQuantity("50m"),

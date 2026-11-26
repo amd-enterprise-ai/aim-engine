@@ -833,3 +833,63 @@ func TestCachingEnv(t *testing.T) {
 		t.Errorf("CachingEnv = %v, want %v", got, env)
 	}
 }
+
+func TestMergeRuntimeConfigs_SecurityContextsNamespacePrecedence(t *testing.T) {
+	newCluster := func() *aimv1alpha1.AIMRuntimeConfigCommon {
+		config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+		config.PodSecurityContext = &corev1.PodSecurityContext{
+			RunAsNonRoot:       ptr.To(true),
+			FSGroup:            ptr.To(int64(1000)),
+			SupplementalGroups: []int64{44, 110},
+		}
+		config.SecurityContext = &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr.To(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		}
+		return config
+	}
+	namespacePod := &corev1.PodSecurityContext{RunAsUser: ptr.To(int64(2000))}
+	namespaceContainer := &corev1.SecurityContext{ReadOnlyRootFilesystem: ptr.To(true)}
+
+	tests := []struct {
+		name               string
+		namespacePod       *corev1.PodSecurityContext
+		namespaceContainer *corev1.SecurityContext
+		wantPod            *corev1.PodSecurityContext
+		wantContainer      *corev1.SecurityContext
+	}{
+		{
+			name:          "unset keeps cluster's",
+			wantPod:       newCluster().PodSecurityContext,
+			wantContainer: newCluster().SecurityContext,
+		},
+		{
+			name:               "set object replaces cluster's without merging fields",
+			namespacePod:       namespacePod,
+			namespaceContainer: namespaceContainer,
+			wantPod:            namespacePod,
+			wantContainer:      namespaceContainer,
+		},
+		{
+			name:               "empty object replaces cluster's",
+			namespacePod:       &corev1.PodSecurityContext{},
+			namespaceContainer: &corev1.SecurityContext{},
+			wantPod:            &corev1.PodSecurityContext{},
+			wantContainer:      &corev1.SecurityContext{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := &aimv1alpha1.AIMRuntimeConfigCommon{}
+			namespace.PodSecurityContext = tt.namespacePod
+			namespace.SecurityContext = tt.namespaceContainer
+			merged := mergeRuntimeConfigs(namespace, newCluster())
+			if !reflect.DeepEqual(merged.PodSecurityContext, tt.wantPod) {
+				t.Errorf("podSecurityContext = %v, want %v", merged.PodSecurityContext, tt.wantPod)
+			}
+			if !reflect.DeepEqual(merged.SecurityContext, tt.wantContainer) {
+				t.Errorf("securityContext = %v, want %v", merged.SecurityContext, tt.wantContainer)
+			}
+		})
+	}
+}

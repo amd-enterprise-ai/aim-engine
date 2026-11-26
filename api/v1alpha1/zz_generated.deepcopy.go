@@ -2236,6 +2236,16 @@ func (in *AIMServiceRuntimeConfig) DeepCopyInto(out *AIMServiceRuntimeConfig) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.PodSecurityContext != nil {
+		in, out := &in.PodSecurityContext, &out.PodSecurityContext
+		*out = new(v1.PodSecurityContext)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.SecurityContext != nil {
+		in, out := &in.SecurityContext, &out.SecurityContext
+		*out = new(v1.SecurityContext)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Env != nil {
 		in, out := &in.Env, &out.Env
 		*out = make([]v1.EnvVar, len(*in))

@@ -16,6 +16,17 @@ The operator runs with restrictive security defaults:
 
 These are configured in the Helm chart and can be adjusted via `manager.podSecurityContext` and `manager.securityContext` values.
 
+### Operator Jobs
+
+The Jobs that the operator creates meet the Kubernetes [Pod Security Standard `restricted`](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted), so a namespace that enforces it admits them. These are the size check, download, discovery, adapter staging, adapter subtree sync and adapter reclaim Jobs. Each Job Pod runs as a non-root user with the `RuntimeDefault` seccomp profile. Each container, including the CA bundle init container, sets `allowPrivilegeEscalation: false` and drops all capabilities.
+
+| Job | User |
+|-----|------|
+| Size check, download and adapter Jobs | UID and GID 1000 |
+| `AIMModel`, `AIMClusterModel`, `AIMServiceTemplate` and `AIMClusterServiceTemplate` discovery | UID 65532 |
+
+The discovery Jobs run the model image and read its profile files, so these files must be readable by UID 65532. The inference pods are not part of this list.
+
 ## RBAC
 
 ### Operator Permissions
@@ -57,6 +68,21 @@ kubectl create clusterrolebinding team-a-models \
   --clusterrole=aimclustermodel-viewer \
   --group=team-a
 ```
+
+(team-rbac-security-contexts)=
+:::{warning}
+An AIMService author controls the security context of the inference Pod (`spec.podSecurityContext` and `spec.securityContext`) and, with `spec.model.image`, its image. AIM Engine creates the Pod, so the author does not need permission to create Pods.
+
+AIM Engine refuses the values in these fields that the Pod Security Standard `baseline` forbids, for example `privileged: true` and added capabilities. For the full list, see [Security contexts](../concepts/runtime-config.md#security-contexts). A user with `aimservice-editor` or `aimservice-admin` can still run the inference container as root. AIM images run as root when the security context does not select a user, and the AIMService value replaces a runtime config value that selects a non-root user. AIM Engine does not apply the rules of `restricted`. If the inference pods in a namespace must meet `restricted`, for example to run as non-root, enforce it in that namespace:
+
+```bash
+kubectl label namespace ml-team-a pod-security.kubernetes.io/enforce=restricted
+```
+
+To run inference pods in such a namespace, see [Restricted Pod Security](../guides/restricted-pod-security.md).
+
+Users with `aimruntimeconfig-editor` or `aimruntimeconfig-admin` have the same control as AIMService authors. A namespace AIMRuntimeConfig sets the security contexts of the services in its namespace that use it and do not set their own. `aimclusterruntimeconfig-editor` and `aimclusterruntimeconfig-admin` do the same for all namespaces.
+:::
 
 ## Inference Route Hostnames
 
