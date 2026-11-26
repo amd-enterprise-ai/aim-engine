@@ -119,7 +119,7 @@ Autoscaling an LLMInferenceService-served AIMService requires the [OpenTelemetry
 
 With the `kgateway` scale-from-zero provider, the activation metric is matched by the HTTPRoute's backend Service (`<name>-kserve-workload-svc`), not by the Deployment.
 
-Request scheduling through the endpoint picker is therefore not available to AIMServices today. Prefill/decode disaggregation (`spec.prefill`) and multi-node workers (`spec.worker`) are not used either. AIMServices reject additional LLMInferenceServiceConfigs that set any of these fields (see [Additional LLMInferenceServiceConfigs](../concepts/services.md#additional-llminferenceserviceconfigs)).
+Because AIM Engine owns the route, request scheduling through the endpoint picker is not available to AIMServices today. Prefill/decode disaggregation (`spec.prefill`) and multi-node workers (`spec.worker`) are not used either. Support for all three is planned for a future release. Until then, AIMServices reject additional LLMInferenceServiceConfigs that set any of these fields (see [Additional LLMInferenceServiceConfigs](../concepts/services.md#additional-llminferenceserviceconfigs)).
 
 ## Verifying Configuration
 
