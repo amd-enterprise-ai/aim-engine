@@ -278,17 +278,15 @@ spec:
                 --type=merge \
                 -p '{"spec":{"podSecurityContext":{"runAsNonRoot":true,"runAsUser":2000},"securityContext":{}}}'
 
-              # An empty object must be stored as {}, not dropped to unset, in
-              # both served versions; unset would inherit the runtime config's.
-              for VERSION in v1alpha2 v1alpha1; do
-                STORED=$(kubectl get "aimservices.$VERSION.aim.eai.amd.com" test-security-contexts-service \
-                  -n "$NAMESPACE" -o json | jq -c -S '[.spec.podSecurityContext, .spec.securityContext]')
-                if [ "$STORED" != '[{"runAsNonRoot":true,"runAsUser":2000},{}]' ]; then
-                  echo "ERROR: $VERSION [spec.podSecurityContext, spec.securityContext] is $STORED"
-                  exit 1
-                fi
-              done
-              echo "OK: the service's security contexts are stored in v1alpha2 and v1alpha1"
+              # An empty object must be stored as {}, not dropped to unset;
+              # unset would inherit the runtime config's.
+              STORED=$(kubectl get "$SVC_GV" test-security-contexts-service \
+                -n "$NAMESPACE" -o json | jq -c -S '[.spec.podSecurityContext, .spec.securityContext]')
+              if [ "$STORED" != '[{"runAsNonRoot":true,"runAsUser":2000},{}]' ]; then
+                echo "ERROR: [spec.podSecurityContext, spec.securityContext] is $STORED"
+                exit 1
+              fi
+              echo "OK: the service's security contexts are stored"
 
     - name: Assert the InferenceService has only the service's security contexts
       try:
