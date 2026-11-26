@@ -1,0 +1,26 @@
+# Seed AIMProfile copied by the AIMModel below. No accelerator fields, so it
+# reaches Ready in any cluster (kind CI lane or GPU vcluster). Uses aim-dummy
+# so the predictor becomes Ready after the admission refusal is resolved.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: pod-creation-failed-seed
+  annotations:
+    aim.eai.amd.com/base-image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+    aim.eai.amd.com/profile-copyable: "true"
+spec:
+  aimId: test/pod-creation-failed
+  modelId: Qwen/Qwen3-0.6B
+  profileId: cpu-latency
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  primary: true
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # Small PVC: the download is simulated (no real bytes), so this only
+      # needs to provision, not hold real weights.
+      size: 1Gi

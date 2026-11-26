@@ -135,6 +135,7 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 | `True` | `RuntimeReady` | KServe `InferenceService` is serving |
 | `False` | `CreatingRuntime` | Creating or updating the InferenceService |
 | `False` | `RuntimeScaling` | Replica scaling in progress |
+| `False` | `PodCreationFailed` | The predictor Deployment cannot create a pod because the API server or an admission policy refuses it, for example because of a LimitRange or a ResourceQuota. The message contains the refusal text. The service status is `Failed` until a pod can be created. While an older predictor pod is ready, the reason stays `RuntimeScaling` and its message contains the refusal text. While a new predictor pod starts, the reason is `CreatingRuntime` and its message contains the refusal text |
 
 ### InferenceServicePodsReady
 

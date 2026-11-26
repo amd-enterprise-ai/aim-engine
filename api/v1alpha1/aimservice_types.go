@@ -803,6 +803,10 @@ const (
 	AIMServiceReasonCreatingRuntime = "CreatingRuntime"
 	AIMServiceReasonRuntimeReady    = "RuntimeReady"
 	AIMServiceReasonRuntimeScaling  = "RuntimeScaling"
+	// AIMServiceReasonPodCreationFailed indicates that the predictor
+	// Deployment cannot create a Pod because the API server or an admission
+	// policy refuses it (for example a LimitRange or ResourceQuota violation).
+	AIMServiceReasonPodCreationFailed = "PodCreationFailed"
 	// AIMServiceReasonScaledToZero indicates the deployment is idled to zero
 	// replicas by KEDA under scale-to-zero. Healthy state, not a failure.
 	AIMServiceReasonScaledToZero = "ScaledToZero"

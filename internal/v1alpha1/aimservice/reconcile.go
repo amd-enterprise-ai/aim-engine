@@ -588,8 +588,31 @@ func inferenceServiceComponentHealth(
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonRuntimeScaling
 			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount)
+			if refusal, refused := predictorPodCreationFailure(isvc); refused {
+				health.Message += "; the predictor Deployment cannot create a pod: " + refusal
+			}
 			return health
 		}
+	}
+
+	// Checked before the generation guard: in RawDeployment mode KServe copies
+	// the observedGeneration of the predictor Deployment, which also changes
+	// when the replica count changes, and the refusal is current either way.
+	if refusal, refused := predictorPodCreationFailure(isvc); refused {
+		// A pod that exists can still become ready. After a spec fix, for
+		// example, the Deployment keeps the refused old ReplicaSet, and so the
+		// refusal, until the pod of the new ReplicaSet is ready.
+		if starting := activePodCount(inferenceServicePods); starting > 0 {
+			health.State = constants.AIMStatusProgressing
+			health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
+			health.Message = fmt.Sprintf("InferenceService has %d starting pod(s); "+
+				"the predictor Deployment cannot create a pod: %s", starting, refusal)
+			return health
+		}
+		health.State = constants.AIMStatusFailed
+		health.Reason = aimv1alpha1.AIMServiceReasonPodCreationFailed
+		health.Message = "The predictor Deployment cannot create a pod: " + refusal
+		return health
 	}
 
 	if isvc.Generation <= 0 || isvc.Status.ObservedGeneration != isvc.Generation {
@@ -603,6 +626,39 @@ func inferenceServiceComponentHealth(
 	health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
 	health.Message = "InferenceService is not ready"
 	return health
+}
+
+// deploymentReasonFailedCreate is the reason of the Deployment ReplicaFailure
+// condition when the API server refuses a Pod. Not exported by client-go.
+const deploymentReasonFailedCreate = "FailedCreate"
+
+// predictorPodCreationFailure returns the refusal message when the predictor
+// Deployment cannot create a Pod. In RawDeployment mode KServe copies the
+// Deployment ReplicaFailure condition into PredictorReady, so the message is
+// the text of the API server or of the admission policy.
+func predictorPodCreationFailure(isvc *servingv1beta1.InferenceService) (string, bool) {
+	cond := isvc.Status.GetCondition(servingv1beta1.PredictorReady)
+	if cond == nil || cond.Status != corev1.ConditionFalse || cond.Reason != deploymentReasonFailedCreate {
+		return "", false
+	}
+	return cond.Message, true
+}
+
+// activePodCount counts the pods that a ReplicaSet counts as replicas: not
+// terminating and not in a terminal phase.
+func activePodCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
+	if pods == nil || !pods.OK() || pods.Value == nil {
+		return 0
+	}
+	count := 0
+	for i := range pods.Value.Items {
+		pod := &pods.Value.Items[i]
+		if pod.DeletionTimestamp == nil &&
+			pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			count++
+		}
+	}
+	return count
 }
 
 // isTransientKServeError checks if a KServe error message indicates a transient condition
