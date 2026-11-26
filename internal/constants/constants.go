@@ -391,6 +391,11 @@ const (
 	// endpoint written into ScaledObject trigger metadata. Format host:port.
 	EnvAIMKEDAOTelScalerAddress = "AIM_KEDA_OTEL_SCALER_ADDRESS"
 
+	// EnvAIMKEDAOTelReceiverEndpoint overrides the keda-otel-add-on OTLP
+	// receiver endpoint that predictor metric collector sidecars export to.
+	// Format host:port.
+	EnvAIMKEDAOTelReceiverEndpoint = "AIM_KEDA_OTEL_RECEIVER_ENDPOINT"
+
 	// EnvAIMCooldownSecondsPerGiMemory tunes the per-GiB multiplier used
 	// to derive scale-to-zero cooldownPeriod from the predictor's memory
 	// request. Set to 0 to disable the memory contribution.
@@ -421,6 +426,11 @@ const (
 	// `opentelemetryCollector.metricScalerEndpoint` so warm and activation
 	// triggers share a single scaler instance.
 	DefaultKEDAOTelScalerAddress = "keda-otel-scaler.keda.svc:4318"
+
+	// DefaultKEDAOTelReceiverEndpoint is the in-cluster OTLP gRPC endpoint of
+	// the keda-otel-add-on receiver. Matches the KServe inferenceservice-config
+	// `opentelemetryCollector.metricReceiverEndpoint` default.
+	DefaultKEDAOTelReceiverEndpoint = "keda-otel-scaler.keda.svc:4317"
 
 	// DefaultCooldownSecondsPerGiMemory is the seconds-per-GiB multiplier
 	// in the cooldown heuristic

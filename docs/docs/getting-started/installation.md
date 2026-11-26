@@ -15,7 +15,7 @@ This guide covers installing AIM Engine on a Kubernetes cluster.
 | cert-manager | v1.16+ | Required by KServe and optional metrics TLS |
 | KEDA | 2.18+ | Required when using AIMService autoscaling |
 | keda-otel-add-on | latest | gRPC scaler that bridges OpenTelemetry metrics to KEDA. Installed alongside KEDA |
-| OpenTelemetry Operator | 0.101+ | Required when Helm manages a bundled scale-from-zero collector (see note below) |
+| OpenTelemetry Operator | 0.101+ | Required for AIMService autoscaling on `spec.autoScaling.metrics`, and when Helm manages a bundled scale-from-zero collector (see note below). Install it before AIM Engine, or restart AIM Engine after installing it |
 
 Gateway activation is disabled by default (`scaleFromZero.gatewayProvider=none`).
 Selecting `envoyGateway` or `kgateway` makes the chart include the matching

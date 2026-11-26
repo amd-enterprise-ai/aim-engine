@@ -41,7 +41,7 @@ collector templates from accepting mismatched configuration.
 */}}
 {{- define "chart.gatewayActivationScope" -}}
 {{- range $entry := .Values.manager.env -}}
-{{- if has $entry.name (list "AIM_KEDA_OTEL_SCALER_ADDRESS" "AIM_COOLDOWN_SECONDS_PER_GI_MEMORY" "AIM_GATEWAY_ACTIVATION_SCOPE" "AIM_ARTIFACT_DOWNLOADER_IMAGE") -}}
+{{- if has $entry.name (list "AIM_KEDA_OTEL_SCALER_ADDRESS" "AIM_KEDA_OTEL_RECEIVER_ENDPOINT" "AIM_COOLDOWN_SECONDS_PER_GI_MEMORY" "AIM_GATEWAY_ACTIVATION_SCOPE" "AIM_ARTIFACT_DOWNLOADER_IMAGE") -}}
 {{- fail (printf "manager.env must not override chart-managed environment variable %q; use its dedicated Helm value" $entry.name) -}}
 {{- end -}}
 {{- end -}}

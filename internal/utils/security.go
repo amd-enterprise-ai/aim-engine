@@ -29,8 +29,8 @@ import (
 
 // RestrictedContainerSecurityContext returns the container settings that the
 // Pod Security Standard "restricted" requires on every container: no privilege
-// escalation and no Linux capabilities. The Pod security context of the Job
-// sets the non-root user and the RuntimeDefault seccomp profile.
+// escalation and no Linux capabilities. The Pod security context sets the
+// non-root user and the seccomp profile.
 func RestrictedContainerSecurityContext() *corev1.SecurityContext {
 	return &corev1.SecurityContext{
 		AllowPrivilegeEscalation: ptr.To(false),

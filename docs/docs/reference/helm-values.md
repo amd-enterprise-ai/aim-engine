@@ -99,6 +99,7 @@ Configure scale-from-zero triggers and the gateway-specific activation collector
 | Parameter | Description | Default |
 |-----------|-------------|----------|
 | `scaleFromZero.scalerAddress` | gRPC endpoint written to KEDA external metric triggers | `keda-otel-scaler.keda.svc:4318` |
+| `scaleFromZero.receiverEndpoint` | OTLP gRPC endpoint of keda-otel-add-on that the metrics collector sidecars of autoscaled predictors export to. Point it at the same keda-otel-add-on instance as scalerAddress. | `keda-otel-scaler.keda.svc:4317` |
 | `scaleFromZero.cooldownSecondsPerGiMemory` | Seconds per GiB added to the default cooldown period  cooldownPeriod = clamp(300 + memGiB * cooldownSecondsPerGiMemory, 300, 1200)  Per-service `spec.autoScaling.cooldownPeriod` always wins. | `5` |
 | `scaleFromZero.gatewayProvider` | Gateway implementation that supplies scale-from-zero activation metrics. Supported values are "none", "envoyGateway", "kgateway", and "custom". The default "none" installs no collector and makes minReplicas=0 invalid until a provider is selected. Known providers select both the controller's default metric contract and the collector rendered by Helm. "custom" requires external collector management and an activationMetricQueryTemplate on a service or its RuntimeConfig. | `none` |
 | `scaleFromZero.gatewayMetricsCollector` | OpenTelemetry collector that forwards gateway activation metrics to keda-otel-scaler. Envoy Gateway's EnvoyExtensionPolicy and source-side delta OTLP sink are managed separately on the platform-owned Gateway. |  |

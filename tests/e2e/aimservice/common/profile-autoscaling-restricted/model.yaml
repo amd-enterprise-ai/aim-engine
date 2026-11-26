@@ -1,0 +1,8 @@
+# Image discovery derives the model's AIMProfiles, including a generic CPU
+# profile that schedules on kind.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: test-profile-autoscaling-restricted-model
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2

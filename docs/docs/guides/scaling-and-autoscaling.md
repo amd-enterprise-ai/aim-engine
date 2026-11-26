@@ -40,6 +40,13 @@ Install KEDA and the OpenTelemetry integration:
 See [Optional Envoy Gateway scale-from-zero](../admin/envoy-gateway-scale-from-zero.md)
 for provider, Gateway policy, and collector configuration.
 
+AIM Engine checks at startup whether the cluster serves the OpenTelemetry
+Operator's `OpenTelemetryCollector` API. If you install the OpenTelemetry
+Operator after AIM Engine, restart AIM Engine. Without the API, a service with
+`spec.autoScaling.metrics` is `Failed` with `ConfigValid=False`, and its
+`OpenTelemetryCollectorReady` condition has the reason
+[`OpenTelemetryCollectorUnavailable`](../reference/conditions.md#opentelemetrycollectorready).
+
 ### Basic Autoscaling
 
 `minReplicas`/`maxReplicas` define the scaling bounds; a metric tells KEDA when
@@ -74,7 +81,7 @@ spec:
 AIM Engine automatically:
 
 1. Stamps the InferenceService with `autoscalerClass=external` so KServe writes no autoscaler of its own
-2. Injects an OpenTelemetry sidecar for metrics collection
+2. Creates a controller-owned `OpenTelemetryCollector` (`{isvc-name}-predictor`) that the OpenTelemetry Operator injects as a sidecar, `otc-container`, into the predictor pods. The sidecar scrapes the vLLM metrics of its pod and sends the metrics named in `metricNames` to keda-otel-add-on. The sidecar runs without privilege escalation and drops all capabilities; for namespaces that enforce the Pod Security Standard `restricted`, see [Restricted Pod Security](restricted-pod-security.md#autoscaling-sidecar)
 3. Creates a controller-owned KEDA `ScaledObject` targeting the predictor `Deployment`; KEDA in turn manages the HPA (`keda-hpa-{isvc-name}-predictor`, based on the derived InferenceService name)
 
 ### Scale to Zero
@@ -224,8 +231,8 @@ Common vLLM metrics for scaling decisions:
 | Field | Description |
 |-------|-------------|
 | `backend` | Metrics backend (`opentelemetry`) |
-| `serverAddress` | KEDA OTel scaler address (default: `keda-otel-scaler.keda.svc:4317`) |
-| `metricNames` | Metric names to query |
+| `serverAddress` | gRPC address of the KEDA OTel scaler that the `ScaledObject` trigger queries (default: Helm value `scaleFromZero.scalerAddress`, `keda-otel-scaler.keda.svc:4318`). The sidecar sends the metrics to `scaleFromZero.receiverEndpoint` (`keda-otel-scaler.keda.svc:4317`) instead |
+| `metricNames` | Metric names that the sidecar forwards. If a metric of the service has no `metricNames`, the sidecar forwards all scraped metrics |
 | `query` | Query expression |
 | `operationOverTime` | Aggregation: `last_one`, `avg`, `max`, `min`, `rate`, `count` |
 

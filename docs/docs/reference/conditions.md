@@ -203,6 +203,16 @@ Validates that whenever autoscaling is configured (`spec.minReplicas`/`spec.maxR
 
 When valid, this check is silent — no condition or component-health entry is emitted.
 
+### OpenTelemetryCollectorReady
+
+Reports a problem with the `OpenTelemetryCollector` that feeds the pod metrics of `spec.autoScaling.metrics` to KEDA. AIM Engine creates the collector, and the OpenTelemetry Operator injects it as a sidecar into the predictor pods. AIM Engine checks at startup whether the cluster serves the `opentelemetry.io/v1beta1` `OpenTelemetryCollector` API.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `OpenTelemetryCollectorUnavailable` | The service declares `spec.autoScaling.metrics`, but the cluster did not serve the `OpenTelemetryCollector` API when AIM Engine started. Drives `ConfigValid=False` (`InvalidSpec` category), so AIM Engine neither creates nor updates the InferenceService of the service. Fix by installing the OpenTelemetry Operator and restarting AIM Engine. |
+
+When the collector is in order, the condition is removed.
+
 ## AIMModel / AIMClusterModel conditions (v1alpha2)
 
 ### DiscoveryReady

@@ -827,6 +827,11 @@ const (
 	// manages replicas when a ScaledObject with at least one trigger exists, so
 	// the declared bounds are never enforced. Drives ConfigValid=False.
 	AIMServiceReasonAutoscalingRequiresMetrics = "AutoscalingRequiresMetrics"
+	// AIMServiceReasonOpenTelemetryCollectorUnavailable indicates the service
+	// scales on pod metrics but the cluster does not serve the
+	// opentelemetry.io/v1beta1 OpenTelemetryCollector API, so no metrics
+	// collector sidecar can feed the scaler. Drives ConfigValid=False.
+	AIMServiceReasonOpenTelemetryCollectorUnavailable = "OpenTelemetryCollectorUnavailable"
 
 	// Scale-from-zero activation signal (ActivationMetricAvailable).
 	// AIMServiceReasonActivationMetricAvailable indicates the HPA reports the

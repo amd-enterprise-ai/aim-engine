@@ -1,0 +1,25 @@
+# Namespace runtime config from the Restricted Pod Security guide
+# (docs/docs/guides/restricted-pod-security.md). The inference container runs
+# as a non-root user; the metrics collector sidecar brings its own security
+# context.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  env:
+    - name: HOME
+      value: /tmp
+    - name: USER
+      value: aim

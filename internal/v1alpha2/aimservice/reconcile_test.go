@@ -3462,6 +3462,87 @@ func TestPlanResources_ScaleToZeroEmitsScaledObject(t *testing.T) {
 	}
 }
 
+// TestPlanResources_PodMetricsEmitOTelCollector verifies the v1alpha2
+// pipeline wires the shared collector planner, and that a missing
+// OpenTelemetryCollector API surfaces as an invalid spec instead.
+func TestPlanResources_PodMetricsEmitOTelCollector(t *testing.T) {
+	service := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile:     &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			MinReplicas: ptr.To(int32(1)),
+			MaxReplicas: ptr.To(int32(3)),
+			AutoScaling: &aimv1alpha1.AIMServiceAutoScaling{
+				Metrics: []aimv1alpha1.AIMServiceMetricsSpec{{
+					Type: "PodMetric",
+					PodMetric: &aimv1alpha1.AIMServicePodMetricSource{
+						Metric: &aimv1alpha1.AIMServicePodMetric{
+							Backend:     "opentelemetry",
+							MetricNames: []string{"vllm:num_requests_running"},
+							Query:       "vllm:num_requests_running",
+						},
+						Target: &aimv1alpha1.AIMServiceMetricTarget{Type: "Value", Value: "1"},
+					},
+				}},
+			},
+		},
+	}
+	collectorGVK := v1alpha1service.OpenTelemetryCollectorGVK()
+	observation := func(served bool) ServiceObservation {
+		return ServiceObservation{
+			ServiceFetchResult: ServiceFetchResult{
+				service:             service,
+				otelCollectorServed: served,
+				otelCollector: controllerutils.FetchResult[*metav1.PartialObjectMetadata]{
+					Error: apierrors.NewNotFound(schema.GroupResource{Group: collectorGVK.Group, Resource: "opentelemetrycollectors"}, "x"),
+				},
+			},
+			resolvedProfileSpec: sampleProfileSpec(),
+			resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{
+				Status:     constants.AIMStatusReady,
+				Deployable: true,
+			},
+			profileName:      testProfileA,
+			profileScope:     aimv1alpha1.AIMResolutionScopeNamespace,
+			profileAssembled: true,
+		}
+	}
+
+	r := &ProfileServiceReconciler{}
+	obs := observation(true)
+	r.composeDerivedNames(context.Background(), &obs)
+	if obs.configErr != nil {
+		t.Fatalf("composeDerivedNames: %v", obs.configErr)
+	}
+	pr := r.PlanResources(context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
+		obs,
+	)
+	collectors := 0
+	for _, obj := range pr.GetToApply() {
+		if obj.GetObjectKind().GroupVersionKind() == collectorGVK {
+			collectors++
+		}
+	}
+	if collectors != 1 {
+		t.Errorf("planned collectors = %d, want 1", collectors)
+	}
+
+	unserved := observation(false)
+	var found bool
+	for _, health := range unserved.GetComponentHealth(context.Background(), nil) {
+		if health.Component == v1alpha1service.ComponentOpenTelemetryCollector {
+			found = true
+			if health.Reason != aimv1alpha1.AIMServiceReasonOpenTelemetryCollectorUnavailable {
+				t.Errorf("reason = %q", health.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Error("a missing OpenTelemetryCollector API must be reported")
+	}
+}
+
 func TestPlanResourcesSchedulesActivationMetricGraceDeadline(t *testing.T) {
 	t.Setenv(constants.EnvAIMGatewayActivationScope, constants.GatewayActivationScopeHTTPRoute)
 	service := &aimv1alpha2.AIMService{

@@ -53,6 +53,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	profileservice "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimservice"
 )
 
@@ -79,6 +80,12 @@ type AIMServiceReconciler struct {
 	Scheme    *runtime.Scheme
 	Clientset kubernetes.Interface
 
+	// OpenTelemetryCollectorServed reports whether the cluster serves the
+	// OpenTelemetryCollector API. When true the controller creates and watches
+	// the metrics collector sidecar config of autoscaled predictors; the watch
+	// cannot start against a missing API.
+	OpenTelemetryCollectorServed bool
+
 	profileReconciler controllerutils.DomainReconciler[*aimv1alpha2.AIMService, *aimv1alpha1.AIMServiceStatus, profileservice.ServiceFetchResult, profileservice.ServiceObservation]
 	profilePipeline   *controllerutils.Pipeline[*aimv1alpha2.AIMService, *aimv1alpha1.AIMServiceStatus, profileservice.ServiceFetchResult, profileservice.ServiceObservation]
 }
@@ -99,6 +106,7 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=keda.sh,resources=scaledobjects,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=opentelemetry.io,resources=opentelemetrycollectors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
@@ -209,9 +217,10 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	recorder := mgr.GetEventRecorderFor("aim-" + serviceName + "-controller")
 
 	r.profileReconciler = &profileservice.ProfileServiceReconciler{
-		Scheme:    r.Scheme,
-		Recorder:  recorder,
-		APIReader: mgr.GetAPIReader(),
+		Scheme:                       r.Scheme,
+		Recorder:                     recorder,
+		APIReader:                    mgr.GetAPIReader(),
+		OpenTelemetryCollectorServed: r.OpenTelemetryCollectorServed,
 	}
 	r.profilePipeline = &controllerutils.Pipeline[
 		*aimv1alpha2.AIMService,
@@ -245,6 +254,9 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&batchv1.Job{})
+	if r.OpenTelemetryCollectorServed {
+		b = b.Owns(aimservice.NewOTelCollectorMetadata(), builder.OnlyMetadata)
+	}
 
 	b, err := profileservice.RegisterWatches(ctx, mgr, b, c)
 	if err != nil {

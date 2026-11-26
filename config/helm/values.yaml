@@ -217,6 +217,11 @@ scaleFromZero:
   # -- gRPC endpoint written to KEDA external metric triggers
   scalerAddress: keda-otel-scaler.keda.svc:4318
 
+  # -- OTLP gRPC endpoint of keda-otel-add-on that the metrics collector
+  # sidecars of autoscaled predictors export to. Point it at the same
+  # keda-otel-add-on instance as scalerAddress.
+  receiverEndpoint: keda-otel-scaler.keda.svc:4317
+
   # -- Seconds per GiB added to the default cooldown period
   #
   #   cooldownPeriod = clamp(300 + memGiB * cooldownSecondsPerGiMemory, 300, 1200)

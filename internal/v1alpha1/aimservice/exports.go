@@ -31,6 +31,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -170,6 +173,77 @@ func FetchGateway(
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) controllerutils.FetchResult[*gatewayapiv1.Gateway] {
 	return fetchGateway(ctx, c, service, runtimeConfig)
+}
+
+// OpenTelemetryCollectorGVK returns the OpenTelemetry Operator collector kind
+// that AIM Engine creates for autoscaled predictors.
+func OpenTelemetryCollectorGVK() schema.GroupVersionKind {
+	return openTelemetryCollectorGVK
+}
+
+// NewOTelCollectorMetadata returns an empty metadata-only collector object
+// for watches (with builder.OnlyMetadata), so they share the informer that
+// FetchOTelCollector reads from.
+func NewOTelCollectorMetadata() *metav1.PartialObjectMetadata {
+	return newOTelCollectorMetadata()
+}
+
+// DetectOpenTelemetryCollectorAPI reports whether the API server serves the
+// opentelemetry.io/v1beta1 OpenTelemetryCollector kind. A missing group
+// version is a confident "not installed" (false, nil); any other discovery
+// failure is returned.
+func DetectOpenTelemetryCollectorAPI(client discovery.DiscoveryInterface) (bool, error) {
+	return detectOpenTelemetryCollectorAPI(client)
+}
+
+// FetchOTelCollector fetches the collector named after the predictor
+// Deployment, or returns an empty result when the cluster does not serve the
+// OpenTelemetryCollector API.
+func FetchOTelCollector(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha2.AIMService,
+	served bool,
+) controllerutils.FetchResult[*metav1.PartialObjectMetadata] {
+	return fetchOTelCollector(ctx, c, service, served)
+}
+
+// PlanOTelCollector plans the hardened collector sidecar of an autoscaled
+// predictor, including the handover from a collector KServe created. Plan it
+// in the same pass as the InferenceService so the collector exists before
+// KServe creates predictor pods.
+func PlanOTelCollector(
+	planResult *controllerutils.PlanResult,
+	service *aimv1alpha2.AIMService,
+	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
+	collector controllerutils.FetchResult[*metav1.PartialObjectMetadata],
+	served bool,
+) {
+	planOTelCollector(planResult, service, inferenceService, collector, served)
+}
+
+// OTelCollectorComponentHealth reports an autoscaled service whose pod metric
+// triggers cannot receive data (ConfigValid=False when the
+// OpenTelemetryCollector API is not served). Returns a zero ComponentHealth
+// otherwise.
+func OTelCollectorComponentHealth(
+	service *aimv1alpha2.AIMService,
+	served bool,
+	collector controllerutils.FetchResult[*metav1.PartialObjectMetadata],
+) controllerutils.ComponentHealth {
+	return otelCollectorComponentHealth(service, served, collector)
+}
+
+// ClearRecoveredOTelCollectorCondition removes the OpenTelemetryCollectorReady
+// condition once OTelCollectorComponentHealth reports nothing. Call it from
+// DecorateStatus.
+func ClearRecoveredOTelCollectorCondition(
+	cm *controllerutils.ConditionManager,
+	service *aimv1alpha2.AIMService,
+	served bool,
+	collector controllerutils.FetchResult[*metav1.PartialObjectMetadata],
+) {
+	clearRecoveredOTelCollectorCondition(cm, service, served, collector)
 }
 
 // ComputeRuntimeStatus derives replica counts and the formatted Replicas

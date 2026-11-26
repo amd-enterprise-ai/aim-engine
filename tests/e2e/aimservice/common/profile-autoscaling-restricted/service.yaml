@@ -1,0 +1,39 @@
+# Warm autoscaled service on the model's CPU profile. The rate of successful
+# requests drives KEDA: a few requests per second exceed the target of 2.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-profile-autoscaling-restricted-service
+spec:
+  model:
+    name: test-profile-autoscaling-restricted-model
+  profile:
+    selector:
+      acceleratorType: cpu
+      # The CPU profile is unoptimized; AIMService selection otherwise
+      # requires at least optimized.
+      minimumType: any
+  caching:
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-creds
+            key: token
+  minReplicas: 1
+  maxReplicas: 3
+  autoScaling:
+    pollingInterval: 5
+    cooldownPeriod: 30
+    metrics:
+      - type: PodMetric
+        podmetric:
+          metric:
+            backend: opentelemetry
+            metricNames:
+              - vllm:request_success_total
+            query: vllm:request_success_total
+            operationOverTime: rate
+          target:
+            type: Value
+            value: "2"
