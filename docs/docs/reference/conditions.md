@@ -112,7 +112,7 @@ Tracks the `AIMProfileCache` lifecycle.
 |---|---|---|
 | `True` | `ProfileCacheReady` | The profile cache is Ready |
 | `False` | `ProfileCacheNotFound` | The profile cache is not created yet |
-| `False` | `ProfileCacheNotReady` | The profile cache exists but is not Ready; the message includes the cache's own Ready message, such as a failed download |
+| `False` | `ProfileCacheNotReady` | The profile cache exists but is not Ready, or a Shared profile cache has not processed its latest spec yet. The message includes the cache's own Ready message, such as a failed download, and names the `aim.eai.amd.com/reconciliation-paused` annotation when it is set |
 | `False` | `FetchError` | The operator could not read the profile cache |
 
 ### ProfileRuntimeReady
@@ -123,10 +123,10 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 |---|---|---|
 | `True` | `ProfileRuntimeReady` | Both projection siblings match the current profile and cache content hash |
 | `False` | `ProfileRuntimeMaterializing` | One or both projection siblings do not exist yet |
-| `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash |
+| `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash, or the matching Shared profile cache has not processed its latest spec yet |
 | `False` | `FetchError` | AIM Engine could not read one of the projection siblings |
 
-`ProfileRuntimeConverging` can be transient because the two resources are updated independently. If it persists, check for unsupported out-of-band changes to generated `aim-*` resources. See [Consistency and rollout guarantees](../guides/bring-your-own-kserve.md#consistency-and-rollout-guarantees).
+`ProfileRuntimeConverging` can be transient because the two resources are updated independently. If the message names a Shared `AIMProfileCache`, check that cache's conditions and the `reconciliation-paused` annotation instead. Otherwise, if it persists, check for unsupported out-of-band changes to generated `aim-*` resources. See [Consistency and rollout guarantees](../guides/bring-your-own-kserve.md#consistency-and-rollout-guarantees).
 
 ### InferenceServiceReady
 

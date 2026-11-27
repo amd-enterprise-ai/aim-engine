@@ -983,3 +983,96 @@ func TestFindServicesForRuntimeConfig_BothScopes(t *testing.T) {
 			"alpha/names-it", "alpha/names-none", "beta/other-namespace")
 	})
 }
+
+func TestProfileCacheRelevantChangePredicate(t *testing.T) {
+	failing := metav1.Condition{
+		Type:               controllerutils.ConditionTypeDependenciesReachable,
+		Status:             metav1.ConditionFalse,
+		Reason:             controllerutils.ReasonDependenciesNotReachable,
+		Message:            "forbidden",
+		LastTransitionTime: metav1.Unix(100, 0),
+	}
+	notReady := metav1.Condition{
+		Type:    controllerutils.ConditionTypeReady,
+		Status:  metav1.ConditionFalse,
+		Reason:  "NotReady",
+		Message: "Downloading",
+	}
+	base := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "ns", Generation: 1},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			Status:             constants.AIMStatusDegraded,
+			ObservedGeneration: 1,
+			Conditions:         []metav1.Condition{failing, notReady},
+		},
+	}
+	pause := func(c *aimv1alpha2.AIMProfileCache) {
+		c.Annotations = map[string]string{constants.AnnotationReconciliationPaused: "true"}
+	}
+	pausedBase := base.DeepCopy()
+	pause(pausedBase)
+	for _, tt := range []struct {
+		name   string
+		old    *aimv1alpha2.AIMProfileCache
+		mutate func(*aimv1alpha2.AIMProfileCache)
+		want   bool
+	}{
+		{
+			name: "error condition message changes", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].Message = "quota exceeded" },
+		},
+		{
+			name: "error condition reason changes", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].Reason = controllerutils.ReasonAuthError },
+		},
+		{
+			name: "error condition recovers", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].Status = metav1.ConditionTrue },
+		},
+		{
+			name: "error condition appears", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) {
+				c.Status.Conditions = append(c.Status.Conditions, metav1.Condition{
+					Type: controllerutils.ConditionTypeConfigValid, Status: metav1.ConditionFalse,
+				})
+			},
+		},
+		{
+			name: "Ready condition message changes", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[1].Message = "Waiting for PVC" },
+		},
+		{
+			name: "reconciliation paused", want: true,
+			mutate: pause,
+		},
+		{
+			name: "spec generation bumped on paused cache", want: true,
+			old:    pausedBase,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Generation = 2 },
+		},
+		{
+			name:   "spec generation bumped on unpaused cache",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Generation = 2 },
+		},
+		{
+			name:   "only lastTransitionTime changes",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].LastTransitionTime = metav1.Unix(200, 0) },
+		},
+		{
+			name:   "unrelated annotation changes",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Annotations = map[string]string{"example.com/note": "x"} },
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			old := base
+			if tt.old != nil {
+				old = tt.old
+			}
+			updated := old.DeepCopy()
+			tt.mutate(updated)
+			if got := profileCacheRelevantChangePredicate().Update(event.UpdateEvent{ObjectOld: old, ObjectNew: updated}); got != tt.want {
+				t.Errorf("predicate fired = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

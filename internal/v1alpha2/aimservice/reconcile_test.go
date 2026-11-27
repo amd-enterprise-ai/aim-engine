@@ -58,6 +58,7 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	v1alpha1service "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profilecache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
 
@@ -1032,6 +1033,10 @@ func TestProfileRuntimeHealth_UnexpectedErrorWinsOverMissingSibling(t *testing.T
 	}
 	if len(health.Errors) != 1 || !apierrors.IsForbidden(health.Errors[0]) {
 		t.Fatalf("health errors = %v, want the ConfigMap Forbidden error", health.Errors)
+	}
+	if !strings.Contains(health.Message, "fetch projected profile ConfigMap") ||
+		!strings.Contains(health.Message, "access denied") {
+		t.Fatalf("health message = %q, want it to name the ConfigMap fetch error", health.Message)
 	}
 
 	plan := controllerutils.PlanResult{}
@@ -3092,6 +3097,37 @@ func TestPlanProfileCache_LeavesRequiresAdapterDiskUnset(t *testing.T) {
 	}
 }
 
+func TestPlanProfileCache_SkipsStaleSharedCache(t *testing.T) {
+	stale := &profilecache.StatusStaleError{Namespace: "ns", Name: "cache-a", Generation: 2, ObservedGeneration: 1}
+	for _, tt := range []struct {
+		mode     aimv1alpha1.AIMCachingMode
+		wantPlan bool
+	}{
+		{mode: aimv1alpha1.CachingModeShared, wantPlan: false},
+		{mode: aimv1alpha1.CachingModeDedicated, wantPlan: true},
+	} {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			service := &aimv1alpha2.AIMService{
+				ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "svc-uid"},
+				Spec: aimv1alpha1.AIMServiceSpec{
+					Caching: &aimv1alpha1.AIMServiceCachingConfig{Mode: tt.mode},
+				},
+			}
+			obs := ServiceObservation{
+				resolvedProfileSpec: profileSpecWithModelSources(),
+				profileName:         testProfileA,
+				profileScope:        aimv1alpha1.AIMResolutionScopeNamespace,
+				ServiceFetchResult: ServiceFetchResult{
+					runtimeProfileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: stale},
+				},
+			}
+			if got := planProfileCache(service, obs) != nil; got != tt.wantPlan {
+				t.Fatalf("planProfileCache planned = %v, want %v", got, tt.wantPlan)
+			}
+		})
+	}
+}
+
 func volumeRefsPVC(volumes []corev1.Volume, claimName string) bool {
 	for _, v := range volumes {
 		if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == claimName {
@@ -3969,5 +4005,99 @@ func TestPlanStaleChildCleanup(t *testing.T) {
 				t.Errorf("deleted %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGetProfileCacheHealth_pausedCache(t *testing.T) {
+	pausedNote := "; AIMProfileCache reconciliation is paused by the " +
+		constants.AnnotationReconciliationPaused + " annotation, so its status will not change until the annotation is removed"
+	pc := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "cache-a",
+			Namespace:   "ns",
+			Annotations: map[string]string{constants.AnnotationReconciliationPaused: "true"},
+		},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			Status: constants.AIMStatusProgressing,
+			Conditions: []metav1.Condition{{
+				Type: controllerutils.ConditionTypeReady, Status: metav1.ConditionFalse, Message: "Downloading",
+			}},
+		},
+	}
+	notFound := apierrors.NewNotFound(schema.GroupResource{Group: "aim.eai.amd.com", Resource: "aimprofilecaches"}, "")
+	stale := &profilecache.StatusStaleError{
+		Namespace: "ns", Name: "cache-a", Generation: 2, ObservedGeneration: 1, Paused: true,
+	}
+
+	for _, tt := range []struct {
+		name        string
+		cachingMode aimv1alpha1.AIMCachingMode
+		fetch       ServiceFetchResult
+		wantReason  string
+		wantMessage string
+	}{
+		{
+			name:        "not ready",
+			fetch:       ServiceFetchResult{profileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: pc}},
+			wantReason:  "ProfileCacheNotReady",
+			wantMessage: "Profile cache cache-a is Progressing: Downloading" + pausedNote,
+		},
+		{
+			name: "stale Shared cache",
+			fetch: ServiceFetchResult{
+				profileCache:        controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: notFound},
+				runtimeProfileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: stale},
+			},
+			wantReason:  "ProfileCacheNotReady",
+			wantMessage: "Shared " + stale.Error(),
+		},
+		{
+			name:        "Dedicated service ignores the stale Shared cache",
+			cachingMode: aimv1alpha1.CachingModeDedicated,
+			fetch: ServiceFetchResult{
+				profileCache:        controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: notFound},
+				runtimeProfileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: stale},
+			},
+			wantReason:  "ProfileCacheNotFound",
+			wantMessage: "Profile cache not yet created",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fetch := tt.fetch
+			fetch.service = &aimv1alpha2.AIMService{Spec: aimv1alpha1.AIMServiceSpec{
+				Caching: &aimv1alpha1.AIMServiceCachingConfig{Mode: tt.cachingMode},
+			}}
+			health := ServiceObservation{ServiceFetchResult: fetch}.getProfileCacheHealth()
+			if health.State != constants.AIMStatusProgressing || len(health.Errors) != 0 ||
+				health.Reason != tt.wantReason || health.Message != tt.wantMessage {
+				t.Errorf("health = %s/%s: %q (errors %v), want Progressing/%s: %q",
+					health.State, health.Reason, health.Message, health.Errors, tt.wantReason, tt.wantMessage)
+			}
+		})
+	}
+}
+
+func TestProfileRuntimeHealth_StaleSharedCacheIsConverging(t *testing.T) {
+	stale := &profilecache.StatusStaleError{Namespace: "ns", Name: "cache-a", Generation: 2, ObservedGeneration: 1}
+	runtimeName := serving.RuntimeName(testClusterProfileName)
+	obs := ServiceObservation{
+		resolvedProfileSpec:   sampleProfileSpec(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+		ServiceFetchResult: ServiceFetchResult{
+			runtimeProfileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: stale},
+			profileRuntime: controllerutils.FetchResult[*kservev1alpha1.ServingRuntime]{
+				Error: apierrors.NewNotFound(schema.GroupResource{Resource: "servingruntimes"}, runtimeName),
+			},
+			profileRuntimeConfigMap: controllerutils.FetchResult[*corev1.ConfigMap]{
+				Error: apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, runtimeName),
+			},
+		},
+	}
+
+	health := obs.getProfileRuntimeHealth()
+	if health.State != constants.AIMStatusProgressing || len(health.Errors) != 0 ||
+		health.Reason != reasonProfileRuntimeConverging || !strings.Contains(health.Message, stale.Error()) {
+		t.Fatalf("health = %s/%s: %q (errors %v), want Progressing/%s naming the stale cache",
+			health.State, health.Reason, health.Message, health.Errors, reasonProfileRuntimeConverging)
 	}
 }

@@ -47,6 +47,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profilecache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
 
@@ -401,10 +402,12 @@ func profileRelevantChangePredicate() predicate.Predicate {
 // profileCacheRelevantChangePredicate fires when any field the AIMService
 // consumes from the cache changes: high-level Status (Ready / Progressing /
 // Failed), ObservedGeneration (the cache controller has reprocessed a spec
-// change), or the resolved Artifacts list (PVC names or mount points that
-// feed the InferenceService volume mounts). Cosmetic status writes that
-// don't move any of these fields are filtered out to avoid reconcile
-// hot-loops.
+// change), the resolved Artifacts list (PVC names or mount points that feed
+// the InferenceService volume mounts), and the Ready and error conditions and
+// reconciliation-paused annotation that the service reports. A
+// metadata.generation change fires only on a paused cache, whose status will
+// not catch up to it. Cosmetic status writes that don't move any of these
+// fields are filtered out to avoid reconcile hot-loops.
 func profileCacheRelevantChangePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc:  func(_ event.CreateEvent) bool { return true },
@@ -422,9 +425,31 @@ func profileCacheRelevantChangePredicate() predicate.Predicate {
 			if oldCache.Status.ObservedGeneration != newCache.Status.ObservedGeneration {
 				return true
 			}
+			paused := controllerutils.IsReconciliationPaused(newCache)
+			if paused != controllerutils.IsReconciliationPaused(oldCache) ||
+				(paused && oldCache.Generation != newCache.Generation) {
+				return true
+			}
+			for _, conditionType := range append(profilecache.ErrorConditionTypes(), controllerutils.ConditionTypeReady) {
+				if conditionChanged(oldCache.Status.Conditions, newCache.Status.Conditions, conditionType) {
+					return true
+				}
+			}
 			return !equality.Semantic.DeepEqual(oldCache.Status.Artifacts, newCache.Status.Artifacts)
 		},
 	}
+}
+
+// conditionChanged reports whether the condition's presence, status, reason or
+// message differs. lastTransitionTime is ignored: services don't report it, and
+// the framework rewrites it on every failed apply retry, which would hot-loop.
+func conditionChanged(oldConds, newConds []metav1.Condition, conditionType string) bool {
+	oldCond := meta.FindStatusCondition(oldConds, conditionType)
+	newCond := meta.FindStatusCondition(newConds, conditionType)
+	if oldCond == nil || newCond == nil {
+		return (oldCond == nil) != (newCond == nil)
+	}
+	return oldCond.Status != newCond.Status || oldCond.Reason != newCond.Reason || oldCond.Message != newCond.Message
 }
 
 // modelRelevantChangePredicate fires when an AIMModel / AIMClusterModel's
@@ -693,21 +718,9 @@ func adapterArtifactRelevantChangePredicate() predicate.Predicate {
 				oldA.Status.AdapterPath != newA.Status.AdapterPath ||
 				(oldA.Spec.AdapterDisk == nil) != (newA.Spec.AdapterDisk == nil) ||
 				oldA.Status.AdapterPersistentVolumeClaim != newA.Status.AdapterPersistentVolumeClaim ||
-				dependenciesReachableChanged(oldA.Status.Conditions, newA.Status.Conditions)
+				conditionChanged(oldA.Status.Conditions, newA.Status.Conditions, controllerutils.ConditionTypeDependenciesReachable)
 		},
 	}
-}
-
-// dependenciesReachableChanged reports whether the DependenciesReachable
-// condition's status or message differs. lastTransitionTime is ignored: the
-// framework rewrites it on every failed apply retry.
-func dependenciesReachableChanged(oldConds, newConds []metav1.Condition) bool {
-	oldCond := meta.FindStatusCondition(oldConds, controllerutils.ConditionTypeDependenciesReachable)
-	newCond := meta.FindStatusCondition(newConds, controllerutils.ConditionTypeDependenciesReachable)
-	if oldCond == nil || newCond == nil {
-		return (oldCond == nil) != (newCond == nil)
-	}
-	return oldCond.Status != newCond.Status || oldCond.Message != newCond.Message
 }
 
 // findServicesForAdapterArtifact fans an AIMArtifact event back to the services
