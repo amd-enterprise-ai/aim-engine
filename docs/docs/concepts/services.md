@@ -279,11 +279,10 @@ spec:
 
 | Value | Served by |
 |---|---|
-| `Auto` (default) | AIM Engine's choice. Currently `InferenceService`. |
-| `InferenceService` | A KServe `InferenceService` that references the profile's projected `ServingRuntime`. |
+| `InferenceService` (default) | A KServe `InferenceService` that references the profile's projected `ServingRuntime`. |
 | `LLMInferenceService` | A KServe `LLMInferenceService` that references the profile's projected `LLMInferenceServiceConfig` through `spec.baseRefs`. |
 
-The field is immutable. The resolved API is recorded in `status.servingAPI` the first time the service reconciles and is kept for its lifetime, so a later change to what `Auto` selects never moves an existing service to a different API.
+The field is immutable, so a service never moves to a different API. `status.servingAPI` reports the API that serves the service.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -308,7 +307,7 @@ AIM Engine keeps owning the `HTTPRoute` and the KEDA `ScaledObject`. It does not
 
 ### Additional LLMInferenceServiceConfigs
 
-`spec.llmInferenceService.baseRefs` merges additional `LLMInferenceServiceConfig`s into the workload, for example shared vLLM arguments, tracing sidecars, or scheduling constraints maintained by a platform team:
+`spec.llmInferenceService.baseRefs` merges additional `LLMInferenceServiceConfig`s into the workload, for example shared vLLM arguments, sidecars, or scheduling constraints maintained by a platform team:
 
 ```yaml
 spec:
@@ -318,12 +317,12 @@ spec:
   llmInferenceService:
     baseRefs:
       - name: team-vllm-args
-      - name: team-tracing
+      - name: team-scheduling
 ```
 
 KServe merges, in order: its built-in templates, the profile's projected config, the listed configs in list order, and finally the fields AIM Engine sets on the `LLMInferenceService` (model, replicas, env, tolerations, security contexts, pull secrets, service account, priority class, cache, CA trust and adapter mounts, and resources when `spec.resources` is set). The env, tolerations and security contexts come from the AIMService and its runtime config, as for an InferenceService; see [Runtime Configuration](runtime-config.md#tolerations). Later entries win, and maps such as resource lists merge per key while lists such as node selector terms are replaced. Each name resolves in the service's namespace first, then in KServe's system namespace, matching KServe's own lookup. Editing a referenced config rolls the workload.
 
-Referenced configs must not set fields AIM Engine owns: `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, or `spec.model.lora`. Support for the endpoint picker (`spec.router.scheduler`), prefill/decode disaggregation (`spec.prefill`), and multi-node workers (`spec.worker`) is planned for a future release (see [Routing and autoscaling](../admin/kserve-configuration.md#routing-and-autoscaling)). A missing or conflicting config sets `LLMInferenceServiceBaseRefsReady=False` and `ConfigValid=False`, and AIM Engine does not create or update the `LLMInferenceService` until it is fixed. The list holds at most 16 unique names and the `aim-` prefix is reserved for configs AIM Engine projects.
+Referenced configs must not set fields AIM Engine owns or cannot serve: `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, `spec.model.lora`, or `spec.tracing`. KServe implements `spec.tracing` by adding vLLM tracing arguments, which the AIM entrypoint rejects. Support for the endpoint picker (`spec.router.scheduler`), prefill/decode disaggregation (`spec.prefill`), and multi-node workers (`spec.worker`) is planned for a future release (see [Routing and autoscaling](../admin/kserve-configuration.md#routing-and-autoscaling)). A missing or conflicting config sets `LLMInferenceServiceBaseRefsReady=False` and `ConfigValid=False`, and AIM Engine does not create or update the `LLMInferenceService` until it is fixed. The list holds at most 16 unique names and the `aim-` prefix is reserved for configs AIM Engine projects.
 
 Any other field may override the profile, and the outcome is the config author's responsibility. AIM Engine reports overrides of the profile's contract on the informational `ProfileContractIntact` condition, which never affects `Ready`:
 

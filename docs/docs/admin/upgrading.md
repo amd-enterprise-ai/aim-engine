@@ -281,9 +281,9 @@ AIM Engine is tested against KServe v0.20.0. InferenceService serving still
 works on KServe v0.16.1 and later, so upgrading KServe is optional unless you
 want LLMInferenceService serving.
 
-Existing AIMServices are unaffected. `spec.servingAPI` defaults to `Auto`,
-which resolves to `InferenceService`; the first reconcile after the upgrade
-records it in `status.servingAPI` without changing the workload.
+Existing AIMServices are unaffected. `spec.servingAPI` defaults to
+`InferenceService`, and the first reconcile after the upgrade records it in
+`status.servingAPI` without changing the workload.
 
 The operator chart adds RBAC for `llminferenceservices` and
 `llminferenceserviceconfigs` (`serving.kserve.io`) and

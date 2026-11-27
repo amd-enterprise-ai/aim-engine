@@ -24,7 +24,10 @@ package aimservice
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,7 +35,9 @@ import (
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	"github.com/kserve/kserve/pkg/controller/v1alpha2/llmisvc"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -126,10 +131,10 @@ func TestResolveServingAPI(t *testing.T) {
 		recorded aimv1alpha1.AIMServingAPI
 		want     aimv1alpha1.AIMServingAPI
 	}{
-		{"auto resolves to InferenceService", aimv1alpha1.ServingAPIAuto, "", aimv1alpha1.ServingAPIInferenceService},
 		{"unset resolves to InferenceService", "", "", aimv1alpha1.ServingAPIInferenceService},
 		{"explicit LLMInferenceService", aimv1alpha1.ServingAPILLMInferenceService, "", aimv1alpha1.ServingAPILLMInferenceService},
-		{"recorded API is sticky", aimv1alpha1.ServingAPIAuto, aimv1alpha1.ServingAPILLMInferenceService, aimv1alpha1.ServingAPILLMInferenceService},
+		{"a lost status does not change the API", aimv1alpha1.ServingAPILLMInferenceService, "", aimv1alpha1.ServingAPILLMInferenceService},
+		{"the spec wins over a stale status", aimv1alpha1.ServingAPIInferenceService, aimv1alpha1.ServingAPILLMInferenceService, aimv1alpha1.ServingAPIInferenceService},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			service := &aimv1alpha2.AIMService{
@@ -143,19 +148,60 @@ func TestResolveServingAPI(t *testing.T) {
 	}
 }
 
+func kserveConfigFetch(ingress string) controllerutils.FetchResult[*corev1.ConfigMap] {
+	return controllerutils.FetchResult[*corev1.ConfigMap]{Value: &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "inferenceservice-config", Namespace: "kserve-system"},
+		Data:       map[string]string{"ingress": ingress},
+	}}
+}
+
 func TestValidateServingAPI(t *testing.T) {
+	notFound := controllerutils.FetchResult[*corev1.ConfigMap]{
+		Error: apierrors.NewNotFound(corev1.Resource("configmaps"), "inferenceservice-config"),
+	}
+	forbidden := controllerutils.FetchResult[*corev1.ConfigMap]{
+		Error: apierrors.NewForbidden(corev1.Resource("configmaps"), "inferenceservice-config", errors.New("denied")),
+	}
 	for _, tc := range []struct {
-		name       string
-		servingAPI aimv1alpha1.AIMServingAPI
-		support    serving.LLMInferenceServiceSupport
-		wantErr    string
+		name         string
+		servingAPI   aimv1alpha1.AIMServingAPI
+		support      serving.LLMInferenceServiceSupport
+		kserveConfig controllerutils.FetchResult[*corev1.ConfigMap]
+		wantReason   string
+		wantErr      string
 	}{
-		{"InferenceService needs no support", aimv1alpha1.ServingAPIInferenceService, serving.LLMInferenceServiceSupport{}, ""},
-		{"supported LLMInferenceService", aimv1alpha1.ServingAPILLMInferenceService, testLLMSupport, ""},
-		{"missing CRDs", aimv1alpha1.ServingAPILLMInferenceService, serving.LLMInferenceServiceSupport{}, "LLMInferenceService support"},
+		{
+			"InferenceService needs no support", aimv1alpha1.ServingAPIInferenceService,
+			serving.LLMInferenceServiceSupport{},
+			kserveConfigFetch(`{"enableLLMInferenceServiceTLS": true}`), "", "",
+		},
+		{"supported LLMInferenceService", aimv1alpha1.ServingAPILLMInferenceService, testLLMSupport, notFound, "", ""},
+		{
+			"TLS off", aimv1alpha1.ServingAPILLMInferenceService, testLLMSupport,
+			kserveConfigFetch(`{"enableLLMInferenceServiceTLS": false}`), "", "",
+		},
+		{
+			"missing CRDs", aimv1alpha1.ServingAPILLMInferenceService,
+			serving.LLMInferenceServiceSupport{},
+			notFound,
+			aimv1alpha1.AIMServiceReasonServingAPIUnsupported, "LLMInferenceService support",
+		},
+		{
+			"TLS on", aimv1alpha1.ServingAPILLMInferenceService, testLLMSupport,
+			kserveConfigFetch(`{"enableLLMInferenceServiceTLS": true}`),
+			aimv1alpha1.AIMServiceReasonLLMInferenceServiceTLSEnabled, "kserve-system/inferenceservice-config",
+		},
+		{
+			"unparsable ingress config", aimv1alpha1.ServingAPILLMInferenceService, testLLMSupport,
+			kserveConfigFetch(`{`), reasonFetchError, "parse the ingress entry",
+		},
+		{
+			"unreadable ConfigMap", aimv1alpha1.ServingAPILLMInferenceService, testLLMSupport, forbidden,
+			reasonFetchError, "read KServe ConfigMap",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateServingAPI(tc.servingAPI, tc.support)
+			err := validateServingAPI(tc.servingAPI, tc.support, tc.kserveConfig)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -165,8 +211,133 @@ func TestValidateServingAPI(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want one mentioning %q", err, tc.wantErr)
 			}
+			if health := servingAPIComponentHealth(tc.servingAPI, err); health.Reason != tc.wantReason {
+				t.Errorf("health reason = %q, want %q", health.Reason, tc.wantReason)
+			}
 		})
 	}
+}
+
+// staleFailedCondition seeds a condition manager with the False condition a
+// component left on an earlier reconcile.
+func staleFailedCondition(component string) *controllerutils.ConditionManager {
+	return controllerutils.NewConditionManager([]metav1.Condition{{
+		Type:   component + controllerutils.ComponentConditionSuffix,
+		Status: metav1.ConditionFalse,
+		Reason: "EarlierFailure",
+	}})
+}
+
+// assertConditionClears checks that a fixed component no longer leaves its
+// earlier False condition: it either reports Ready, which the pipeline writes
+// over the condition, or no longer applies, and DecorateStatus deletes it.
+func assertConditionClears(
+	t *testing.T,
+	component string,
+	health controllerutils.ComponentHealth,
+	obs ServiceObservation,
+	wantReady bool,
+) {
+	t.Helper()
+	cm := staleFailedCondition(component)
+	deleteInapplicableLLMConditions(cm, obs)
+	conditionType := component + controllerutils.ComponentConditionSuffix
+	if wantReady {
+		if health.Component != component || health.State != constants.AIMStatusReady {
+			t.Fatalf("health = %+v, want %s Ready", health, component)
+		}
+		if cm.Get(conditionType) == nil {
+			t.Errorf("%s was deleted although the check still applies", conditionType)
+		}
+		return
+	}
+	if health.Component != "" {
+		t.Fatalf("health = %+v, want none once the check no longer applies", health)
+	}
+	if cm.Get(conditionType) != nil {
+		t.Errorf("%s stays after the check stopped applying", conditionType)
+	}
+}
+
+func TestServingAPICondition_failThenFixed(t *testing.T) {
+	llm := aimv1alpha1.ServingAPILLMInferenceService
+	tlsOn := kserveConfigFetch(`{"enableLLMInferenceServiceTLS": true}`)
+	tlsOff := kserveConfigFetch(`{"enableLLMInferenceServiceTLS": false}`)
+
+	t.Run("support installed", func(t *testing.T) {
+		failed := servingAPIComponentHealth(llm, validateServingAPI(llm, serving.LLMInferenceServiceSupport{}, tlsOff))
+		if failed.State != constants.AIMStatusFailed {
+			t.Fatalf("health = %+v, want Failed", failed)
+		}
+		fixed := servingAPIComponentHealth(llm, validateServingAPI(llm, testLLMSupport, tlsOff))
+		obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{service: llmTestService(), servingAPI: llm}}
+		assertConditionClears(t, servingAPIComponent, fixed, obs, true)
+	})
+
+	t.Run("TLS turned off", func(t *testing.T) {
+		failed := servingAPIComponentHealth(llm, validateServingAPI(llm, testLLMSupport, tlsOn))
+		if failed.Reason != aimv1alpha1.AIMServiceReasonLLMInferenceServiceTLSEnabled {
+			t.Fatalf("health = %+v, want Failed/%s", failed, aimv1alpha1.AIMServiceReasonLLMInferenceServiceTLSEnabled)
+		}
+		fixed := servingAPIComponentHealth(llm, validateServingAPI(llm, testLLMSupport, tlsOff))
+		if fixed.Reason != aimv1alpha1.AIMServiceReasonServingAPISupported {
+			t.Errorf("health reason = %q, want %q", fixed.Reason, aimv1alpha1.AIMServiceReasonServingAPISupported)
+		}
+		obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{service: llmTestService(), servingAPI: llm}}
+		assertConditionClears(t, servingAPIComponent, fixed, obs, true)
+	})
+
+	t.Run("InferenceService-served", func(t *testing.T) {
+		isvc := aimv1alpha1.ServingAPIInferenceService
+		health := servingAPIComponentHealth(isvc, validateServingAPI(isvc, serving.LLMInferenceServiceSupport{}, tlsOn))
+		obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{service: llmTestService(), servingAPI: isvc}}
+		assertConditionClears(t, servingAPIComponent, health, obs, false)
+	})
+}
+
+func TestLLMBaseRefsCondition_failThenFixed(t *testing.T) {
+	_, obs := autoscaledLLMObservation(t)
+	obs.llmBaseRefs = []llmBaseRef{{name: "team-args"}}
+	if failed := llmBaseRefsComponentHealth(obs.llmBaseRefs, "kserve-system", "ns"); failed.State != constants.AIMStatusFailed {
+		t.Fatalf("health = %+v, want Failed for a missing ref", failed)
+	}
+
+	t.Run("ref created", func(t *testing.T) {
+		fixed := obs
+		fixed.llmBaseRefs = []llmBaseRef{{name: "team-args", config: llmPreset("team-args", "ns", nil)}}
+		assertConditionClears(t, llmBaseRefsComponent, llmBaseRefsComponentHealth(fixed.llmBaseRefs, "kserve-system", "ns"), fixed, true)
+	})
+
+	t.Run("ref removed", func(t *testing.T) {
+		fixed := obs
+		fixed.llmBaseRefs = nil
+		assertConditionClears(t, llmBaseRefsComponent, llmBaseRefsComponentHealth(fixed.llmBaseRefs, "kserve-system", "ns"), fixed, false)
+	})
+}
+
+func TestLLMAutoscalingCondition_failThenFixed(t *testing.T) {
+	service, obs := autoscaledLLMObservation(t)
+	obs.openTelemetryCollector = false
+	if failed := llmAutoscalingComponentHealth(service, obs.ServiceFetchResult); failed.State != constants.AIMStatusFailed {
+		t.Fatalf("health = %+v, want Failed without the collector API", failed)
+	}
+
+	t.Run("collector installed", func(t *testing.T) {
+		fixed := obs
+		fixed.openTelemetryCollector = true
+		health := llmAutoscalingComponentHealth(service, fixed.ServiceFetchResult)
+		if health.Reason != aimv1alpha1.AIMServiceReasonOpenTelemetryCollectorAvailable {
+			t.Errorf("health reason = %q, want %q", health.Reason, aimv1alpha1.AIMServiceReasonOpenTelemetryCollectorAvailable)
+		}
+		assertConditionClears(t, llmAutoscalingComponent, health, fixed, true)
+	})
+
+	t.Run("autoscaling removed", func(t *testing.T) {
+		fixed := obs
+		fixed.service = llmTestService()
+		health := llmAutoscalingComponentHealth(fixed.service, fixed.ServiceFetchResult)
+		assertConditionClears(t, llmAutoscalingComponent, health, fixed, false)
+	})
 }
 
 func TestPlanResources_llmInferenceServiceWaitsForNamespacedProjection(t *testing.T) {
@@ -643,8 +814,8 @@ func TestPlanAutoscaling_llmInferenceServiceActivationQueryPerScope(t *testing.T
 
 func TestLLMAutoscaling_withoutOpenTelemetryCollector(t *testing.T) {
 	service, obs := autoscaledLLMObservation(t)
-	if health := llmAutoscalingComponentHealth(service, obs.ServiceFetchResult); health.Component != "" {
-		t.Fatalf("health = %+v, want none when the collector API is served", health)
+	if health := llmAutoscalingComponentHealth(service, obs.ServiceFetchResult); health.State != constants.AIMStatusReady {
+		t.Fatalf("health = %+v, want Ready when the collector API is served", health)
 	}
 
 	obs.openTelemetryCollector = false
@@ -677,6 +848,163 @@ func TestPlanAutoscaling_fixedReplicasPlansNothing(t *testing.T) {
 	obs.service = fixed
 	if objects := planAutoscaling(context.Background(), fixed, obs, nil); len(objects) != 0 {
 		t.Fatalf("planAutoscaling() = %d objects, want none for a fixed-replica service", len(objects))
+	}
+}
+
+func TestStaleAutoscalingCleanup_autoscalingTurnedOff(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		servingAPI aimv1alpha1.AIMServingAPI
+		wantKinds  []string
+	}{
+		{"InferenceService", aimv1alpha1.ServingAPIInferenceService, []string{"ScaledObject"}},
+		{"LLMInferenceService", aimv1alpha1.ServingAPILLMInferenceService, []string{"OpenTelemetryCollector", "ScaledObject"}},
+	} {
+		for _, controlled := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s controlled=%t", tc.name, controlled), func(t *testing.T) {
+				service, obs := autoscaledLLMObservation(t)
+				service.Spec.ServingAPI = tc.servingAPI
+				obs.servingAPI = tc.servingAPI
+				obs.servesLLM = tc.servingAPI == aimv1alpha1.ServingAPILLMInferenceService
+
+				planned := planAutoscaling(context.Background(), service, obs, nil)
+				var kinds []string
+				builder := fake.NewClientBuilder().WithScheme(runtime.NewScheme())
+				for _, obj := range planned {
+					kinds = append(kinds, obj.GetObjectKind().GroupVersionKind().Kind)
+					owner := service.DeepCopy()
+					if !controlled {
+						owner.Name, owner.UID = "other-service", "other-uid"
+					}
+					obj.SetOwnerReferences([]metav1.OwnerReference{
+						*metav1.NewControllerRef(owner, aimv1alpha2.GroupVersion.WithKind("AIMService")),
+					})
+					builder = builder.WithObjects(obj)
+				}
+				slices.Sort(kinds)
+				if !slices.Equal(kinds, tc.wantKinds) {
+					t.Fatalf("planned kinds = %v, want %v", kinds, tc.wantKinds)
+				}
+				c := builder.Build()
+				kedaHPA := controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{
+					Value: &autoscalingv2.HorizontalPodAutoscaler{},
+				}
+				if fetched := fetchStaleAutoscaling(context.Background(), c, service, kedaHPA, obs.servesLLM, true); fetched != nil {
+					t.Fatalf("an autoscaled service read %d stale autoscaling objects, want none", len(fetched))
+				}
+
+				service.Spec.MinReplicas, service.Spec.MaxReplicas, service.Spec.AutoScaling = nil, nil, nil
+				if objects := planAutoscaling(context.Background(), service, obs, nil); len(objects) != 0 {
+					t.Fatalf("planAutoscaling() = %d objects once autoscaling is off, want none", len(objects))
+				}
+				noHPA := controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{
+					Error: notFoundError("horizontalpodautoscalers", "keda-hpa"),
+				}
+				if fetched := fetchStaleAutoscaling(context.Background(), c, service, noHPA, obs.servesLLM, true); fetched != nil {
+					t.Fatalf("read %d autoscaling objects without KEDA's HPA, want none", len(fetched))
+				}
+				obs.staleAutoscaling = fetchStaleAutoscaling(context.Background(), c, service, kedaHPA, obs.servesLLM, true)
+				var plan controllerutils.PlanResult
+				planStaleAutoscalingCleanup(&plan, obs, logr.Discard())
+
+				var deleted []string
+				for _, obj := range plan.GetToDelete() {
+					deleted = append(deleted, obj.GetObjectKind().GroupVersionKind().Kind)
+				}
+				slices.Sort(deleted)
+				want := tc.wantKinds
+				if !controlled {
+					want = nil
+				}
+				if !slices.Equal(deleted, want) {
+					t.Errorf("deleted kinds = %v, want %v", deleted, want)
+				}
+			})
+		}
+	}
+}
+
+func TestLLMWorkloadPodsHealth_deletedFailedPod(t *testing.T) {
+	readyPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-kserve-new", Namespace: "ns"},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	// The kubelet reports a deleted pod Failed once a container exits non-zero
+	// on SIGTERM.
+	failedPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-kserve-old", Namespace: "ns"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodFailed,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "main",
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 2, Reason: "Error"}},
+			}},
+		},
+	}
+	deletedFailedPod := *failedPod.DeepCopy()
+	deletedFailedPod.DeletionTimestamp = ptr.To(metav1.Now())
+
+	scaleToZero := llmTestService()
+	scaleToZero.Spec.Replicas = nil
+	scaleToZero.Spec.MinReplicas = ptr.To[int32](0)
+	scaleToZero.Spec.MaxReplicas = ptr.To[int32](3)
+	idleHPA := controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{
+		Value: &autoscalingv2.HorizontalPodAutoscaler{Status: autoscalingv2.HorizontalPodAutoscalerStatus{
+			Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+				{Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "ScalingDisabled"},
+			},
+		}},
+	}
+
+	for _, tc := range []struct {
+		name       string
+		service    *aimv1alpha2.AIMService
+		hpa        controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
+		pods       []corev1.Pod
+		wantState  constants.AIMStatus
+		wantReason string
+		wantErrors bool
+	}{
+		{
+			name:       "a pod that failed while a rollout replaced it does not fail the service",
+			service:    llmTestService(),
+			pods:       []corev1.Pod{readyPod, deletedFailedPod},
+			wantState:  constants.AIMStatusReady,
+			wantReason: "PodsReady",
+		},
+		{
+			name:       "a pod that failed while scaling to zero leaves the service idle",
+			service:    scaleToZero,
+			hpa:        idleHPA,
+			pods:       []corev1.Pod{deletedFailedPod},
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonScaledToZero,
+		},
+		{
+			name:       "a failed pod that is not being deleted still fails the service",
+			service:    llmTestService(),
+			pods:       []corev1.Pod{readyPod, failedPod},
+			wantState:  constants.AIMStatusFailed,
+			wantReason: "PodFailed",
+			wantErrors: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pods := &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{Items: tc.pods}}
+			health, ok := llmWorkloadPodsComponentHealth(context.Background(), nil, tc.service, tc.hpa, pods)
+			if !ok {
+				t.Fatal("llmWorkloadPodsComponentHealth() reported nothing for a fetched pod list")
+			}
+			if health.GetState() != tc.wantState || health.GetReason() != tc.wantReason {
+				t.Fatalf("health = %s/%s, want %s/%s", health.GetState(), health.GetReason(), tc.wantState, tc.wantReason)
+			}
+			if gotErrors := len(health.Errors) > 0; gotErrors != tc.wantErrors {
+				t.Errorf("errors = %v, want errors: %t", health.Errors, tc.wantErrors)
+			}
+		})
 	}
 }
 
@@ -729,6 +1057,9 @@ func TestLLMBaseRefsComponentHealth(t *testing.T) {
 		cfg.Spec.Replicas = ptr.To[int32](3)
 		cfg.Spec.Model.LoRA = &kservev1alpha2.LoRASpec{}
 	})
+	traced := llmPreset("team-tracing", "ns", func(cfg *kservev1alpha2.LLMInferenceServiceConfig) {
+		cfg.Spec.Tracing = &kservev1alpha2.TracingSpec{}
+	})
 	for _, tc := range []struct {
 		name        string
 		refs        []llmBaseRef
@@ -752,6 +1083,11 @@ func TestLLMBaseRefsComponentHealth(t *testing.T) {
 			"conflicting",
 			[]llmBaseRef{{name: "team-route", config: routed}, {name: "team-scale", config: scaled}},
 			constants.AIMStatusFailed, reasonLLMBaseRefConflict, "team-scale sets spec.replicas, spec.model.lora", false,
+		},
+		{
+			"tracing",
+			[]llmBaseRef{{name: "team-tracing", config: traced}},
+			constants.AIMStatusFailed, reasonLLMBaseRefConflict, "team-tracing sets spec.tracing", false,
 		},
 		{
 			"fetch error",
@@ -1168,5 +1504,34 @@ func TestPlanLLMInferenceService_pollsWorkloadDeploymentWhileNotReady(t *testing
 	planLLMInferenceService(&plan, service, obs, true, logr.Discard())
 	if plan.RequeueAfter != llmWorkloadDeploymentPollInterval {
 		t.Errorf("RequeueAfter = %s, want %s", plan.RequeueAfter, llmWorkloadDeploymentPollInterval)
+	}
+}
+
+func TestBuildLLMInferenceServiceFromProfile_annotationsRenderLiterally(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	// Unescaped, each q renders a '"', so the value closes the annotations and
+	// metadata objects, adds spec.template.hostPID, and reopens both.
+	q := "{{printf `%c` 34}}"
+	hostile := q + "}}," + q + "spec" + q + ":{ " + q + "template" + q + ":{ " + q + "hostPID" + q + ":true}}," +
+		q + "metadata" + q + ":{ " + q + "annotations" + q + ":{ " + q + "k" + q + ":" + q + "v"
+	service.Annotations = map[string]string{constants.AnnotationPrefixClusterAuth + "allowed-group": hostile}
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	rendered, err := llmisvc.ReplaceVariables(
+		llmService,
+		&kservev1alpha2.LLMInferenceServiceConfig{ObjectMeta: *llmService.ObjectMeta.DeepCopy(), Spec: llmService.Spec},
+		&llmisvc.Config{},
+	)
+	if err != nil {
+		t.Fatalf("ReplaceVariables: %v", err)
+	}
+	if got := rendered.Annotations[constants.AnnotationPrefixClusterAuth+"allowed-group"]; got != hostile {
+		t.Errorf("rendered annotation = %q, want the literal %q", got, hostile)
+	}
+	if rendered.Spec.Template.HostPID {
+		t.Error("an annotation value set hostPID on the rendered workload")
 	}
 }

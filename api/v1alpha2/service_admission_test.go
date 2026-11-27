@@ -153,7 +153,8 @@ func TestServiceServingAPIAdmission_create(t *testing.T) {
 		spec  string
 		valid bool
 	}{
-		{"defaulted auto", `profile: {name: qwen}`, true},
+		{"defaulted", `profile: {name: qwen}`, true},
+		{"auto is not accepted", `{profile: {name: qwen}, servingAPI: Auto}`, false},
 		{"explicit inference service", `{profile: {name: qwen}, servingAPI: InferenceService}`, true},
 		{"llm inference service with profile", `{profile: {name: qwen}, servingAPI: LLMInferenceService}`, true},
 		{"llm inference service without profile", `{model: {name: qwen}, servingAPI: LLMInferenceService}`, false},
@@ -171,17 +172,17 @@ servingAPI: InferenceService
 adapters: [{kind: AIMArtifact, name: lora}]`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			errs := validateService(t, structural, serviceObject(t, structural, "v1alpha2", tc.spec), nil)
+			errs := validateServiceFully(t, "v1alpha2", serviceObject(t, structural, "v1alpha2", tc.spec))
 			assertServingAPIVerdict(t, errs, tc.valid)
 		})
 	}
 }
 
-func TestServiceServingAPIAdmission_defaultsToAuto(t *testing.T) {
+func TestServiceServingAPIAdmission_defaultsToInferenceService(t *testing.T) {
 	structural := generatedServiceSchema(t, "v1alpha2")
 	obj := serviceObject(t, structural, "v1alpha2", `profile: {name: qwen}`)
-	if got := obj["spec"].(map[string]any)["servingAPI"]; got != "Auto" {
-		t.Fatalf("spec.servingAPI defaulted to %v, want Auto", got)
+	if got := obj["spec"].(map[string]any)["servingAPI"]; got != "InferenceService" {
+		t.Fatalf("spec.servingAPI defaulted to %v, want InferenceService", got)
 	}
 }
 
@@ -198,14 +199,14 @@ func TestServiceServingAPIAdmission_immutable(t *testing.T) {
 			`{profile: {name: qwen}, servingAPI: LLMInferenceService}`, true,
 		},
 		{
-			"auto to llm inference service", `{profile: {name: qwen}, servingAPI: Auto}`,
+			"inference service to llm inference service", `{profile: {name: qwen}, servingAPI: InferenceService}`,
 			`{profile: {name: qwen}, servingAPI: LLMInferenceService}`, false,
 		},
 		{
 			"llm inference service to inference service", `{profile: {name: qwen}, servingAPI: LLMInferenceService}`,
 			`{profile: {name: qwen}, servingAPI: InferenceService}`, false,
 		},
-		// A service stored before the field existed is defaulted to Auto on
+		// A service stored before the field existed is defaulted to InferenceService on
 		// read, so it cannot be switched afterwards either.
 		{
 			"pre-existing service to llm inference service", `profile: {name: qwen}`,

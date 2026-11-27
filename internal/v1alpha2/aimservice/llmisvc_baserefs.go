@@ -103,8 +103,9 @@ func fetchLLMBaseRefs(
 // llmConfigConflicts lists the fields of a user-supplied config that conflict
 // with what AIM Engine owns for an LLMInferenceService-served AIMService:
 // routing (the AIMService HTTPRoute), autoscaling (the KEDA ScaledObject) and
-// replicas, the single-node workload shape, and LoRA adapters (AIM Engine's
-// adapter contract). Every other field is deliberately left to the user.
+// replicas, the single-node workload shape, LoRA adapters (AIM Engine's
+// adapter contract), and tracing, for which KServe adds vLLM arguments that the
+// AIM entrypoint rejects. Every other field is deliberately left to the user.
 func llmConfigConflicts(config *kservev1alpha2.LLMInferenceServiceConfig) []string {
 	spec := config.Spec
 	var fields []string
@@ -125,6 +126,9 @@ func llmConfigConflicts(config *kservev1alpha2.LLMInferenceServiceConfig) []stri
 	}
 	if spec.Model.LoRA != nil {
 		fields = append(fields, "spec.model.lora")
+	}
+	if spec.Tracing != nil {
+		fields = append(fields, "spec.tracing")
 	}
 	return fields
 }

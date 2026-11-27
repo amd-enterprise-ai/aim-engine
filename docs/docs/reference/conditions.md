@@ -162,23 +162,27 @@ Set only when `spec.llmInferenceService.baseRefs` is non-empty.
 |---|---|---|
 | `True` | `LLMInferenceServiceConfigsResolved` | Every referenced config exists and sets no field AIM Engine owns |
 | `False` | `LLMInferenceServiceConfigNotFound` | A referenced config exists in neither the service namespace nor KServe's system namespace |
-| `False` | `LLMInferenceServiceConfigConflict` | A referenced config sets `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, or `spec.model.lora` |
+| `False` | `LLMInferenceServiceConfigConflict` | A referenced config sets `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, `spec.model.lora`, or `spec.tracing` |
 | `False` | `FetchError` | A referenced config could not be read; the message names it and carries the API error |
 
 ### ServingAPIReady
 
-Set only when the requested `spec.servingAPI` cannot be served.
+Set only when `spec.servingAPI` is `LLMInferenceService`.
 
 | Status | Reason | Description |
 |---|---|---|
-| `False` | `ServingAPIUnsupported` | `LLMInferenceService` was requested, but AIM Engine runs without the LLMInferenceService CRDs or with `--enable-llm-inference-service=false`. Drives `ConfigValid=False` |
+| `True` | `ServingAPISupported` | AIM Engine can serve the service through a KServe LLMInferenceService |
+| `False` | `ServingAPIUnsupported` | AIM Engine runs without the LLMInferenceService CRDs or with `--enable-llm-inference-service=false`. Drives `ConfigValid=False` |
+| `False` | `LLMInferenceServiceTLSEnabled` | KServe's `enableLLMInferenceServiceTLS` is on in the `ingress` entry of `inferenceservice-config`. KServe then probes and serves the workload over HTTPS, which AIM images do not support. Drives `ConfigValid=False`; AIM Engine rechecks the setting every minute |
+| `False` | `FetchError` | KServe's `inferenceservice-config` could not be read or its `ingress` entry could not be parsed |
 
 ### LLMInferenceServiceAutoscalingReady
 
-Set only when an autoscaled service is served by an LLMInferenceService and the cluster does not serve the `opentelemetry.io/v1beta1` OpenTelemetryCollector CRD, which carries the per-service metric collector sidecar.
+Set only when an autoscaled service is served by an LLMInferenceService. The per-service metric collector sidecar needs the `opentelemetry.io/v1beta1` OpenTelemetryCollector CRD.
 
 | Status | Reason | Description |
 |---|---|---|
+| `True` | `OpenTelemetryCollectorAvailable` | The cluster serves the OpenTelemetryCollector CRD |
 | `False` | `OpenTelemetryCollectorUnavailable` | Drives `ConfigValid=False`. Install the OpenTelemetry Operator and restart AIM Engine, or use a fixed replica count |
 
 ### ProfileContractIntact

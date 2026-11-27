@@ -2442,13 +2442,12 @@ spec:
                   If empty, the default service account for the namespace is used.
                 type: string
               servingAPI:
-                default: Auto
+                default: InferenceService
                 description: |-
-                  ServingAPI selects the KServe API that serves this service. Auto (the
-                  default) currently resolves to InferenceService. The resolved API is
-                  recorded in status.
+                  ServingAPI selects the KServe API that serves this service:
+                  InferenceService (the default) or LLMInferenceService. Immutable after
+                  creation. LLMInferenceService requires spec.
                 enum:
-                - Auto
                 - InferenceService
                 - LLMInferenceService
                 type: string
@@ -2982,15 +2981,14 @@ spec:
               servingAPI:
                 allOf:
                 - enum:
-                  - Auto
                   - InferenceService
                   - LLMInferenceService
                 - enum:
                   - InferenceService
                   - LLMInferenceService
                 description: |-
-                  ServingAPI is the KServe API this service resolved to. It is recorded
-                  on first resolution and kept for the service's lifetime.
+                  ServingAPI is the KServe API that serves this service, as selected by
+                  spec.servingAPI.
                 type: string
               status:
                 default: Pending
@@ -5457,13 +5455,12 @@ spec:
                   If empty, the default service account for the namespace is used.
                 type: string
               servingAPI:
-                default: Auto
+                default: InferenceService
                 description: |-
-                  ServingAPI selects the KServe API that serves this service. Auto (the
-                  default) currently resolves to InferenceService. The resolved API is
-                  recorded in status.
+                  ServingAPI selects the KServe API that serves this service:
+                  InferenceService (the default) or LLMInferenceService. Immutable after
+                  creation. LLMInferenceService requires spec.
                 enum:
-                - Auto
                 - InferenceService
                 - LLMInferenceService
                 type: string
@@ -5997,15 +5994,14 @@ spec:
               servingAPI:
                 allOf:
                 - enum:
-                  - Auto
                   - InferenceService
                   - LLMInferenceService
                 - enum:
                   - InferenceService
                   - LLMInferenceService
                 description: |-
-                  ServingAPI is the KServe API this service resolved to. It is recorded
-                  on first resolution and kept for the service's lifetime.
+                  ServingAPI is the KServe API that serves this service, as selected by
+                  spec.servingAPI.
                 type: string
               status:
                 default: Pending

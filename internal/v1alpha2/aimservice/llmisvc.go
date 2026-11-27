@@ -24,12 +24,15 @@ package aimservice
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
 	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
+	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	kserveconstants "github.com/kserve/kserve/pkg/constants"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -61,51 +64,153 @@ const (
 	reasonLLMInferenceServiceNotReady = "LLMInferenceServiceNotReady"
 
 	llmWorkloadDeploymentPollInterval = 30 * time.Second
+	kserveConfigPollInterval          = time.Minute
 )
 
-// resolveServingAPI returns the KServe API that serves the service. A recorded
-// status.servingAPI is authoritative so an existing service never moves
-// between kinds; otherwise Auto resolves to InferenceService.
+// resolveServingAPI returns the KServe API that serves the service.
+// spec.servingAPI is immutable, so a service never moves between kinds.
 func resolveServingAPI(service *aimv1alpha2.AIMService) aimv1alpha1.AIMServingAPI {
-	if service.Status.ServingAPI != "" {
-		return service.Status.ServingAPI
-	}
-	if service.Spec.GetServingAPI() == aimv1alpha1.ServingAPILLMInferenceService {
-		return aimv1alpha1.ServingAPILLMInferenceService
-	}
-	return aimv1alpha1.ServingAPIInferenceService
+	return service.Spec.GetServingAPI()
 }
 
+// servingAPIError explains why the requested serving API cannot serve the
+// service.
+type servingAPIError struct {
+	reason string
+	err    error
+}
+
+func (e *servingAPIError) Error() string { return e.err.Error() }
+
+func (e *servingAPIError) Unwrap() error { return e.err }
+
 // validateServingAPI rejects an LLMInferenceService-served service when the
-// operator runs without the KServe LLMInferenceService API.
+// operator runs without the KServe LLMInferenceService API, or when KServe
+// serves LLMInferenceServices over TLS. KServe then switches the probes and the
+// workload Service to HTTPS, while AIM images serve plain HTTP, so the workload
+// could never become ready.
 func validateServingAPI(
 	servingAPI aimv1alpha1.AIMServingAPI,
 	support serving.LLMInferenceServiceSupport,
+	kserveConfig controllerutils.FetchResult[*corev1.ConfigMap],
 ) error {
 	if servingAPI != aimv1alpha1.ServingAPILLMInferenceService {
 		return nil
 	}
 	if !support.Enabled {
-		return fmt.Errorf("spec.servingAPI is LLMInferenceService, but AIM Engine runs without KServe " +
-			"LLMInferenceService support: install the serving.kserve.io/v1alpha2 LLMInferenceService CRDs " +
-			"and restart the operator with --enable-llm-inference-service")
+		return &servingAPIError{
+			reason: aimv1alpha1.AIMServiceReasonServingAPIUnsupported,
+			err: errors.New("spec.servingAPI is LLMInferenceService, but AIM Engine runs without KServe " +
+				"LLMInferenceService support: install the serving.kserve.io/v1alpha2 LLMInferenceService CRDs " +
+				"and restart the operator with --enable-llm-inference-service"),
+		}
+	}
+	tls, err := llmInferenceServiceTLSEnabled(kserveConfig)
+	if err != nil {
+		return &servingAPIError{reason: reasonFetchError, err: err}
+	}
+	if tls {
+		return &servingAPIError{
+			reason: aimv1alpha1.AIMServiceReasonLLMInferenceServiceTLSEnabled,
+			err: fmt.Errorf("KServe serves LLMInferenceServices over TLS (enableLLMInferenceServiceTLS in the "+
+				"ingress config of ConfigMap %s/%s), which AIM images do not support: disable it, or use "+
+				"spec.servingAPI=InferenceService", support.KServeNamespace, kserveconstants.InferenceServiceConfigMapName),
+		}
 	}
 	return nil
 }
 
-func servingAPIComponentHealth(err error) controllerutils.ComponentHealth {
-	if err == nil {
+// deleteInapplicableLLMConditions removes the conditions of the
+// LLMInferenceService checks that no longer apply to the service. The pipeline
+// only updates the conditions of the components it is given, so a failure that
+// stops applying, for example after its baseRefs are removed, would otherwise
+// stay False.
+func deleteInapplicableLLMConditions(cm *controllerutils.ConditionManager, obs ServiceObservation) {
+	if cm == nil {
+		return
+	}
+	if obs.servingAPI != aimv1alpha1.ServingAPILLMInferenceService {
+		cm.Delete(servingAPIComponent + controllerutils.ComponentConditionSuffix)
+	}
+	if len(obs.llmBaseRefs) == 0 {
+		cm.Delete(llmBaseRefsComponent + controllerutils.ComponentConditionSuffix)
+	}
+	if !llmAutoscalingApplies(obs.service, obs.ServiceFetchResult) {
+		cm.Delete(llmAutoscalingComponent + controllerutils.ComponentConditionSuffix)
+	}
+}
+
+// fetchKServeConfig reads KServe's inferenceservice-config ConfigMap. It
+// carries no AIM labels, so the operator's cache leaves it out.
+func fetchKServeConfig(
+	ctx context.Context,
+	reader client.Reader,
+	kserveNamespace string,
+) controllerutils.FetchResult[*corev1.ConfigMap] {
+	return controllerutils.FetchDirect(ctx, reader, client.ObjectKey{
+		Namespace: kserveNamespace,
+		Name:      kserveconstants.InferenceServiceConfigMapName,
+	}, &corev1.ConfigMap{})
+}
+
+// llmInferenceServiceTLSEnabled reports KServe's enableLLMInferenceServiceTLS
+// setting. A missing ConfigMap or ingress entry leaves TLS off, as in KServe.
+func llmInferenceServiceTLSEnabled(fetch controllerutils.FetchResult[*corev1.ConfigMap]) (bool, error) {
+	if fetch.IsNotFound() {
+		return false, nil
+	}
+	if fetch.Error != nil {
+		return false, fmt.Errorf("read KServe ConfigMap %s: %w", kserveconstants.InferenceServiceConfigMapName, fetch.Error)
+	}
+	if fetch.Value == nil {
+		return false, nil
+	}
+	raw, ok := fetch.Value.Data[servingv1beta1.IngressConfigKeyName]
+	if !ok {
+		return false, nil
+	}
+	var ingress struct {
+		EnableLLMInferenceServiceTLS bool `json:"enableLLMInferenceServiceTLS,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(raw), &ingress); err != nil {
+		return false, fmt.Errorf("parse the %s entry of KServe ConfigMap %s: %w",
+			servingv1beta1.IngressConfigKeyName, kserveconstants.InferenceServiceConfigMapName, err)
+	}
+	return ingress.EnableLLMInferenceServiceTLS, nil
+}
+
+// servingAPIComponentHealth reports whether the requested serving API can
+// serve an LLMInferenceService-served service. It reports nothing for an
+// InferenceService-served one; deleteInapplicableLLMConditions removes the
+// condition.
+func servingAPIComponentHealth(servingAPI aimv1alpha1.AIMServingAPI, err error) controllerutils.ComponentHealth {
+	if servingAPI != aimv1alpha1.ServingAPILLMInferenceService {
 		return controllerutils.ComponentHealth{}
 	}
-	reason := aimv1alpha1.AIMServiceReasonServingAPIUnsupported
-	return controllerutils.ComponentHealth{
+	health := controllerutils.ComponentHealth{
 		Component:      servingAPIComponent,
-		State:          constants.AIMStatusFailed,
-		Reason:         reason,
-		Message:        err.Error(),
 		DependencyType: controllerutils.DependencyTypeUpstream,
-		Errors:         []error{controllerutils.NewInvalidSpecError(reason, err.Error(), err)},
 	}
+	if err == nil {
+		health.State = constants.AIMStatusReady
+		health.Reason = aimv1alpha1.AIMServiceReasonServingAPISupported
+		health.Message = "AIM Engine can serve the service through a KServe LLMInferenceService"
+		return health
+	}
+	reason := aimv1alpha1.AIMServiceReasonServingAPIUnsupported
+	var apiErr *servingAPIError
+	if errors.As(err, &apiErr) {
+		reason = apiErr.reason
+	}
+	health.State = constants.AIMStatusFailed
+	health.Reason = reason
+	health.Message = err.Error()
+	if reason == reasonFetchError {
+		health.Errors = []error{controllerutils.NewInfrastructureError(reason, err.Error(), err)}
+	} else {
+		health.Errors = []error{controllerutils.NewInvalidSpecError(reason, err.Error(), err)}
+	}
+	return health
 }
 
 // fetchLLMInferenceService fetches the service's LLMInferenceService, which
@@ -230,6 +335,9 @@ func llmWorkloadPodsComponentHealth(
 	if pods == nil {
 		return controllerutils.ComponentHealth{}, false
 	}
+	// A rollout or scale-down deletes workload pods, and one whose container
+	// exits non-zero on SIGTERM stays Failed until it is gone.
+	pods = v1alpha1svc.WithoutDeletedFailedPods(pods)
 	if pods.OK() && pods.Value != nil && len(pods.Value.Items) == 0 &&
 		v1alpha1svc.ScaledToZero(service, hpa, 0) {
 		return controllerutils.ComponentHealth{
@@ -355,7 +463,7 @@ func buildLLMInferenceServiceFromProfile(
 			Name:        obs.isvcName,
 			Namespace:   service.Namespace,
 			Labels:      labels,
-			Annotations: buildInferenceServiceAnnotations(service, obs, profileSpec),
+			Annotations: serving.EscapeKServeTemplateAnnotations(buildInferenceServiceAnnotations(service, obs, profileSpec)),
 		},
 		Spec: spec,
 	}, nil

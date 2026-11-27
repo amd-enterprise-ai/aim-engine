@@ -213,14 +213,10 @@ const (
 )
 
 // AIMServingAPI selects the KServe API that serves an AIMService.
-// +kubebuilder:validation:Enum=Auto;InferenceService;LLMInferenceService
+// +kubebuilder:validation:Enum=InferenceService;LLMInferenceService
 type AIMServingAPI string
 
 const (
-	// ServingAPIAuto lets AIM Engine choose the KServe API. It currently
-	// resolves to InferenceService.
-	ServingAPIAuto AIMServingAPI = "Auto"
-
 	// ServingAPIInferenceService serves the service through a KServe
 	// InferenceService that references the profile's projected ServingRuntime.
 	ServingAPIInferenceService AIMServingAPI = "InferenceService"
@@ -526,15 +522,13 @@ type AIMServiceSpec struct {
 	// +optional
 	ProfileOverrides *AIMServiceProfileOverrides `json:"profileOverrides,omitempty"`
 
-	// ServingAPI selects the KServe API that serves this service. Auto (the
-	// default) currently resolves to InferenceService. The resolved API is
-	// recorded in status.servingAPI and kept for the service's lifetime, so a
-	// later change to what Auto selects never moves an existing service.
-	// LLMInferenceService requires spec.profile (aim.eai.amd.com/v1alpha2) and
-	// an operator running with LLMInferenceService support, which needs the
-	// KServe LLMInferenceService CRDs. Immutable after creation.
+	// ServingAPI selects the KServe API that serves this service:
+	// InferenceService (the default) or LLMInferenceService. Immutable after
+	// creation. LLMInferenceService requires spec.profile and an operator
+	// running with LLMInferenceService support, which needs the KServe
+	// LLMInferenceService CRDs.
 	// +optional
-	// +kubebuilder:default=Auto
+	// +kubebuilder:default=InferenceService
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.servingAPI is immutable after creation"
 	ServingAPI AIMServingAPI `json:"servingAPI,omitempty"`
 
@@ -657,8 +651,8 @@ type AIMServiceStatus struct {
 	// +kubebuilder:validation:Enum=template;profile
 	ReconcilerPipeline string `json:"reconcilerPipeline,omitempty"`
 
-	// ServingAPI is the KServe API this service resolved to. It is recorded
-	// on first resolution and kept for the service's lifetime.
+	// ServingAPI is the KServe API that serves this service, as selected by
+	// spec.servingAPI.
 	// +optional
 	// +kubebuilder:validation:Enum=InferenceService;LLMInferenceService
 	ServingAPI AIMServingAPI `json:"servingAPI,omitempty"`
@@ -943,11 +937,25 @@ const (
 	// Drives ConfigValid=False.
 	AIMServiceReasonServingAPIUnsupported = "ServingAPIUnsupported"
 
+	// AIMServiceReasonServingAPISupported indicates AIM Engine can serve the
+	// service through the requested spec.servingAPI.
+	AIMServiceReasonServingAPISupported = "ServingAPISupported"
+
+	// AIMServiceReasonLLMInferenceServiceTLSEnabled indicates KServe serves
+	// LLMInferenceServices over TLS (enableLLMInferenceServiceTLS), which AIM
+	// images do not support. Drives ConfigValid=False.
+	AIMServiceReasonLLMInferenceServiceTLSEnabled = "LLMInferenceServiceTLSEnabled"
+
 	// AIMServiceReasonOpenTelemetryCollectorUnavailable indicates an
 	// autoscaled LLMInferenceService-served service on a cluster without the
 	// opentelemetry.io/v1beta1 OpenTelemetryCollector kind, which carries its
 	// metric collector sidecar. Drives ConfigValid=False.
 	AIMServiceReasonOpenTelemetryCollectorUnavailable = "OpenTelemetryCollectorUnavailable"
+
+	// AIMServiceReasonOpenTelemetryCollectorAvailable indicates the cluster
+	// serves the OpenTelemetryCollector kind an autoscaled
+	// LLMInferenceService-served service needs.
+	AIMServiceReasonOpenTelemetryCollectorAvailable = "OpenTelemetryCollectorAvailable"
 
 	// Routing
 	AIMServiceReasonPathTemplateInvalid = "PathTemplateInvalid"
@@ -1046,10 +1054,10 @@ func (spec *AIMServiceSpec) GetCachingMode() AIMCachingMode {
 }
 
 // GetServingAPI returns the requested serving API, treating an unset value as
-// Auto.
+// InferenceService.
 func (spec *AIMServiceSpec) GetServingAPI() AIMServingAPI {
 	if spec.ServingAPI == "" {
-		return ServingAPIAuto
+		return ServingAPIInferenceService
 	}
 	return spec.ServingAPI
 }

@@ -52,6 +52,15 @@ func FetchHPA(
 	return fetchHPA(ctx, c, isvc)
 }
 
+// WithoutDeletedFailedPods drops the pods that failed while being deleted, which
+// say nothing about the service's spec. Exported for the v1alpha2
+// LLMInferenceService pod health.
+func WithoutDeletedFailedPods(
+	pods *controllerutils.FetchResult[*corev1.PodList],
+) *controllerutils.FetchResult[*corev1.PodList] {
+	return withoutDeletedFailedPods(pods)
+}
+
 // FetchPredictorPods lists the predictor pods owned by the given
 // InferenceService (matched via the KServe inference-service label). Exported
 // for the v1alpha2 profile pipeline, which derives scale-to-zero and pod
@@ -285,6 +294,9 @@ func ConfigureReplicasAndAutoscaling(
 ) {
 	configureReplicasAndAutoscaling(isvc, service)
 }
+
+// ScaledObjectGVK is the KEDA ScaledObject kind PlanScaledObject returns.
+var ScaledObjectGVK = kedaScaledObjectGVK
 
 // PlanScaledObject returns the controller-owned KEDA ScaledObject for the
 // predictor Deployment when autoscaling is requested. Exported for the

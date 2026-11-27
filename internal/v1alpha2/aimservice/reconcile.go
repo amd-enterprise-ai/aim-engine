@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -115,8 +116,12 @@ type ServiceFetchResult struct {
 	profileLLMConfig controllerutils.FetchResult[*kservev1alpha2.LLMInferenceServiceConfig]
 	// llmBaseRefs are the user-supplied spec.llmInferenceService.baseRefs as
 	// resolved in the service namespace or kserveNamespace.
-	llmBaseRefs     []llmBaseRef
-	kserveNamespace string
+	llmBaseRefs  []llmBaseRef
+	kserveConfig controllerutils.FetchResult[*corev1.ConfigMap]
+	// staleAutoscaling holds the autoscaling objects to delete once the
+	// service no longer autoscales; see fetchStaleAutoscaling.
+	staleAutoscaling []controllerutils.FetchResult[*unstructured.Unstructured]
+	kserveNamespace  string
 	// openTelemetryCollector reports whether the cluster serves the
 	// OpenTelemetryCollector kind an autoscaled LLMInferenceService needs.
 	openTelemetryCollector bool
@@ -257,7 +262,7 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	if cfg := obs.getConfigHealth(); cfg.Component != "" {
 		health = append(health, cfg)
 	}
-	if cfg := servingAPIComponentHealth(obs.servingAPIErr); cfg.Component != "" {
+	if cfg := servingAPIComponentHealth(obs.servingAPI, obs.servingAPIErr); cfg.Component != "" {
 		health = append(health, cfg)
 	}
 	if cfg := llmBaseRefsComponentHealth(obs.llmBaseRefs, obs.kserveNamespace, obs.service.Namespace); cfg.Component != "" {
@@ -696,8 +701,15 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	result.servingAPI = resolveServingAPI(service)
 	result.servesLLM = result.servingAPI == aimv1alpha1.ServingAPILLMInferenceService && r.LLMInferenceService.Enabled
 
+	// KServe's ConfigMap and the workload Deployment carry no AIM labels, so
+	// the cache leaves them out.
+	reader := client.Reader(c)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
 	if result.servesLLM {
 		result.kserveNamespace = r.LLMInferenceService.KServeNamespace
+		result.kserveConfig = fetchKServeConfig(ctx, reader, result.kserveNamespace)
 		result.openTelemetryCollector = r.LLMInferenceService.OpenTelemetryCollector
 		result.llmBaseRefs = fetchLLMBaseRefs(ctx, c, service, result.kserveNamespace)
 		result.llmInferenceService = fetchLLMInferenceService(ctx, c, service)
@@ -707,11 +719,6 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			pods := fetchLLMWorkloadPods(ctx, c, llmService)
 			result.llmInferenceServicePods = &pods
 			if !llmInferenceServiceReady(result.llmInferenceService) {
-				// The Deployment carries no AIM labels, so the cache leaves it out.
-				reader := client.Reader(c)
-				if r.APIReader != nil {
-					reader = r.APIReader
-				}
 				result.llmWorkloadDeployment = controllerutils.FetchDirect(ctx, reader, client.ObjectKey{
 					Namespace: llmService.Namespace,
 					Name:      llmDeploymentName(llmService.Name),
@@ -748,6 +755,8 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			Name:      isvc.Name + constants.PredictorServiceSuffix,
 		}, &appsv1.Deployment{})
 	}
+	result.staleAutoscaling = fetchStaleAutoscaling(ctx, reader, service, result.hpa, result.servesLLM,
+		r.LLMInferenceService.OpenTelemetryCollector)
 
 	// Resolve the profile using whichever of the four supported shapes the
 	// AIMService spec authored (name, model, model+selector, selector). The
@@ -882,7 +891,7 @@ func (r *ProfileServiceReconciler) ComposeState(
 	fetch ServiceFetchResult,
 ) ServiceObservation {
 	obs := ServiceObservation{ServiceFetchResult: fetch}
-	obs.servingAPIErr = validateServingAPI(fetch.servingAPI, r.LLMInferenceService)
+	obs.servingAPIErr = validateServingAPI(fetch.servingAPI, r.LLMInferenceService, fetch.kserveConfig)
 
 	obs.resolveFetchedProfile()
 
@@ -1296,6 +1305,11 @@ func (r *ProfileServiceReconciler) PlanResources(
 	}
 	if obs.servingAPIErr != nil {
 		logger.V(1).Info("Serving API not supported, skipping resource planning", "err", obs.servingAPIErr.Error())
+		// KServe's TLS setting lives in a ConfigMap the operator does not watch.
+		var apiErr *servingAPIError
+		if errors.As(obs.servingAPIErr, &apiErr) && apiErr.reason == aimv1alpha1.AIMServiceReasonLLMInferenceServiceTLSEnabled {
+			planResult.RequestRequeueAfter(kserveConfigPollInterval)
+		}
 		return planResult
 	}
 
@@ -1452,6 +1466,7 @@ func (r *ProfileServiceReconciler) PlanResources(
 	for _, obj := range planAutoscaling(ctx, service, obs, effectiveResources) {
 		planResult.Apply(obj)
 	}
+	planStaleAutoscalingCleanup(&planResult, obs, logger)
 
 	return planResult
 }
@@ -1745,6 +1760,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 		obs.workloadPodCount(),
 	)
 	setProfileContractCondition(cm, obs)
+	deleteInapplicableLLMConditions(cm, obs)
 
 	if obs.profileName != "" && obs.profileReadyForService() {
 		status.ResolvedProfile = &aimv1alpha1.AIMResolvedReference{

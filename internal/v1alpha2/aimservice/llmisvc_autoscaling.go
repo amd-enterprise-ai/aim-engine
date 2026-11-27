@@ -26,7 +26,11 @@ import (
 	"context"
 	"slices"
 
+	"github.com/go-logr/logr"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"knative.dev/pkg/kmeta"
@@ -227,6 +231,75 @@ func planAutoscaling(
 	return objects
 }
 
+// fetchStaleAutoscaling reads the autoscaling objects AIM Engine creates for an
+// autoscaled service once the service no longer autoscales: the KEDA
+// ScaledObject and, for an LLMInferenceService, the OpenTelemetry collector.
+// Neither kind is watched or cached, so they are read by name, and only while
+// the HorizontalPodAutoscaler KEDA keeps for the ScaledObject exists. Services
+// that never autoscaled, and clusters without KEDA, cost no reads. The HPA is
+// watched, so one KEDA creates late still triggers the cleanup.
+func fetchStaleAutoscaling(
+	ctx context.Context,
+	reader client.Reader,
+	service *aimv1alpha2.AIMService,
+	kedaHPA controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
+	servesLLM, openTelemetryCollector bool,
+) []controllerutils.FetchResult[*unstructured.Unstructured] {
+	if v1alpha1svc.HasAutoscaling(service) || !kedaHPA.OK() || kedaHPA.Value == nil {
+		return nil
+	}
+	isvcName, err := v1alpha1svc.GenerateInferenceServiceName(service.Name, service.Namespace)
+	if err != nil {
+		return nil
+	}
+	type child struct {
+		gvk  schema.GroupVersionKind
+		name string
+	}
+	children := []child{{v1alpha1svc.ScaledObjectGVK, isvcName + constants.PredictorServiceSuffix}}
+	if servesLLM {
+		deploymentName := llmDeploymentName(isvcName)
+		children = []child{{v1alpha1svc.ScaledObjectGVK, deploymentName}}
+		if openTelemetryCollector {
+			children = append(children, child{openTelemetryCollectorGVK, deploymentName})
+		}
+	}
+	var fetched []controllerutils.FetchResult[*unstructured.Unstructured]
+	for _, c := range children {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(c.gvk)
+		result := controllerutils.FetchDirect(ctx, reader, client.ObjectKey{Namespace: service.Namespace, Name: c.name}, obj)
+		if result.IsNotFound() || meta.IsNoMatchError(result.Error) {
+			continue
+		}
+		fetched = append(fetched, result)
+	}
+	return fetched
+}
+
+// planStaleAutoscalingCleanup deletes the autoscaling objects the service
+// controls once it no longer autoscales. A ScaledObject left behind would keep
+// scaling the workload, and a collector would keep running beside it.
+func planStaleAutoscalingCleanup(plan *controllerutils.PlanResult, obs ServiceObservation, logger logr.Logger) {
+	for _, fetched := range obs.staleAutoscaling {
+		if fetched.HasError() {
+			logger.V(1).Info("Cannot read an autoscaling object to clean up", "err", fetched.Error.Error())
+			continue
+		}
+		if obj := fetched.Value; obj != nil && metav1.IsControlledBy(obj, obs.service) {
+			logger.Info("Deleting the autoscaling object of a service that no longer autoscales",
+				"kind", obj.GetKind(), "name", obj.GetName())
+			plan.Delete(obj)
+		}
+	}
+}
+
+// llmAutoscalingApplies reports whether the service is autoscaled and served by
+// an LLMInferenceService.
+func llmAutoscalingApplies(service *aimv1alpha2.AIMService, fetch ServiceFetchResult) bool {
+	return fetch.servesLLM && v1alpha1svc.HasAutoscaling(service)
+}
+
 // llmAutoscalingComponentHealth rejects an autoscaled LLMInferenceService-served
 // service when the cluster does not serve the OpenTelemetryCollector kind.
 // Without the collector sidecar the ScaledObject's user metric triggers never
@@ -234,8 +307,17 @@ func planAutoscaling(
 // ConfigValid=False until the OpenTelemetry Operator is installed and AIM
 // Engine restarted.
 func llmAutoscalingComponentHealth(service *aimv1alpha2.AIMService, fetch ServiceFetchResult) controllerutils.ComponentHealth {
-	if !fetch.servesLLM || fetch.openTelemetryCollector || !v1alpha1svc.HasAutoscaling(service) {
+	if !llmAutoscalingApplies(service, fetch) {
 		return controllerutils.ComponentHealth{}
+	}
+	if fetch.openTelemetryCollector {
+		return controllerutils.ComponentHealth{
+			Component:      llmAutoscalingComponent,
+			State:          constants.AIMStatusReady,
+			Reason:         aimv1alpha1.AIMServiceReasonOpenTelemetryCollectorAvailable,
+			Message:        "The cluster serves the OpenTelemetryCollector kind the metric collector sidecar needs",
+			DependencyType: controllerutils.DependencyTypeUpstream,
+		}
 	}
 	reason := aimv1alpha1.AIMServiceReasonOpenTelemetryCollectorUnavailable
 	message := "Autoscaling an LLMInferenceService-served AIMService requires the OpenTelemetry Operator " +

@@ -267,6 +267,21 @@ func EscapeKServeTemplateActions(spec kservev1alpha2.LLMInferenceServiceSpec) (k
 	return out, nil
 }
 
+// EscapeKServeTemplateAnnotations protects literal "{{" in LLMInferenceService
+// annotation values. KServe renders the LLMInferenceService metadata together
+// with the merged spec, so an unescaped value could add spec fields. Label
+// values cannot contain "{".
+func EscapeKServeTemplateAnnotations(annotations map[string]string) map[string]string {
+	if annotations == nil {
+		return nil
+	}
+	out := make(map[string]string, len(annotations))
+	for key, value := range annotations {
+		out[key] = strings.ReplaceAll(value, "{{", "{{`{{`}}")
+	}
+	return out
+}
+
 // LLMInferenceServiceConfigContentHash returns a deterministic hash of the
 // workload-affecting content of a projected LLMInferenceServiceConfig and the
 // profile ConfigMap it mounts (nil for a bare system-namespace config).

@@ -95,7 +95,7 @@ AIM Engine detects the `serving.kserve.io/v1alpha2` LLMInferenceService and LLMI
 | `manager.enableLLMInferenceService` | `true` | Set to `false` to turn the integration off even when the CRDs are installed. |
 | `manager.kserveNamespace` | `kserve-system` | Namespace of the KServe control plane. AIMClusterProfiles project their LLMInferenceServiceConfigs here, because KServe resolves `spec.baseRefs` in this namespace when the service namespace has no config of that name. |
 
-Leave LLMInferenceService TLS disabled (KServe's default; `enableLLMInferenceServiceTLS` unset in `inferenceservice-config`). AIM images serve plain HTTP on port 8000, and the probes and workload Service KServe generates switch to HTTPS when TLS is enabled.
+Leave LLMInferenceService TLS disabled (KServe's default; `enableLLMInferenceServiceTLS` unset in `inferenceservice-config`). AIM images serve plain HTTP on port 8000, and the probes and workload Service KServe generates switch to HTTPS when TLS is enabled. AIM Engine reads the setting from `inferenceservice-config` in the `--kserve-namespace` namespace and, while it is on, sets `ServingAPIReady=False` (reason `LLMInferenceServiceTLSEnabled`) on LLMInferenceService-served services instead of creating a workload that never becomes ready.
 
 AIM profiles and AIMClusterProfiles project an LLMInferenceServiceConfig next to each ServingRuntime they maintain. KServe validates these configs with the LLMInferenceService controller's webhook, so they cannot be written while that controller is down. The profile then reports `LLMInferenceServiceConfigProjected=False` (reason `ApplyFailed`) and retries every 30 seconds, while its ServingRuntimes and InferenceService-served AIMServices are unaffected.
 
