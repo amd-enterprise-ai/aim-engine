@@ -1,0 +1,200 @@
+# ResourceSlice published by the ROCm k8s-gpu-dra-driver v1.0.1 discovery code
+# for the node shape of the "mi300x" case in fleet_test.go. To refresh it,
+# take the slice from a node running the driver:
+#   kubectl get resourceslice -o yaml --field-selector spec.nodeName=<node>
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  name: fake-node-gpu.amd.com
+spec:
+  devices:
+  - attributes:
+      deviceID:
+        string: "0x74a1"
+      numaNode:
+        int: 0
+      partitionProfile:
+        string: spx_nps1
+      productName:
+        string: AMD_Instinct_MI300X_OAM
+      resource.kubernetes.io/pciBusID:
+        string: "0000:05:00.0"
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:00
+      type:
+        string: amdgpu
+    capacity:
+      computeUnits:
+        value: "304"
+      memory:
+        value: 196592Mi
+      simdUnits:
+        value: "1216"
+    name: gpu-10-200
+  - attributes:
+      deviceID:
+        string: "0x74a1"
+      numaNode:
+        int: 0
+      partitionProfile:
+        string: spx_nps1
+      productName:
+        string: AMD_Instinct_MI300X_OAM
+      resource.kubernetes.io/pciBusID:
+        string: "0000:15:00.0"
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:10
+      type:
+        string: amdgpu
+    capacity:
+      computeUnits:
+        value: "304"
+      memory:
+        value: 196592Mi
+      simdUnits:
+        value: "1216"
+    name: gpu-11-201
+  - attributes:
+      deviceID:
+        string: "0x74a1"
+      numaNode:
+        int: 0
+      partitionProfile:
+        string: spx_nps1
+      productName:
+        string: AMD_Instinct_MI300X_OAM
+      resource.kubernetes.io/pciBusID:
+        string: "0000:25:00.0"
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:20
+      type:
+        string: amdgpu
+    capacity:
+      computeUnits:
+        value: "304"
+      memory:
+        value: 196592Mi
+      simdUnits:
+        value: "1216"
+    name: gpu-12-202
+  - attributes:
+      deviceID:
+        string: "0x74a1"
+      numaNode:
+        int: 0
+      partitionProfile:
+        string: spx_nps1
+      productName:
+        string: AMD_Instinct_MI300X_OAM
+      resource.kubernetes.io/pciBusID:
+        string: "0000:35:00.0"
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:30
+      type:
+        string: amdgpu
+    capacity:
+      computeUnits:
+        value: "304"
+      memory:
+        value: 196592Mi
+      simdUnits:
+        value: "1216"
+    name: gpu-13-203
+  - attributes:
+      deviceID:
+        string: "0x74a1"
+      numaNode:
+        int: 1
+      partitionProfile:
+        string: spx_nps1
+      productName:
+        string: AMD_Instinct_MI300X_OAM
+      resource.kubernetes.io/pciBusID:
+        string: "0000:45:00.0"
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:40
+      type:
+        string: amdgpu
+    capacity:
+      computeUnits:
+        value: "304"
+      memory:
+        value: 196592Mi
+      simdUnits:
+        value: "1216"
+    name: gpu-14-204
+  - attributes:
+      deviceID:
+        string: "0x74a1"
+      numaNode:
+        int: 1
+      partitionProfile:
+        string: spx_nps1
+      productName:
+        string: AMD_Instinct_MI300X_OAM
+      resource.kubernetes.io/pciBusID:
+        string: "0000:55:00.0"
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:50
+      type:
+        string: amdgpu
+    capacity:
+      computeUnits:
+        value: "304"
+      memory:
+        value: 196592Mi
+      simdUnits:
+        value: "1216"
+    name: gpu-15-205
+  - attributes:
+      deviceID:
+        string: "0x74a1"
+      numaNode:
+        int: 1
+      partitionProfile:
+        string: spx_nps1
+      productName:
+        string: AMD_Instinct_MI300X_OAM
+      resource.kubernetes.io/pciBusID:
+        string: 0000:65:00.0
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:60
+      type:
+        string: amdgpu
+    capacity:
+      computeUnits:
+        value: "304"
+      memory:
+        value: 196592Mi
+      simdUnits:
+        value: "1216"
+    name: gpu-16-206
+  - attributes:
+      deviceID:
+        string: "0x74a1"
+      numaNode:
+        int: 1
+      partitionProfile:
+        string: spx_nps1
+      productName:
+        string: AMD_Instinct_MI300X_OAM
+      resource.kubernetes.io/pciBusID:
+        string: 0000:75:00.0
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:70
+      type:
+        string: amdgpu
+    capacity:
+      computeUnits:
+        value: "304"
+      memory:
+        value: 196592Mi
+      simdUnits:
+        value: "1216"
+    name: gpu-17-207
+  driver: gpu.amd.com
+  nodeName: fake-node
+  pool:
+    generation: 1
+    name: fake-node
+    resourceSliceCount: 1

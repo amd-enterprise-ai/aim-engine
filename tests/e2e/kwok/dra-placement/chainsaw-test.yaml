@@ -1,0 +1,316 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Fake GPU nodes, DRA: ResourceClaims are allocated from the fake nodes'
+# gpu.amd.com ResourceSlices by the scheduler, with selectors on the AMD GPU
+# DRA driver's attributes.
+#
+# Needs the KWOK lane: KWOK and the fake GPU fleet from hack/fakegpu/fleet.yaml
+# (which also creates the gpu.amd.com DeviceClass when the cluster has none).
+# DRA pods request no amd.com/gpu, so the ExtendedResourceToleration plugin
+# does not add a toleration for the fake nodes' taint; these pods carry one.
+# Each pod is pinned to its fleet group, so that other DRA nodes in the
+# cluster cannot satisfy the claims instead.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kwok-dra-placement
+  labels:
+    requires: kwok
+spec:
+  description: DRA claims for whole GPUs, partitions and one model of a mixed node land on the matching fake DRA nodes.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: eight whole MI355X GPUs are allocated on one DRA node
+      try:
+        - apply:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaimTemplate
+              metadata:
+                name: eight-mi355x
+              spec:
+                spec:
+                  devices:
+                    requests:
+                      - name: gpus
+                        exactly:
+                          deviceClassName: gpu.amd.com
+                          count: 8
+                          selectors:
+                            - cel:
+                                expression: >-
+                                  device.attributes["gpu.amd.com"].type == "amdgpu" &&
+                                  device.attributes["gpu.amd.com"].deviceID == "0x75a3"
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: eight-mi355x
+              spec:
+                nodeSelector:
+                  aim.eai.amd.com/fake-gpu-group: dra-mi355x
+                tolerations:
+                  - key: amd.com/gpu
+                    operator: Exists
+                    effect: NoSchedule
+                resourceClaims:
+                  - name: gpus
+                    resourceClaimTemplateName: eight-mi355x
+                containers:
+                  - name: main
+                    image: registry.k8s.io/pause:3.10
+                    resources:
+                      claims:
+                        - name: gpus
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: eight-mi355x
+              (starts_with(spec.nodeName || '', 'fake-gpu-dra-mi355x-')): true
+              status:
+                phase: Running
+        - assert:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaim
+              metadata:
+                annotations:
+                  resource.kubernetes.io/pod-claim-name: gpus
+                ownerReferences:
+                  - kind: Pod
+                    name: eight-mi355x
+              status:
+                (length(allocation.devices.results)): 8
+
+    - name: four CPX partitions are allocated from the partitioned DRA node
+      try:
+        - apply:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaimTemplate
+              metadata:
+                name: four-cpx-partitions
+              spec:
+                spec:
+                  devices:
+                    requests:
+                      - name: partitions
+                        exactly:
+                          deviceClassName: gpu.amd.com
+                          count: 4
+                          selectors:
+                            - cel:
+                                expression: >-
+                                  device.attributes["gpu.amd.com"].type == "amdgpu-partition" &&
+                                  device.attributes["gpu.amd.com"].partitionProfile == "cpx_nps4"
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: four-cpx-partitions
+              spec:
+                nodeSelector:
+                  aim.eai.amd.com/fake-gpu-group: dra-mi300x-cpx
+                tolerations:
+                  - key: amd.com/gpu
+                    operator: Exists
+                    effect: NoSchedule
+                resourceClaims:
+                  - name: partitions
+                    resourceClaimTemplateName: four-cpx-partitions
+                containers:
+                  - name: main
+                    image: registry.k8s.io/pause:3.10
+                    resources:
+                      claims:
+                        - name: partitions
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: four-cpx-partitions
+              spec:
+                nodeName: fake-gpu-dra-mi300x-cpx-0
+              status:
+                phase: Running
+
+    - name: on a node with two GPU models, a claim gets only the model it selects
+      try:
+        - apply:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaimTemplate
+              metadata:
+                name: two-r9700
+              spec:
+                spec:
+                  devices:
+                    requests:
+                      - name: gpus
+                        exactly:
+                          deviceClassName: gpu.amd.com
+                          count: 2
+                          selectors:
+                            - cel:
+                                expression: device.attributes["gpu.amd.com"].deviceID == "0x7551"
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: two-r9700
+              spec:
+                nodeSelector:
+                  aim.eai.amd.com/fake-gpu-group: dra-mixed-models
+                tolerations:
+                  - key: amd.com/gpu
+                    operator: Exists
+                    effect: NoSchedule
+                resourceClaims:
+                  - name: gpus
+                    resourceClaimTemplateName: two-r9700
+                containers:
+                  - name: main
+                    image: registry.k8s.io/pause:3.10
+                    resources:
+                      claims:
+                        - name: gpus
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: two-r9700
+              spec:
+                nodeName: fake-gpu-dra-mixed-models-0
+              status:
+                phase: Running
+
+    - name: one claim can take a whole GPU and partitions from a node with mixed partition modes
+      try:
+        - apply:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaimTemplate
+              metadata:
+                name: whole-gpu-and-partitions
+              spec:
+                spec:
+                  devices:
+                    requests:
+                      - name: whole
+                        exactly:
+                          deviceClassName: gpu.amd.com
+                          selectors:
+                            - cel:
+                                expression: >-
+                                  device.attributes["gpu.amd.com"].type == "amdgpu" &&
+                                  device.attributes["gpu.amd.com"].partitionProfile == "spx_nps1"
+                      - name: partitions
+                        exactly:
+                          deviceClassName: gpu.amd.com
+                          count: 8
+                          selectors:
+                            - cel:
+                                expression: device.attributes["gpu.amd.com"].partitionProfile == "cpx_nps1"
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: whole-gpu-and-partitions
+              spec:
+                nodeSelector:
+                  aim.eai.amd.com/fake-gpu-group: dra-mixed-partitions
+                tolerations:
+                  - key: amd.com/gpu
+                    operator: Exists
+                    effect: NoSchedule
+                resourceClaims:
+                  - name: gpus
+                    resourceClaimTemplateName: whole-gpu-and-partitions
+                containers:
+                  - name: main
+                    image: registry.k8s.io/pause:3.10
+                    resources:
+                      claims:
+                        - name: gpus
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: whole-gpu-and-partitions
+              spec:
+                nodeName: fake-gpu-dra-mixed-partitions-0
+              status:
+                phase: Running
+        - assert:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaim
+              metadata:
+                ownerReferences:
+                  - kind: Pod
+                    name: whole-gpu-and-partitions
+              status:
+                (length(allocation.devices.results[?request == 'whole'])): 1
+                (length(allocation.devices.results[?request == 'partitions'])): 8
+
+    - name: a model the DRA node does not have stays Pending
+      try:
+        - apply:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaimTemplate
+              metadata:
+                name: one-r9700
+              spec:
+                spec:
+                  devices:
+                    requests:
+                      - name: gpu
+                        exactly:
+                          deviceClassName: gpu.amd.com
+                          selectors:
+                            - cel:
+                                expression: device.attributes["gpu.amd.com"].deviceID == "0x7551"
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: one-r9700
+              spec:
+                nodeSelector:
+                  aim.eai.amd.com/fake-gpu-group: dra-mi355x
+                tolerations:
+                  - key: amd.com/gpu
+                    operator: Exists
+                    effect: NoSchedule
+                resourceClaims:
+                  - name: gpu
+                    resourceClaimTemplateName: one-r9700
+                containers:
+                  - name: main
+                    image: registry.k8s.io/pause:3.10
+                    resources:
+                      claims:
+                        - name: gpu
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: one-r9700
+              status:
+                phase: Pending
+                (conditions[?type == 'PodScheduled'] | [0]):
+                  status: "False"
+                  reason: Unschedulable
