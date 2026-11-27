@@ -524,6 +524,27 @@ oc adm policy add-scc-to-user nonroot-v2 -z default -n aim-system
 
 Keep the `anyuid` grant for the predictor. If your models set `spec.serviceAccountName` or run in other namespaces, grant `nonroot-v2` to those service accounts.
 
+### Resources of the model download Job
+
+The model download Job now sets its own CPU and memory: requests of `500m` CPU and `1Gi` memory, and a limit of `8Gi` memory, with no CPU limit (see [Download Job resources](../concepts/caching.md#download-job-resources)). Earlier versions set none, so the namespace `LimitRange` gave the values.
+
+After the upgrade, the API server refuses new download Pods in a namespace that has one of these:
+
+- A `LimitRange` with a default CPU limit below `500m`. The container has no CPU limit of its own, so it gets the default, and the default is lower than the request.
+- A `LimitRange` `max`, `min` or `maxLimitRequestRatio` that these values do not meet, for example a `max` memory below `8Gi` or a memory `maxLimitRequestRatio` below 8.
+- A `ResourceQuota` on `requests.cpu`, `requests.memory` or `limits.memory` without room for these values for each download that runs at the same time.
+
+A refused download does not start, and the download Job shows the refusal in its events. Download Jobs that exist before the upgrade keep their resources.
+
+Before you upgrade the operator, examine the `LimitRange` and `ResourceQuota` objects in the namespaces where models are downloaded:
+
+```bash
+kubectl get limitrange -A -o yaml
+kubectl get resourcequota -A
+```
+
+If a namespace is affected, set `spec.artifact.downloadJobResources` to values that the namespace admits, in the `AIMRuntimeConfig` of that namespace or in the `AIMClusterRuntimeConfig`. With the Helm chart, set `clusterRuntimeConfig.spec.artifact.downloadJobResources`. To keep the earlier behavior, where the `LimitRange` decides, set `downloadJobResources: {}`. For the CPU case, you can also raise the default CPU limit of the `LimitRange` to `500m` or more.
+
 ### Deprecated `AIMProfileCache.spec.requiresAdapterDisk`
 
 `AIMProfileCache.spec.requiresAdapterDisk` has no effect. Existing caches and

@@ -156,6 +156,11 @@ func mergeRuntimeConfigs(priority, base *aimv1alpha1.AIMRuntimeConfigCommon) *ai
 		}
 		merged.Artifact.S3 = priority.Artifact.S3.DeepCopy()
 	}
+	// Requests and limits are chosen together, so a namespace value replaces
+	// the cluster's as a whole. The generic merge would combine them per key.
+	if priority.Artifact != nil && priority.Artifact.DownloadJobResources != nil {
+		merged.Artifact.DownloadJobResources = priority.Artifact.DownloadJobResources.DeepCopy()
+	}
 
 	// The generic merge skips empty slices, so an explicit empty namespace
 	// list would otherwise keep the cluster's tolerations.

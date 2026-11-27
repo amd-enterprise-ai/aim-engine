@@ -7,6 +7,12 @@ metadata:
   name: aimruntimeconfig-sample
 spec:
   artifact:
+    downloadJobResources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        memory: 16Gi
     s3:
       endpoint: https://s3.example.com
       region: us-east-1

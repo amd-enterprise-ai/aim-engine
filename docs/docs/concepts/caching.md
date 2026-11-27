@@ -331,6 +331,42 @@ After each download, AIM Engine performs a two-stage verification:
 
 Set `AIM_KEEP_METADATA_ON_FAILURE` to preserve the metadata cache on failure for debugging. See [Environment Variables](../reference/environment-variables.md).
 
+## Download Job resources
+
+By default, the container of the model download Job has these CPU and memory values:
+
+| | CPU | Memory |
+|---|---|---|
+| Requests | `500m` | `1Gi` |
+| Limits | none | `8Gi` |
+
+The memory limit leaves room for the parallel transfers of the downloader and for the page cache of the files that it writes, because the page cache counts toward the memory limit of the container.
+
+The default has no CPU limit, because a CPU limit throttles the download also when the node has free CPU. A namespace `LimitRange` with a default CPU limit (`default.cpu`, or `max.cpu` when `default.cpu` is not set) adds that limit to the container. Kubernetes has no value that means "no limit" and overrides this default. When the default CPU limit is lower than the CPU request of `500m`, the API server refuses the Pod, and the download Job shows the refusal in its events (`kubectl describe job`).
+
+To change the values, set `spec.artifact.downloadJobResources` in an `AIMClusterRuntimeConfig` or a namespace `AIMRuntimeConfig`. The value replaces the default as a whole, and the value of a namespace runtime config replaces the value of the cluster runtime config as a whole. With the Helm chart, set it in `clusterRuntimeConfig.spec`.
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  artifact:
+    downloadJobResources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        memory: 16Gi
+```
+
+A namespace `LimitRange` adds its default for each request or limit that the container does not set, and the API server refuses the Pod when such a default limit is lower than a request. For example, with `requests.cpu: "1"` and no CPU limit, a `LimitRange` with a default CPU limit of `500m` makes the API server refuse the Pod. To give the download more CPU than the default CPU limit of the `LimitRange`, set `limits.cpu` in `downloadJobResources`, or raise the default. The `max` values of a `LimitRange` and a `ResourceQuota` in the namespace also apply to these values.
+
+An empty value (`downloadJobResources: {}`) sets no resources. The namespace `LimitRange`, if there is one, then decides.
+
+A download Job keeps the resources that it was created with. To give new values to a Job that has not completed, delete the Job, and AIM Engine creates it again. The size check and adapter Jobs do not use these values.
+
 ## Troubleshooting
 
 ### Service stuck at `ProfileCacheReady=False / CachesNotReady`
@@ -350,6 +386,7 @@ Common causes:
 - Registry authentication missing or invalid → check the artifact `spec.env`, the runtime config `spec.caching.env` and any referenced secrets. A credential added after the failure may not reach the artifact; see [A download keeps failing after you add a credential](../admin/troubleshooting.md#a-download-keeps-failing-after-you-add-a-credential).
 - Download size exceeds the artifact's declared `spec.size` → adjust.
 - Network instability → the protocol fallback chain should handle it; check `status.download.protocolSequence`.
+- The download Pod is `OOMKilled`, or the API server refuses it (see the Job events) → see [Download Job resources](#download-job-resources).
 
 ### Storage quota blocks a new artifact
 

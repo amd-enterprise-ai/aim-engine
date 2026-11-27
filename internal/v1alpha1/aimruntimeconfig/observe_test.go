@@ -30,6 +30,8 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -372,6 +374,71 @@ func TestMergeRuntimeConfigsReplacesS3ConnectionAtomically(t *testing.T) {
 	if merged.Artifact.S3.Auth == nil ||
 		merged.Artifact.S3.Auth.Mode != aimv1alpha1.S3AuthModeAnonymous {
 		t.Errorf("auth = %#v, want namespace anonymous auth", merged.Artifact.S3.Auth)
+	}
+}
+
+func TestMergeRuntimeConfigs_DownloadJobResourcesNamespacePrecedence(t *testing.T) {
+	newCluster := func() *aimv1alpha1.AIMRuntimeConfigCommon {
+		return &aimv1alpha1.AIMRuntimeConfigCommon{
+			Artifact: &aimv1alpha1.AIMArtifactConfig{
+				ModelDownloadImage: "registry.example.com/downloader:v1",
+				DownloadJobResources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("4"),
+						corev1.ResourceMemory: resource.MustParse("8Gi"),
+					},
+				},
+			},
+		}
+	}
+	memoryLimitOnly := &corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("16Gi")},
+	}
+
+	tests := []struct {
+		name      string
+		namespace *aimv1alpha1.AIMArtifactConfig
+		cluster   *aimv1alpha1.AIMRuntimeConfigCommon
+		want      *corev1.ResourceRequirements
+	}{
+		{
+			name:    "unset keeps cluster's",
+			cluster: newCluster(),
+			want:    newCluster().Artifact.DownloadJobResources,
+		},
+		{
+			name:      "set value replaces cluster's without merging keys",
+			namespace: &aimv1alpha1.AIMArtifactConfig{DownloadJobResources: memoryLimitOnly},
+			cluster:   newCluster(),
+			want:      memoryLimitOnly,
+		},
+		{
+			name:      "empty value replaces cluster's",
+			namespace: &aimv1alpha1.AIMArtifactConfig{DownloadJobResources: &corev1.ResourceRequirements{}},
+			cluster:   newCluster(),
+			want:      &corev1.ResourceRequirements{},
+		},
+		{
+			name:      "set value applies when cluster has no artifact config",
+			namespace: &aimv1alpha1.AIMArtifactConfig{DownloadJobResources: &corev1.ResourceRequirements{}},
+			cluster:   &aimv1alpha1.AIMRuntimeConfigCommon{},
+			want:      &corev1.ResourceRequirements{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := &aimv1alpha1.AIMRuntimeConfigCommon{Artifact: tt.namespace}
+
+			merged := mergeRuntimeConfigs(namespace, tt.cluster)
+
+			if !equality.Semantic.DeepEqual(merged.Artifact.DownloadJobResources, tt.want) {
+				t.Errorf("downloadJobResources = %v, want %v", merged.Artifact.DownloadJobResources, tt.want)
+			}
+		})
 	}
 }
 
