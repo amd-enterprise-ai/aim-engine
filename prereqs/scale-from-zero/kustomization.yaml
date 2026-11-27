@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Explicitly installs the standalone Envoy Gateway activation collector for
+# platform/external ownership. The base AIM Engine installer does not reference
+# this kustomization.
+resources:
+  - envoy-gateway-metrics-collector.yaml
