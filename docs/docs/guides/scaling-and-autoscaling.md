@@ -235,7 +235,7 @@ Common vLLM metrics for scaling decisions:
 | `backend` | Metrics backend (`opentelemetry`) |
 | `serverAddress` | gRPC address of the KEDA OTel scaler that the `ScaledObject` trigger queries (default: Helm value `scaleFromZero.scalerAddress`, `keda-otel-scaler.keda.svc:4318`). The sidecar sends the metrics to `scaleFromZero.receiverEndpoint` (`keda-otel-scaler.keda.svc:4317`) instead |
 | `metricNames` | Metric names that the sidecar forwards, in addition to the metric that `query` reads. The first name is the query when `query` is not set |
-| `query` | Query that the KEDA OTel scaler runs: a metric name, which AIM Engine scopes to the predictor pods of the service, or a metric name with a `{label="value",...}` selector, optionally wrapped in `sum`, `avg`, `min`, `max` or `count`. If a metric has no `metricNames` and its query has another form, the sidecar forwards all scraped metrics |
+| `query` | Query that the KEDA OTel scaler runs: a metric name, which AIM Engine scopes to the predictor pods of the service, or a metric name with a `{label="value",...}` selector, optionally wrapped in `sum`, `avg`, `min`, `max` or `count`. If a metric has no `metricNames` and its query has another form, the sidecar forwards all scraped metrics, which adds per-pod load on keda-otel-add-on. To avoid it, list the metrics that the query reads in `metricNames` |
 | `operationOverTime` | Aggregation: `last_one`, `avg`, `max`, `min`, `rate`, `count` |
 
 ### Target Types
