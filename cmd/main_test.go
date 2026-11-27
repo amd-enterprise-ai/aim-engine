@@ -37,6 +37,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
 
 // cacheSyncTimeout bounds how long each controller waits for its watches to
@@ -56,6 +57,7 @@ func TestManagerStartsWithAllControllers(t *testing.T) {
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "config", "crd", "bases"),
 			moduleCRDDir(t, "github.com/kserve/kserve", "config/crd/full"),
+			moduleCRDDir(t, "github.com/kserve/kserve", "config/crd/full/llmisvc"),
 			moduleCRDDir(t, "sigs.k8s.io/gateway-api", "config/crd/standard"),
 		},
 		ErrorIfCRDPathMissing: true,
@@ -79,7 +81,10 @@ func TestManagerStartsWithAllControllers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create manager: %v", err)
 	}
-	if err := setupControllers(mgr, aimv1alpha2.RuntimeProjectionModeDefault); err != nil {
+	// KServe's full CRDs include LLMInferenceService and LLMInferenceServiceConfig,
+	// so the LLMInferenceService watches are started too.
+	llmInferenceService := serving.LLMInferenceServiceSupport{Enabled: true, KServeNamespace: "kserve-system"}
+	if err := setupControllers(mgr, aimv1alpha2.RuntimeProjectionModeDefault, llmInferenceService); err != nil {
 		t.Fatalf("set up controllers: %v", err)
 	}
 

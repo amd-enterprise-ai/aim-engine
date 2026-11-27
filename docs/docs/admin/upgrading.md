@@ -275,6 +275,57 @@ kubectl delete clusterrolebinding envoy-gateway-metrics-collector \
   --ignore-not-found
 ```
 
+### KServe v0.20 and LLMInferenceService support
+
+AIM Engine is tested against KServe v0.20.0. InferenceService serving still
+works on KServe v0.16.1 and later, so upgrading KServe is optional unless you
+want LLMInferenceService serving.
+
+Existing AIMServices are unaffected. `spec.servingAPI` defaults to
+`InferenceService`, and the first reconcile after the upgrade records it in
+`status.servingAPI` without changing the workload.
+
+The operator chart adds RBAC for `llminferenceservices` and
+`llminferenceserviceconfigs` (`serving.kserve.io`) and
+`opentelemetrycollectors` (`opentelemetry.io`), and two values,
+`manager.enableLLMInferenceService` (default `true`) and
+`manager.kserveNamespace` (default `kserve-system`). Upgrading with
+`--reuse-values` is safe: when the stored values lack these keys, the operator
+uses the same defaults.
+
+To upgrade KServe, upgrade the `kserve-crd` chart first, then the controller.
+KServe v0.17 renamed the controller chart from `kserve` to `kserve-resources`;
+upgrade the existing release to the new chart and keep its name:
+
+```bash
+helm upgrade kserve-crd oci://ghcr.io/kserve/charts/kserve-crd \
+  --namespace kserve-system --version v0.20.0
+
+helm upgrade kserve oci://ghcr.io/kserve/charts/kserve-resources \
+  --namespace kserve-system --version v0.20.0 \
+  --values kserve-values.yaml
+```
+
+To serve AIMServices through an LLMInferenceService, install the KServe
+LLMInferenceService controller and its CRDs as described in
+[LLMInferenceService support](kserve-configuration.md#llminferenceservice-support).
+To autoscale those services, also install the OpenTelemetry Operator. AIM
+Engine detects these CRDs only at startup, so restart it after installing
+them:
+
+```bash
+kubectl rollout restart deployment -n aim-system \
+  -l control-plane=controller-manager,app.kubernetes.io/name=aim-engine
+```
+
+Once support is enabled, every projectable AIMProfile and AIMClusterProfile
+also projects an `aim-*` LLMInferenceServiceConfig: next to its ServingRuntime
+for namespace profiles, and in `manager.kserveNamespace` for cluster profiles.
+These configs are owned by their profile and garbage-collected with it. Set
+`manager.enableLLMInferenceService=false` to opt out.
+
+A sample service is in `config/samples/aim_v1alpha2_aimservice_llminferenceservice.yaml`.
+
 ### 6. Verify
 
 ```bash

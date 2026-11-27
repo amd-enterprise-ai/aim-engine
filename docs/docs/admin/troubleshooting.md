@@ -68,6 +68,8 @@ kubectl get aimservice <name> -n <namespace> \
   -o jsonpath='{.status.conditions[?(@.type=="InferenceServiceReady")].message}'
 ```
 
+For a service with `servingAPI: LLMInferenceService`, the refusing Deployment is the workload Deployment `<llminferenceservice>-kserve`, and the condition is `LLMInferenceServiceReady`.
+
 Common causes:
 
 - **LimitRange**: The service sets a CPU or memory request but no limit, and the namespace LimitRange adds a default limit that is lower than the request. Set `spec.resources.limits` on the service, or change the LimitRange.

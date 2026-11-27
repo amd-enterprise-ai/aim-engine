@@ -84,17 +84,19 @@ releases:
   - name: kserve-crd
     namespace: kserve-system
     chart: oci://ghcr.io/kserve/charts/kserve-crd
-    version: v0.16.0
+    version: v0.20.0
     createNamespace: true
     wait: true
     timeout: 600
     needs:
       - keda/kedify-otel
 
+  # KServe ships the InferenceService controller as kserve-resources since v0.17;
+  # the release keeps its historical name.
   - name: kserve
     namespace: kserve-system
-    chart: oci://ghcr.io/kserve/charts/kserve
-    version: v0.16.0
+    chart: oci://ghcr.io/kserve/charts/kserve-resources
+    version: v0.20.0
     createNamespace: false
     wait: true
     waitForJobs: true
@@ -114,7 +116,7 @@ releases:
             enabled: false
           # Remove default resource limits/requests for inference services
           # Let workloads set their own resources as needed
-          # See: helm show values oci://ghcr.io/kserve/charts/kserve
+          # See: helm show values oci://ghcr.io/kserve/charts/kserve-resources
           inferenceservice:
             resources:
               limits:
@@ -123,6 +125,59 @@ releases:
               requests:
                 cpu: ""
                 memory: ""
+
+  # KServe LLMInferenceService controller, installed by default so AIM Engine's
+  # LLMInferenceService support (spec.servingAPI=LLMInferenceService and the
+  # projected LLMInferenceServiceConfigs) is exercised by the default e2e lanes.
+  # The InferenceService release above owns the resources both controllers
+  # share (inferenceservice-config, cert-manager issuer, ClusterStorageContainer
+  # CRD), mirroring KServe's own combined installer.
+  - name: kserve-llmisvc-crd
+    namespace: kserve-system
+    chart: oci://ghcr.io/kserve/charts/kserve-llmisvc-crd
+    version: v0.20.0
+    wait: true
+    timeout: 600
+    needs:
+      - kserve-system/kserve
+
+  - name: kserve-llmisvc
+    namespace: kserve-system
+    chart: oci://ghcr.io/kserve/charts/kserve-llmisvc-resources
+    version: v0.20.0
+    wait: true
+    timeout: 600
+    needs:
+      - kserve-system/kserve-llmisvc-crd
+    values:
+      - kserve:
+          createSharedResources: false
+
+  # KServe's built-in LLMInferenceServiceConfig base templates (for example
+  # kserve-config-llm-template), which KServe merges under every
+  # LLMInferenceService. ServingRuntimes stay disabled: AIM Engine projects its
+  # own.
+  - name: kserve-llmisvc-configs
+    namespace: kserve-system
+    chart: oci://ghcr.io/kserve/charts/kserve-runtime-configs
+    version: v0.20.0
+    wait: true
+    timeout: 600
+    needs:
+      - kserve-system/kserve-llmisvc
+    postRenderer: ./kserve-namespace-post-renderer.sh
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: ./wait-for-llmisvc-webhook.sh
+        args:
+          - kserve-system
+    values:
+      - kserve:
+          llmisvcConfigs:
+            enabled: true
+          servingruntime:
+            enabled: false
 
   - name: seaweedfs
     namespace: seaweedfs-system

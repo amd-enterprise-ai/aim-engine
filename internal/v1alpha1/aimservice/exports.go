@@ -52,6 +52,15 @@ func FetchHPA(
 	return fetchHPA(ctx, c, isvc)
 }
 
+// WithoutDeletedFailedPods drops the pods that failed while being deleted, which
+// say nothing about the service's spec. Exported for the v1alpha2
+// LLMInferenceService pod health.
+func WithoutDeletedFailedPods(
+	pods *controllerutils.FetchResult[*corev1.PodList],
+) *controllerutils.FetchResult[*corev1.PodList] {
+	return withoutDeletedFailedPods(pods)
+}
+
 // FetchPredictorPods lists the predictor pods owned by the given
 // InferenceService (matched via the KServe inference-service label). Exported
 // for the v1alpha2 profile pipeline, which derives scale-to-zero and pod
@@ -138,6 +147,48 @@ func InferenceServiceComponentHealth(
 	predictorDeployment controllerutils.FetchResult[*appsv1.Deployment],
 ) controllerutils.ComponentHealth {
 	return inferenceServiceComponentHealth(inferenceService, inferenceServicePods, predictorDeployment)
+}
+
+// ServingPodsHealth fills health when ready pods keep a service running while
+// KServe does not report the serving resource ready or its Deployment rolls
+// out, as for an InferenceService predictor. It reports false when no pod is
+// ready. Exported for the v1alpha2 LLMInferenceService health.
+func ServingPodsHealth(
+	health *controllerutils.ComponentHealth,
+	kind, workload string,
+	pods *controllerutils.FetchResult[*corev1.PodList],
+	deployment controllerutils.FetchResult[*appsv1.Deployment],
+	refusalDetail string,
+) bool {
+	return servingPodsHealth(health, kind, workload, pods, deployment, refusalDetail)
+}
+
+// DeploymentRollingOut reports whether some of the Deployment's pods are not
+// yet on its current revision.
+func DeploymentRollingOut(deployment *appsv1.Deployment) bool {
+	return deploymentRollingOut(deployment)
+}
+
+// ActivePodCount counts the pods that a ReplicaSet counts as replicas: not
+// terminating and not in a terminal phase.
+func ActivePodCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
+	return activePodCount(pods)
+}
+
+// DeploymentPodCreationFailure returns the refusal message when the
+// Deployment's ReplicaFailure condition reports that the API server or an
+// admission policy refused a Pod.
+func DeploymentPodCreationFailure(deployment *appsv1.Deployment) (string, bool) {
+	if deployment == nil {
+		return "", false
+	}
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type == appsv1.DeploymentReplicaFailure && cond.Status == corev1.ConditionTrue &&
+			cond.Reason == deploymentReasonFailedCreate {
+			return cond.Message, true
+		}
+	}
+	return "", false
 }
 
 // InferenceServiceReady reports whether the fetched InferenceService has
@@ -263,6 +314,9 @@ func ConfigureReplicasAndAutoscaling(
 ) {
 	configureReplicasAndAutoscaling(isvc, service)
 }
+
+// ScaledObjectGVK is the KEDA ScaledObject kind PlanScaledObject returns.
+var ScaledObjectGVK = kedaScaledObjectGVK
 
 // PlanScaledObject returns the controller-owned KEDA ScaledObject for the
 // predictor Deployment when autoscaling is requested. Exported for the
@@ -493,7 +547,7 @@ func ScaleToZeroActivationMetricComponentHealth(
 		return controllerutils.ComponentHealth{}
 	}
 
-	_, _, err := resolveScaleToZeroActivationMetric(service, runtimeConfig)
+	_, err := validateScaleToZeroActivationMetric(service, runtimeConfig)
 	if err == nil {
 		return controllerutils.ComponentHealth{}
 	}
@@ -519,4 +573,44 @@ func ScaleToZeroActivationMetricComponentHealth(
 			),
 		},
 	}
+}
+
+// PlanScaledObjectForDeployment plans the controller-owned KEDA ScaledObject
+// for an explicit serving Deployment rather than the InferenceService
+// predictor. backendServiceName is the Service the HTTPRoute forwards to,
+// which the kgateway activation metric is labeled by. The profile pipeline
+// uses it for LLMInferenceService workloads.
+func PlanScaledObjectForDeployment(
+	ctx context.Context,
+	service *aimv1alpha2.AIMService,
+	effectiveResources *corev1.ResourceRequirements,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	deploymentName string,
+	backendServiceName string,
+) client.Object {
+	return planScaledObjectForDeployment(ctx, service, effectiveResources, runtimeConfig, deploymentName, backendServiceName)
+}
+
+// FetchHPAForDeployment fetches the HorizontalPodAutoscaler KEDA creates for a
+// ScaledObject targeting deploymentName (keda-hpa-<deployment>).
+func FetchHPAForDeployment(
+	ctx context.Context,
+	c client.Client,
+	namespace, deploymentName string,
+) controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler] {
+	return controllerutils.Fetch(ctx, c, client.ObjectKey{
+		Namespace: namespace,
+		Name:      "keda-hpa-" + deploymentName,
+	}, &autoscalingv2.HorizontalPodAutoscaler{})
+}
+
+// ScaledToZero reports whether a scale-to-zero service is currently idle at
+// zero replicas, using the same HPA evidence as the InferenceService pod
+// health verdict.
+func ScaledToZero(
+	service *aimv1alpha2.AIMService,
+	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
+	podCount int,
+) bool {
+	return scaledToZeroNow(service, hpa, podCount)
 }

@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A ValidatingAdmissionPolicy denies the LLMInferenceService workload pod.
+# KServe does not copy the workload Deployment's ReplicaFailure condition, so
+# AIM Engine reads the Deployment and reports status Failed with
+# LLMInferenceServiceReady and Ready reason PodCreationFailed and the refusal
+# message. Updating spec.resources is not blocked by the Failed status: KServe
+# rolls out a new ReplicaSet whose pod is admitted, and the service reaches
+# Running.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: llminferenceservice-pod-creation-failed
+spec:
+  timeouts:
+    assert: 180s
+    cleanup: 240s
+  steps:
+    - name: Apply the ValidatingAdmissionPolicy scoped to this namespace
+      try:
+        - apply:
+            file: admission-policy.yaml
+
+    - name: Create the profile and a service with a denied cpu limit
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The service fails with PodCreationFailed and the refusal message
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-refused
+              status:
+                status: Failed
+                (conditions[?type == 'LLMInferenceServiceReady']):
+                  - status: "False"
+                    reason: PodCreationFailed
+                    (contains(message || '', 'workload pod cpu limit 100m is denied by test admission policy')): true
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: PodCreationFailed
+      catch:
+        - describe:
+            apiVersion: apps/v1
+            kind: Deployment
+            selector: app.kubernetes.io/part-of=llminferenceservice
+
+    - name: An admitted cpu limit recovers the service to Running
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-refused
+              spec:
+                resources:
+                  limits:
+                    cpu: 200m
+        - assert:
+            timeout: 240s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-refused
+              status:
+                status: Running
+                (conditions[?type == 'LLMInferenceServiceReady']):
+                  - status: "True"
+                    reason: RuntimeReady
+                (conditions[?type == 'Ready']):
+                  - status: "True"

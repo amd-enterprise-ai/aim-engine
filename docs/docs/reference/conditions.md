@@ -61,7 +61,7 @@ Overall readiness — the aggregate of all other conditions and component health
 | `False` | `ComponentsNotReady` | One or more components are not ready |
 | `False` | `Progressing` | Waiting for components to become ready |
 
-When a component fails, `Ready` takes that component's reason. `AIMService` also reports `Ready=False` with reason `RolloutInProgress` while a new predictor revision is not ready and the previous revision still serves, or `RolloutStalled` once that revision can't progress. See [InferenceServiceReady](#inferenceserviceready).
+When a component fails, `Ready` takes that component's reason. `AIMService` also reports `Ready=False` with reason `RolloutInProgress` while a new predictor or LLMInferenceService workload revision is not ready and the previous revision still serves, or `RolloutStalled` once that revision can't progress. See [InferenceServiceReady](#inferenceserviceready).
 
 ## Template-era fields condition
 
@@ -142,6 +142,60 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 ### InferenceServicePodsReady
 
 Tracks whether the predictor pods are running and ready.
+
+### LLMInferenceServiceReady
+
+Replaces `InferenceServiceReady` when `status.servingAPI` is `LLMInferenceService`. `LLMInferenceServicePodsReady` replaces `InferenceServicePodsReady` the same way.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `RuntimeReady` | KServe `LLMInferenceService` is ready and the workload Deployment has no rollout in progress |
+| `True` | `RuntimeScaling` | Workload pods on the current revision are ready while KServe reports the LLMInferenceService not ready, for example during a scale-up |
+| `False` | `CreatingRuntime` | Creating the LLMInferenceService. While a workload pod starts and the workload Deployment cannot create another one, the message contains the refusal text |
+| `False` | `PodCreationFailed` | The workload Deployment cannot create a pod because the API server or an admission policy refuses it, for example because of Pod Security admission or a ResourceQuota. The message contains the refusal text. The service status is `Failed` until a pod can be created. While an older workload pod is ready, the reason stays `RuntimeScaling`, or `RolloutInProgress` during a rollout, and its message contains the refusal text |
+| `False` | `RolloutInProgress` | A new workload revision is not ready yet while previous-revision pods keep serving. KServe keeps the LLMInferenceService `Ready` during a rollout, so AIM Engine reads the workload Deployment. Otherwise as for [InferenceServiceReady](#inferenceserviceready) |
+| `False` | `RolloutStalled` | The new workload revision can't progress while previous-revision pods keep serving: one of its pods is in `CrashLoopBackOff`, or the workload Deployment reports `ProgressDeadlineExceeded`. Otherwise as for [InferenceServiceReady](#inferenceserviceready) |
+| `False` | `LLMInferenceServiceNotReady` | KServe reports the LLMInferenceService not ready; the message carries KServe's reason |
+
+### LLMInferenceServiceBaseRefsReady
+
+Set only when `spec.llmInferenceService.baseRefs` is non-empty.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `LLMInferenceServiceConfigsResolved` | Every referenced config exists and sets no field AIM Engine owns |
+| `False` | `LLMInferenceServiceConfigNotFound` | A referenced config exists in neither the service namespace nor KServe's system namespace |
+| `False` | `LLMInferenceServiceConfigConflict` | A referenced config sets `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, `spec.model.lora`, or `spec.tracing` |
+| `False` | `FetchError` | A referenced config could not be read; the message names it and carries the API error |
+
+### ServingAPIReady
+
+Set only when `spec.servingAPI` is `LLMInferenceService`.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `ServingAPISupported` | AIM Engine can serve the service through a KServe LLMInferenceService |
+| `False` | `ServingAPIUnsupported` | AIM Engine runs without the LLMInferenceService CRDs or with `--enable-llm-inference-service=false`. Drives `ConfigValid=False` |
+| `False` | `LLMInferenceServiceTLSEnabled` | KServe's `enableLLMInferenceServiceTLS` is on in the `ingress` entry of `inferenceservice-config`. KServe then probes and serves the workload over HTTPS, which AIM images do not support. Drives `ConfigValid=False`; AIM Engine rechecks the setting every minute |
+| `False` | `FetchError` | KServe's `inferenceservice-config` could not be read or its `ingress` entry could not be parsed |
+
+### LLMInferenceServiceAutoscalingReady
+
+Set only when an autoscaled service is served by an LLMInferenceService. The per-service metric collector sidecar needs the `opentelemetry.io/v1beta1` OpenTelemetryCollector CRD.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `OpenTelemetryCollectorAvailable` | The cluster serves the OpenTelemetryCollector CRD |
+| `False` | `OpenTelemetryCollectorUnavailable` | Drives `ConfigValid=False`. Install the OpenTelemetry Operator and restart AIM Engine, or use a fixed replica count |
+
+### ProfileContractIntact
+
+Set only when `spec.llmInferenceService.baseRefs` is non-empty and every referenced config resolved. Reports whether the configs override the profile's contract: its engine image and launch, its accelerator count, or its node affinity. Overrides are allowed and are the config author's responsibility, so this condition is **informational only** and excluded from the `Ready` rollup. See [Additional LLMInferenceServiceConfigs](../concepts/services.md#additional-llminferenceserviceconfigs).
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `NoProfileOverrides` | The configs leave the profile's contract alone |
+| `False` | `ProfileContractOverridden` | The message lists each config and the fields it overrides, including `spec.parallelism` and `spec.kvCacheOffloading`, which have no effect with the profile's launch. Emits a warning event on transition |
 
 ### HTTPRouteReady
 
@@ -349,6 +403,16 @@ Appears only while runtime construction or its shared-cache lookup is failing, a
 ### RuntimeProjectionElectionReady
 
 Appears only when AIM Engine cannot list the profiles needed to elect a model-slug runtime winner, and gates aggregate `Ready`. The reason reflects the categorized dependency error. It is removed after election succeeds.
+
+### LLMInferenceServiceConfigProjected
+
+Set when AIM Engine runs with [LLMInferenceService support](../admin/kserve-configuration.md#llminferenceservice-support) and the profile projects at least one runtime. Reports the `LLMInferenceServiceConfig` projected next to each runtime of the same name. Informational: it does not gate aggregate `Ready`, and a failure leaves the ServingRuntime projection untouched.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `LLMInferenceServiceConfigProjected` | The configs are projected |
+| `False` | `LLMInferenceServiceConfigProjectionFailed` | The config cannot be rendered, for example because the profile's first model source has no URI scheme |
+| `False` | `ApplyFailed` | KServe rejected the apply, typically because the LLMInferenceService controller's webhook is unavailable. Retried every 30 seconds; emits a warning event |
 
 ## AIMProfileCache conditions
 

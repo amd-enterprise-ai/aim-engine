@@ -47,6 +47,20 @@ manager:
   # value. See the runtime-projection ADR (docs/adr).
   runtimeProjectionMode: Both
 
+  # -- Manage KServe LLMInferenceService resources, rendered as the operator's
+  # --enable-llm-inference-service arg. When true and the
+  # serving.kserve.io/v1alpha2 LLMInferenceService CRDs are installed, AIM
+  # profiles project LLMInferenceServiceConfigs and AIMServices may set
+  # spec.servingAPI=LLMInferenceService. Has no effect when the CRDs are absent.
+  # The operator detects the CRDs at startup; restart it after installing them.
+  enableLLMInferenceService: true
+
+  # -- Namespace of the KServe control plane, rendered as the operator's
+  # --kserve-namespace arg. KServe's LLMInferenceService controller resolves
+  # spec.baseRefs there when they are absent from the service's namespace, so
+  # AIMClusterProfiles project their LLMInferenceServiceConfigs into it.
+  kserveNamespace: kserve-system
+
   # -- Override the artifact-downloader image the operator spawns for model
   # download and size-check Jobs. Empty uses the public mirror image baked into
   # the operator binary at build time. Set this to install from a private

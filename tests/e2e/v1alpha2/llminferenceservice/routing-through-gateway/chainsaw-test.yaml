@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# An AIMService served through a KServe LLMInferenceService is reachable
+# through the gateway. AIM Engine owns routing for LLMInferenceServices (no
+# spec.router), so its HTTPRoute targets the workload Service KServe creates for
+# the main deployment (<name>-kserve-workload-svc, port 8000), and the request
+# reaches the workload pod.
+#
+# aim-dummy answers /v1/models and /v1/chat/completions, no accelerator is
+# involved and the cache download is simulated, so this runs in the kind lane.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: llminferenceservice-routing-through-gateway
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the runtime config, profile and service
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-routing
+              status:
+                status: Running
+                servingAPI: LLMInferenceService
+                (conditions[?type == 'HTTPRouteReady']):
+                  - status: "True"
+      catch:
+        - describe:
+            apiVersion: serving.kserve.io/v1alpha2
+            kind: LLMInferenceService
+            selector: aim.eai.amd.com/service=llmisvc-routing
+        - describe:
+            apiVersion: gateway.networking.k8s.io/v1
+            kind: HTTPRoute
+            selector: aim.eai.amd.com/service=llmisvc-routing
+
+    - name: The HTTPRoute targets the LLMInferenceService workload Service
+      try:
+        - script:
+            content: |
+              set -eu
+              LLM=$(kubectl get llminferenceservices.serving.kserve.io -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=llmisvc-routing -o jsonpath='{.items[0].metadata.name}')
+              BACKEND=$(kubectl get httproutes.gateway.networking.k8s.io -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=llmisvc-routing \
+                -o jsonpath='{.items[0].spec.rules[0].backendRefs[0].name}:{.items[0].spec.rules[0].backendRefs[0].port}')
+              echo "LLMInferenceService $LLM, HTTPRoute backend $BACKEND"
+              kubectl get service -n "$NAMESPACE" "$LLM-kserve-workload-svc" >/dev/null
+              [ "$BACKEND" = "$LLM-kserve-workload-svc:8000" ]
+
+    - name: A request through the gateway reaches the workload
+      try:
+        - script:
+            timeout: 360s
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/llmisvc-routing/', $namespace, '/llmisvc-routing/v1']))
+              - name: HTTP_RETRY_DEADLINE
+                value: "300"
+            content: bash ../../../aimservice/gpu/_shared/validate-http.sh

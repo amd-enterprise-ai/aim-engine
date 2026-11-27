@@ -80,6 +80,29 @@ KServe resolves an explicit `runtime:` name against a namespace `ServingRuntime`
 Every projected runtime advertises a single `supportedModelFormats` entry — `huggingface` — with `autoSelect` **off**. `modelFormat.name` is required by KServe on `predictor.model`, and because you reference the runtime by explicit name, the format you set must match what the runtime advertises. Use `huggingface`; any other value (or relying on auto-selection) will not bind. `autoSelect` is deliberately off so that unrelated models sharing this one format can't collide in KServe's format-based selection.
 :::
 
+## Reference a profile from your own LLMInferenceService
+
+When the KServe LLMInferenceService controller is installed (see [LLMInferenceService support](../admin/kserve-configuration.md#llminferenceservice-support)), every projected runtime has a KServe `LLMInferenceServiceConfig` of the **same name**: in the profile namespace for an `AIMProfile`, and in the KServe namespace (`kserve-system` by default) for an `AIMClusterProfile`. The profile's `LLMInferenceServiceConfigProjected` condition reports whether it is projected.
+
+Reference it from `spec.baseRefs`:
+
+```yaml
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceService
+metadata:
+  name: my-own-llm-endpoint
+  namespace: ml-team
+spec:
+  baseRefs:
+    - name: aim-qwen-qwen3-32b   # a projected runtime / config name
+  model:
+    uri: hf://Qwen/Qwen3-32B
+    name: Qwen/Qwen3-32B
+  replicas: 1
+```
+
+The config carries the image, resources, node affinity, profile mount, and AIM environment, and disables KServe's storage initializer: the AIM runtime downloads the model itself, as it does behind an `InferenceService`. `model.uri` is required by KServe but only informational here. KServe looks a base config up in the service namespace first, then in the KServe namespace. For a cluster profile, AIM Engine materializes a complete namespaced copy of the config (and its profile ConfigMap) as soon as an `LLMInferenceService` references it, and KServe re-renders onto that copy within a few seconds.
+
 ## The reserved `aim-` prefix
 
 AIM Engine owns the `aim-` name prefix for runtimes. Two naming schemes live under it:

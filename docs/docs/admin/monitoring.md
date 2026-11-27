@@ -115,8 +115,8 @@ Events use the condition's `reason` field as the event reason. Common event reas
 | `ProfileCacheNotReady` | Normal | Profile cache is not Ready; the message includes the cache's own Ready message |
 | `RuntimeReady` | Normal | InferenceService is serving |
 | `PodCreationFailed` | Warning | The API server or an admission policy refuses the predictor pod. Emitted on every reconcile |
-| `RolloutInProgress` | Normal | A new predictor revision is not ready yet; the previous one still serves |
-| `RolloutStalled` | Warning | The new predictor revision can't progress; the previous one still serves |
+| `RolloutInProgress` | Normal | A new predictor or LLMInferenceService workload revision is not ready yet; the previous one still serves |
+| `RolloutStalled` | Warning | The new predictor or LLMInferenceService workload revision can't progress; the previous one still serves |
 | `ModelHasNoProfiles` | Warning | The AIMModel or AIMClusterModel the service resolves through produces no AIMProfiles |
 | `TemplateFieldsSet` | Warning | The service sets fields that have no effect on profile-based serving (`TemplateFieldsIgnored` condition) |
 

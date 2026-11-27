@@ -1,0 +1,53 @@
+# Serve an AIMService through a KServe LLMInferenceService instead of an
+# InferenceService. Requires the KServe LLMInferenceService controller and CRDs
+# (KServe v0.20.0), installed before AIM Engine starts. spec.servingAPI is
+# immutable. Autoscaling additionally requires the OpenTelemetry Operator.
+#
+# baseRefs is optional: it merges your own LLMInferenceServiceConfigs over the
+# profile's projected config, in list order. They must not set spec.router,
+# spec.replicas, spec.scaling, spec.prefill, spec.worker, or spec.model.lora;
+# overrides of the profile's engine launch, accelerator count, or node affinity
+# are reported on the ProfileContractIntact condition.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: aimservice-llminferenceservice-sample
+spec:
+  profile:
+    name: qwen-qwen3-32b-fp8-mi300x
+  servingAPI: LLMInferenceService
+  minReplicas: 1
+  maxReplicas: 3
+  autoScaling:
+    metrics:
+      - type: PodMetric
+        podmetric:
+          metric:
+            backend: opentelemetry
+            metricNames:
+              - vllm:num_requests_running
+            query: vllm:num_requests_running
+            operationOverTime: avg
+          target:
+            type: Value
+            value: "4"
+  llmInferenceService:
+    baseRefs:
+      - name: team-vllm-logging
+---
+# A team-maintained config referenced above. It only adds environment, so the
+# service reports ProfileContractIntact=True.
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceServiceConfig
+metadata:
+  name: team-vllm-logging
+spec:
+  template:
+    containers:
+      - name: main
+        env:
+          - name: VLLM_LOGGING_LEVEL
+            value: DEBUG

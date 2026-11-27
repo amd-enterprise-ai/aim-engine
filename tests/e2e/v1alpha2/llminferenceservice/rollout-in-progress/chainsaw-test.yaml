@@ -1,0 +1,143 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A running LLMInferenceService-served service whose new workload revision
+# cannot start keeps serving from the previous revision. KServe keeps the
+# LLMInferenceService Ready while the old pod keeps the workload Deployment
+# available, so AIM Engine reads the Deployment: the service stays Running but
+# reports Ready=False with reason RolloutInProgress until the rollout
+# completes. A pod that the rollout replaces is not reported as an invalid spec,
+# even when it exits non-zero.
+#
+# The new revision requests more memory than any node has. A crash-looping
+# revision (RolloutStalled) is covered by unit tests: aim-dummy reads no
+# environment and the workload command is fixed, so it cannot be made to crash
+# from the AIMService. No accelerator is involved and the cache download is
+# simulated, so this runs in the kind lane.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: llminferenceservice-rollout-in-progress
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and a single-replica service
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The service reaches Running and Ready
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-rollout
+              status:
+                status: Running
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Roll out a revision that requests more memory than any node has
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-rollout
+              spec:
+                resources:
+                  requests:
+                    memory: 64Ti
+                  limits:
+                    memory: 64Ti
+
+    - name: The old pod keeps serving, so the service stays Running but not Ready
+      try:
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  app.kubernetes.io/component: llminferenceservice-workload
+              status:
+                readyReplicas: 1
+                (updatedReplicas < replicas): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-rollout
+              status:
+                status: Running
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: RolloutInProgress
+                (conditions[?type == 'LLMInferenceServiceReady']):
+                  - status: "False"
+                    reason: RolloutInProgress
+                    (contains(message || '', 'Unschedulable')): true
+      catch:
+        - describe:
+            apiVersion: apps/v1
+            kind: Deployment
+            selector: app.kubernetes.io/part-of=llminferenceservice
+
+    - name: A schedulable revision completes the rollout and Ready returns
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-rollout
+              spec:
+                resources:
+                  requests:
+                    memory: 100Mi
+                  limits:
+                    memory: 512Mi
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-rollout
+              status:
+                status: Running
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+                (conditions[?type == 'LLMInferenceServiceReady']):
+                  - status: "True"
+                    reason: RuntimeReady
+        # A replaced pod can exit non-zero on SIGTERM and stay Failed until it
+        # is gone; it must not be reported as a failed or invalid spec.
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: PodFailed
+              involvedObject:
+                kind: AIMService
+                name: llmisvc-rollout
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: InvalidSpec
+              involvedObject:
+                kind: AIMService
+                name: llmisvc-rollout

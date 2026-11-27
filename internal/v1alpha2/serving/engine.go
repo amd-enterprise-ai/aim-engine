@@ -73,7 +73,7 @@ func buildEngineInvocation(
 		return engineInvocation{}, nil
 	}
 
-	servedModel := resolvedServedModelID(spec)
+	servedModel := ResolvedServedModelID(spec)
 	if servedModel == "" {
 		return engineInvocation{}, fmt.Errorf("direct vLLM profile has no model identifier")
 	}
@@ -260,7 +260,10 @@ func OperatorOwnedEnvNames(spec *aimv1alpha2.AIMProfileSpecCommon) map[string]bo
 	return names
 }
 
-func resolvedServedModelID(spec *aimv1alpha2.AIMProfileSpecCommon) string {
+// ResolvedServedModelID returns the model ID the runtime serves under, following
+// the AIM runtime's `profile.model_id or config.model_id or config.aim_id`:
+// ModelId, else modelSources[0].modelId, else aimId.
+func ResolvedServedModelID(spec *aimv1alpha2.AIMProfileSpecCommon) string {
 	if spec.ModelId != "" {
 		return spec.ModelId
 	}
@@ -274,7 +277,7 @@ func cachedModelID(spec *aimv1alpha2.AIMProfileSpecCommon) string {
 	if len(spec.ModelSources) > 0 && spec.ModelSources[0].ModelID != "" {
 		return spec.ModelSources[0].ModelID
 	}
-	return resolvedServedModelID(spec)
+	return ResolvedServedModelID(spec)
 }
 
 // resolveVLLMModelReference returns the exact mounted path for a matching ready
@@ -294,7 +297,7 @@ func resolveVLLMModelReference(
 		return vllmModelReference{value: path, local: true}
 	}
 
-	return vllmModelReference{value: resolvedServedModelID(spec)}
+	return vllmModelReference{value: ResolvedServedModelID(spec)}
 }
 
 func readyVLLMModelPath(modelID string, cache *aimv1alpha2.AIMProfileCache) string {

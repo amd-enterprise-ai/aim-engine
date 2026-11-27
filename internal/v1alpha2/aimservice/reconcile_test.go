@@ -1747,8 +1747,9 @@ func TestBuildInferenceServiceFromProfile_SecurityContexts(t *testing.T) {
 
 	service.Spec.SecurityContext = serviceContainer
 	predictor = buildInferenceServiceFromProfile(service, obs).Spec.Predictor
-	if !reflect.DeepEqual(predictor.Model.SecurityContext, serviceContainer) {
-		t.Fatalf("service container security context = %v, want %v", predictor.Model.SecurityContext, serviceContainer)
+	if predictor.Model.SecurityContext != nil {
+		t.Fatalf("empty service container security context = %v, want it omitted instead of inheriting the runtime config's",
+			predictor.Model.SecurityContext)
 	}
 }
 
@@ -1997,8 +1998,8 @@ func TestResolvedModelIdFromProfile(t *testing.T) {
 	modelIDWins.ModelSources = []aimv1alpha1.AIMModelSource{
 		{ModelID: "acme/my-finetune-v1", SourceURI: "hf://acme/my-finetune-v1"},
 	}
-	if got := resolvedModelId(modelIDWins); got != testModelIDFP8 {
-		t.Errorf("ModelId set: resolvedModelId() = %q, want ModelId %q", got, testModelIDFP8)
+	if got := serving.ResolvedServedModelID(modelIDWins); got != testModelIDFP8 {
+		t.Errorf("ModelId set: serving.ResolvedServedModelID() = %q, want ModelId %q", got, testModelIDFP8)
 	}
 
 	// ModelId empty falls back to modelSources[0].modelId.
@@ -2007,15 +2008,23 @@ func TestResolvedModelIdFromProfile(t *testing.T) {
 	viaSources.ModelSources = []aimv1alpha1.AIMModelSource{
 		{ModelID: "acme/my-finetune-v1", SourceURI: "hf://acme/my-finetune-v1"},
 	}
-	if got := resolvedModelId(viaSources); got != "acme/my-finetune-v1" {
-		t.Errorf("ModelId empty + modelSources: resolvedModelId() = %q, want %q", got, "acme/my-finetune-v1")
+	if got := serving.ResolvedServedModelID(viaSources); got != "acme/my-finetune-v1" {
+		t.Errorf("ModelId empty + modelSources: serving.ResolvedServedModelID() = %q, want %q", got, "acme/my-finetune-v1")
+	}
+
+	// A model source without a model id also falls back to aimId.
+	sourceWithoutID := sampleProfileSpec()
+	sourceWithoutID.ModelId = ""
+	sourceWithoutID.ModelSources = []aimv1alpha1.AIMModelSource{{SourceURI: "s3://bucket/qwen3-32b"}}
+	if got := serving.ResolvedServedModelID(sourceWithoutID); got != sourceWithoutID.AimId {
+		t.Errorf("modelSources[0] without modelId: ResolvedServedModelID() = %q, want aimId %q", got, sourceWithoutID.AimId)
 	}
 
 	// ModelId and modelSources empty falls back to aimId.
-	viaAimID := sampleProfileSpec() // AimId = qwen/qwen3-32b
+	viaAimID := sampleProfileSpec()
 	viaAimID.ModelId = ""
-	if got := resolvedModelId(viaAimID); got != "qwen/qwen3-32b" {
-		t.Errorf("ModelId + modelSources empty: resolvedModelId() = %q, want aimId %q", got, "qwen/qwen3-32b")
+	if got := serving.ResolvedServedModelID(viaAimID); got != viaAimID.AimId {
+		t.Errorf("ModelId + modelSources empty: serving.ResolvedServedModelID() = %q, want aimId %q", got, viaAimID.AimId)
 	}
 }
 
@@ -2551,6 +2560,7 @@ func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
 		pods            []corev1.Pod
 		deployment      controllerutils.FetchResult[*appsv1.Deployment]
 		refusal         string
+		isvcReady       bool
 		wantState       constants.AIMStatus
 		wantReason      string
 		wantServing     bool
@@ -2578,6 +2588,23 @@ func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
 			wantServing: true,
 			wantMessage: "Predictor rollout of Deployment svc-predictor is stalled: pod svc-predictor-new is CrashLoopBackOff: " +
 				"back-off 40s restarting failed container=kserve-container; 1 pod(s) are ready and serving",
+		},
+		{
+			name:        "new pod crash-loops while KServe reports the InferenceService ready",
+			pods:        []corev1.Pod{readyPod, crashLoopingPod},
+			deployment:  deployment(2, 1),
+			isvcReady:   true,
+			wantState:   constants.AIMStatusDegraded,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutStalled,
+			wantServing: true,
+		},
+		{
+			name:       "KServe ready with the rollout finished",
+			pods:       []corev1.Pod{readyPod},
+			deployment: deployment(1, 1),
+			isvcReady:  true,
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonRuntimeReady,
 		},
 		{
 			name:        "old revision serves while new pod is unschedulable",
@@ -2649,6 +2676,10 @@ func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			isvc := inferenceService
+			if tt.isvcReady {
+				isvc = inferenceService.DeepCopy()
+				isvc.Status.Conditions = duckv1.Conditions{{Type: "Ready", Status: corev1.ConditionTrue}}
+			}
 			if tt.refusal != "" {
 				isvc = inferenceService.DeepCopy()
 				isvc.Status.Conditions = append(isvc.Status.Conditions, duckv1.Conditions{{

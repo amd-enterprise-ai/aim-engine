@@ -587,7 +587,7 @@ func TestPlanHTTPRoute_BlocksRuntimeLoRAMutations(t *testing.T) {
 		},
 	}
 
-	route := buildHTTPRoute(service, gatewayRef, runtimeConfig, nil)
+	route := buildHTTPRoute(service, gatewayRef, runtimeConfig, nil, predictorRouteBackend(service))
 	if len(route.Spec.Rules) != len(blockedExternalPaths)+1 {
 		t.Fatalf("expected %d rules, got %d", len(blockedExternalPaths)+1, len(route.Spec.Rules))
 	}
@@ -645,7 +645,7 @@ func TestPlanHTTPRoute_BlocksRuntimeLoRAMutationsAtRootPrefix(t *testing.T) {
 		},
 	}
 
-	route := buildHTTPRoute(service, gatewayRef, runtimeConfig, nil)
+	route := buildHTTPRoute(service, gatewayRef, runtimeConfig, nil, predictorRouteBackend(service))
 	for i, blockedPath := range blockedExternalPaths {
 		match := route.Spec.Rules[i].Matches[0].Path
 		if match == nil || match.Value == nil || *match.Value != blockedPath {

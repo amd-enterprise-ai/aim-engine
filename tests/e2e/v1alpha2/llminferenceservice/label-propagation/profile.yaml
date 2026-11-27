@@ -1,0 +1,23 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: test-llmisvc-label-propagation
+spec:
+  aimId: test/llmisvc-label-propagation
+  modelId: HuggingFaceTB/SmolLM2-135M
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  image: docker.io/amdenterpriseai/aim-dummy:0.3.0
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      memory: 512Mi
+  modelSources:
+    - modelId: HuggingFaceTB/SmolLM2-135M
+      sourceUri: hf://HuggingFaceTB/SmolLM2-135M
+      # The download is simulated, so the PVC only needs to provision.
+      size: 1Gi

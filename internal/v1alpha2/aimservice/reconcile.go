@@ -32,6 +32,7 @@ import (
 
 	"github.com/go-logr/logr"
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
+	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -39,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -76,6 +78,10 @@ type ProfileServiceReconciler struct {
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
 	APIReader client.Reader
+
+	// LLMInferenceService enables serving services with
+	// spec.servingAPI=LLMInferenceService through a KServe LLMInferenceService.
+	LLMInferenceService serving.LLMInferenceServiceSupport
 }
 
 // GetApplyOptions returns apply options derived from the merged
@@ -89,6 +95,37 @@ func (r *ProfileServiceReconciler) GetApplyOptions(obs ServiceObservation) contr
 // AIMService reconcile.
 type ServiceFetchResult struct {
 	service *aimv1alpha2.AIMService
+
+	// servingAPI is the KServe API the service resolves to. servesLLM is true
+	// when that API is LLMInferenceService and the operator supports it; only
+	// then are the LLMInferenceService resources fetched, and the
+	// InferenceService ones are not.
+	servingAPI aimv1alpha1.AIMServingAPI
+	servesLLM  bool
+
+	llmInferenceService     controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]
+	llmInferenceServicePods *controllerutils.FetchResult[*corev1.PodList]
+	// llmWorkloadDeployment is the LLMInferenceService workload Deployment. It
+	// reports a rollout and a refused Pod: KServe reports the
+	// LLMInferenceService Ready while old pods serve, and does not copy the
+	// Deployment's ReplicaFailure condition.
+	llmWorkloadDeployment controllerutils.FetchResult[*appsv1.Deployment]
+	// profileLLMConfig is the namespaced LLMInferenceServiceConfig the
+	// LLMInferenceService references. Like profileRuntime, it must be current
+	// before the LLMInferenceService is created so KServe never renders a pod
+	// from the bare system-namespace config.
+	profileLLMConfig controllerutils.FetchResult[*kservev1alpha2.LLMInferenceServiceConfig]
+	// llmBaseRefs are the user-supplied spec.llmInferenceService.baseRefs as
+	// resolved in the service namespace or kserveNamespace.
+	llmBaseRefs  []llmBaseRef
+	kserveConfig controllerutils.FetchResult[*corev1.ConfigMap]
+	// staleAutoscaling holds the autoscaling objects to delete once the
+	// service no longer autoscales; see fetchStaleAutoscaling.
+	staleAutoscaling []controllerutils.FetchResult[*unstructured.Unstructured]
+	kserveNamespace  string
+	// openTelemetryCollector reports whether the cluster serves the
+	// OpenTelemetryCollector kind an autoscaled LLMInferenceService needs.
+	openTelemetryCollector bool
 
 	profile        controllerutils.FetchResult[*aimv1alpha2.AIMProfile]
 	clusterProfile controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]
@@ -196,6 +233,12 @@ type ServiceObservation struct {
 	// converges stale existing resources under its own field manager.
 	desiredProfileRuntime          *kservev1alpha1.ServingRuntime
 	desiredProfileRuntimeConfigMap *corev1.ConfigMap
+	// desiredProfileLLMConfig is the namespaced LLMInferenceServiceConfig
+	// projection, set only when the service is served as an LLMInferenceService.
+	desiredProfileLLMConfig *kservev1alpha2.LLMInferenceServiceConfig
+
+	// servingAPIErr rejects a service whose serving API cannot be honoured.
+	servingAPIErr error
 
 	// configErr records failures encountered while deriving profile-dependent
 	// artefacts (e.g. ISVC name generation, profile YAML assembly). It is
@@ -218,6 +261,15 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	var health []controllerutils.ComponentHealth
 
 	if cfg := obs.getConfigHealth(); cfg.Component != "" {
+		health = append(health, cfg)
+	}
+	if cfg := servingAPIComponentHealth(obs.servingAPI, obs.servingAPIErr); cfg.Component != "" {
+		health = append(health, cfg)
+	}
+	if cfg := llmBaseRefsComponentHealth(obs.llmBaseRefs, obs.kserveNamespace, obs.service.Namespace); cfg.Component != "" {
+		health = append(health, cfg)
+	}
+	if cfg := llmAutoscalingComponentHealth(obs.service, obs.ServiceFetchResult); cfg.Component != "" {
 		health = append(health, cfg)
 	}
 
@@ -307,6 +359,14 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	if obs.inferenceService.Value != nil || obs.inferenceService.Error != nil {
 		health = append(health, obs.getInferenceServiceHealth())
 	}
+	if obs.llmInferenceService.Value != nil || obs.llmInferenceService.Error != nil {
+		health = append(health, llmInferenceServiceComponentHealth(
+			obs.llmInferenceService, obs.llmInferenceServicePods, obs.llmWorkloadDeployment,
+		))
+	}
+	if podsHealth, ok := llmWorkloadPodsComponentHealth(ctx, clientset, obs.service, obs.hpa, obs.llmInferenceServicePods); ok {
+		health = append(health, podsHealth)
+	}
 
 	// Predictor pod health (downstream). A healthily-idled scale-to-zero
 	// service reports Ready (ScaledToZero) instead of stalling at "no pods"
@@ -322,8 +382,8 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	if hpaHealth := v1alpha1service.HPAComponentHealth(
 		obs.service,
 		obs.hpa,
-		podItemCount(obs.inferenceServicePods),
-		v1alpha1service.InferenceServiceReady(obs.inferenceService),
+		obs.workloadPodCount(),
+		obs.workloadReady(),
 	); hpaHealth.Component != "" {
 		health = append(health, hpaHealth)
 	}
@@ -467,6 +527,13 @@ func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.Componen
 	}{
 		{name: "ServingRuntime", err: obs.profileRuntime.Error, found: obs.profileRuntime.Value != nil},
 		{name: "ConfigMap", err: obs.profileRuntimeConfigMap.Error, found: obs.profileRuntimeConfigMap.Value != nil},
+	}
+	if obs.servesLLM {
+		results = append(results, struct {
+			name  string
+			err   error
+			found bool
+		}{name: "LLMInferenceServiceConfig", err: obs.profileLLMConfig.Error, found: obs.profileLLMConfig.Value != nil})
 	}
 
 	// Inspect both lookups before reporting ordinary materialization progress.
@@ -632,8 +699,34 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	)
 
 	result := ServiceFetchResult{service: service}
+	result.servingAPI = resolveServingAPI(service)
+	result.servesLLM = result.servingAPI == aimv1alpha1.ServingAPILLMInferenceService && r.LLMInferenceService.Enabled
 
-	result.inferenceService = fetchInferenceService(ctx, c, service)
+	// KServe's ConfigMap and the workload Deployment carry no AIM labels, so
+	// the cache leaves them out.
+	reader := client.Reader(c)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
+	if result.servesLLM {
+		result.kserveNamespace = r.LLMInferenceService.KServeNamespace
+		result.kserveConfig = fetchKServeConfig(ctx, reader, result.kserveNamespace)
+		result.openTelemetryCollector = r.LLMInferenceService.OpenTelemetryCollector
+		result.llmBaseRefs = fetchLLMBaseRefs(ctx, c, service, result.kserveNamespace)
+		result.llmInferenceService = fetchLLMInferenceService(ctx, c, service)
+		if result.llmInferenceService.OK() && result.llmInferenceService.Value != nil {
+			llmService := result.llmInferenceService.Value
+			result.hpa = v1alpha1service.FetchHPAForDeployment(ctx, c, llmService.Namespace, llmDeploymentName(llmService.Name))
+			pods := fetchLLMWorkloadPods(ctx, c, llmService)
+			result.llmInferenceServicePods = &pods
+			result.llmWorkloadDeployment = controllerutils.FetchDirect(ctx, reader, client.ObjectKey{
+				Namespace: llmService.Namespace,
+				Name:      llmDeploymentName(llmService.Name),
+			}, &appsv1.Deployment{})
+		}
+	} else {
+		result.inferenceService = fetchInferenceService(ctx, c, service)
+	}
 
 	// Fetch the orphaned legacy inline-predictor profile ConfigMap, if any,
 	// so PlanResources can garbage-collect it on the first post-upgrade
@@ -661,6 +754,8 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			Name:      isvc.Name + constants.PredictorServiceSuffix,
 		}, &appsv1.Deployment{})
 	}
+	result.staleAutoscaling = fetchStaleAutoscaling(ctx, reader, service, result.hpa, result.servesLLM,
+		r.LLMInferenceService.OpenTelemetryCollector)
 
 	// Resolve the profile using whichever of the four supported shapes the
 	// AIMService spec authored (name, model, model+selector, selector). The
@@ -720,6 +815,12 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			Namespace: service.Namespace,
 			Name:      runtimeName,
 		}, &corev1.ConfigMap{})
+		if result.servesLLM {
+			result.profileLLMConfig = controllerutils.Fetch(ctx, c, client.ObjectKey{
+				Namespace: service.Namespace,
+				Name:      runtimeName,
+			}, &kservev1alpha2.LLMInferenceServiceConfig{})
+		}
 	}
 
 	// Profile status reflects the profile's own defaults, but service resources
@@ -789,6 +890,7 @@ func (r *ProfileServiceReconciler) ComposeState(
 	fetch ServiceFetchResult,
 ) ServiceObservation {
 	obs := ServiceObservation{ServiceFetchResult: fetch}
+	obs.servingAPIErr = validateServingAPI(fetch.servingAPI, r.LLMInferenceService, fetch.kserveConfig)
 
 	obs.resolveFetchedProfile()
 
@@ -936,6 +1038,16 @@ func (r *ProfileServiceReconciler) composeProfileRuntimeProjection(obs *ServiceO
 	desired.ConfigMap.SetOwnerReferences([]metav1.OwnerReference{ownerRef})
 	obs.desiredProfileRuntime = desired.Runtime
 	obs.desiredProfileRuntimeConfigMap = desired.ConfigMap
+
+	if obs.servesLLM {
+		config, err := runtimeprojection.DesiredLLMInferenceServiceConfigForRuntime(obs.service.Namespace, runtimeName, state)
+		if err != nil {
+			obs.configErr = fmt.Errorf("build profile LLMInferenceServiceConfig projection: %w", err)
+			return
+		}
+		config.SetOwnerReferences([]metav1.OwnerReference{ownerRef})
+		obs.desiredProfileLLMConfig = config
+	}
 }
 
 // profileRuntimeCurrent requires both the effective projection content and the
@@ -966,7 +1078,8 @@ func (obs *ServiceObservation) profileRuntimeCurrent() bool {
 		obs.profileRuntime.Value.GetAnnotations()[constants.AnnotationRuntimeProjectionContentHash] == expectedHash &&
 		obs.profileRuntimeConfigMap.Value.GetAnnotations()[constants.AnnotationRuntimeProjectionContentHash] == expectedHash &&
 		controllerOwnerUIDMatches(obs.profileRuntime.Value, obs.desiredProfileRuntime) &&
-		controllerOwnerUIDMatches(obs.profileRuntimeConfigMap.Value, obs.desiredProfileRuntimeConfigMap)
+		controllerOwnerUIDMatches(obs.profileRuntimeConfigMap.Value, obs.desiredProfileRuntimeConfigMap) &&
+		(!obs.servesLLM || obs.profileLLMConfigCurrent())
 }
 
 func controllerOwnerUIDMatches(actual, expected metav1.Object) bool {
@@ -984,7 +1097,8 @@ func controllerOwnerUIDMatches(actual, expected metav1.Object) bool {
 func (obs *ServiceObservation) profileRuntimeFetched() bool {
 	runtimeFetched := obs.profileRuntime.Value != nil || obs.profileRuntime.Error != nil
 	configMapFetched := obs.profileRuntimeConfigMap.Value != nil || obs.profileRuntimeConfigMap.Error != nil
-	return runtimeFetched && configMapFetched
+	llmConfigFetched := !obs.servesLLM || obs.profileLLMConfig.Value != nil || obs.profileLLMConfig.Error != nil
+	return runtimeFetched && configMapFetched && llmConfigFetched
 }
 
 func hasUnexpectedFetchError(err error) bool {
@@ -1122,6 +1236,7 @@ func planProfileRuntimeMaterialization(
 	}
 	if hasUnexpectedFetchError(obs.profileRuntime.Error) ||
 		hasUnexpectedFetchError(obs.profileRuntimeConfigMap.Error) ||
+		hasUnexpectedFetchError(obs.profileLLMConfig.Error) ||
 		hasUnexpectedFetchError(obs.runtimeProfileCache.Error) {
 		// The component health reports the fetch failure and lets the pipeline
 		// choose auth handling or exponential backoff; a stale Shared
@@ -1148,6 +1263,11 @@ func planProfileRuntimeMaterialization(
 		planResult.SkipLabelPropagation(obs.desiredProfileRuntimeConfigMap)
 		planResult.ExcludeLabels(obs.desiredProfileRuntimeConfigMap, serviceControllerNameLabel)
 	}
+	if obs.servesLLM && obs.profileLLMConfig.Value == nil && obs.desiredProfileLLMConfig != nil {
+		planResult.ApplyWithoutOwnerRef(obs.desiredProfileLLMConfig)
+		planResult.SkipLabelPropagation(obs.desiredProfileLLMConfig)
+		planResult.ExcludeLabels(obs.desiredProfileLLMConfig, serviceControllerNameLabel)
+	}
 	planResult.RequestRequeueAfter(time.Second)
 	logger.V(1).Info("Profile ServingRuntime and ConfigMap not ready; deferring ISVC reconciliation",
 		"profile", obs.profileName,
@@ -1172,7 +1292,7 @@ func (r *ProfileServiceReconciler) PlanResources(
 		service,
 		obs.mergedRuntimeConfig.Value,
 		obs.hpa,
-		podItemCount(obs.inferenceServicePods),
+		obs.workloadPodCount(),
 		time.Now(),
 	); requeueAfter > 0 {
 		planResult.RequestRequeueAfter(requeueAfter)
@@ -1180,6 +1300,15 @@ func (r *ProfileServiceReconciler) PlanResources(
 
 	if obs.configErr != nil {
 		logger.V(1).Info("Config error, skipping resource planning", "err", obs.configErr.Error())
+		return planResult
+	}
+	if obs.servingAPIErr != nil {
+		logger.V(1).Info("Serving API not supported, skipping resource planning", "err", obs.servingAPIErr.Error())
+		// KServe's TLS setting lives in a ConfigMap the operator does not watch.
+		var apiErr *servingAPIError
+		if errors.As(obs.servingAPIErr, &apiErr) && apiErr.reason == aimv1alpha1.AIMServiceReasonLLMInferenceServiceTLSEnabled {
+			planResult.RequestRequeueAfter(kserveConfigPollInterval)
+		}
 		return planResult
 	}
 
@@ -1267,6 +1396,9 @@ func (r *ProfileServiceReconciler) PlanResources(
 	}
 
 	isvcExists := obs.inferenceService.OK() && obs.inferenceService.Value != nil
+	if obs.servesLLM {
+		isvcExists = obs.llmInferenceService.OK() && obs.llmInferenceService.Value != nil
+	}
 	deferInferenceService := planProfileRuntimeMaterialization(&planResult, obs, logger)
 	if deferInferenceService && !isvcExists {
 		// Preserve initial creation ordering: a route or scaler targeting an
@@ -1316,42 +1448,13 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// so the InferenceService does not duplicate the volume or mount on its
 	// predictor overlay.
 
-	// 2. Plan the InferenceService. When the service needs the adapter disk, mount
-	// the service's adapter subtree read-only at /adapters — present even at zero
-	// adapters in dynamic mode, so add/remove never restarts the pod.
-	preserveMigratedInferenceService := shouldPreserveMigratedInferenceService(service, obs)
-	if preserveMigratedInferenceService {
-		logger.V(1).Info(
-			"Preserving legacy InferenceService for generation- and UID-pinned no-rollout migration",
-			"generation", service.Generation,
-			"inferenceServiceUID", service.Annotations[constants.AnnotationMigrationPreserveInferenceServiceUID],
-		)
-	}
-	if !deferInferenceService && !preserveMigratedInferenceService {
-		if isvc := buildInferenceServiceFromProfile(service, obs); isvc != nil {
-			switch {
-			case aimadapter.PreserveExistingMount(service, obs.adapterState) && isvcExists:
-				// Preserve the current mount while the next PVC generation is unknown
-				// or its service subtree has not finished synchronizing.
-				logger.V(1).Info("Adapter disk binding not mountable yet; preserving running ISVC adapter wiring")
-				planResult.RequestRequeueAfter(5 * time.Second)
-			default:
-				if service.Spec.AdaptersEnabled() {
-					aimadapter.AddVolumeMount(
-						isvc,
-						service,
-						obs.adapterState.MountedAdapterDiskPVC(),
-						obs.adapterState.MaxRank,
-					)
-				}
-				planResult.Apply(isvc)
-			}
-		}
-	}
+	// 2. Plan the serving workload: the LLMInferenceService or the
+	// InferenceService.
+	planServingWorkload(&planResult, service, obs, deferInferenceService, isvcExists, logger)
 	planStaleChildCleanup(&planResult, obs, logger)
 
 	// 3. Plan the HTTPRoute if routing is enabled on the merged AIMRuntimeConfig.
-	if route := v1alpha1service.PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value, obs.gateway.Value); route != nil {
+	if route := planServiceHTTPRoute(ctx, service, obs); route != nil {
 		planResult.Apply(route)
 	}
 
@@ -1359,11 +1462,63 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// profile is Ready, in which case PlanScaledObject falls back to its flat
 	// cooldown default and the next reconcile re-plans idempotently.
 	effectiveResources := resolveEffectiveResourcesFromProfile(service, obs.resolvedProfileSpec, obs.resolvedProfileStatus)
-	if so := v1alpha1service.PlanScaledObject(ctx, service, effectiveResources, obs.mergedRuntimeConfig.Value); so != nil {
-		planResult.Apply(so)
+	for _, obj := range planAutoscaling(ctx, service, obs, effectiveResources) {
+		planResult.Apply(obj)
 	}
+	planStaleAutoscalingCleanup(&planResult, obs, logger)
 
 	return planResult
+}
+
+// planServingWorkload plans the workload that serves the profile. An
+// LLMInferenceService-served service gets its LLMInferenceService. Otherwise
+// the InferenceService is planned; when the service needs the adapter disk,
+// the service's adapter subtree is mounted read-only at /adapters (present
+// even at zero adapters in dynamic mode, so add/remove never restarts the
+// pod).
+func planServingWorkload(
+	planResult *controllerutils.PlanResult,
+	service *aimv1alpha2.AIMService,
+	obs ServiceObservation,
+	deferInferenceService, isvcExists bool,
+	logger logr.Logger,
+) {
+	if deferInferenceService {
+		return
+	}
+	if obs.servesLLM {
+		planLLMInferenceService(planResult, service, obs, isvcExists, logger)
+		return
+	}
+	if shouldPreserveMigratedInferenceService(service, obs) {
+		logger.V(1).Info(
+			"Preserving legacy InferenceService for generation- and UID-pinned no-rollout migration",
+			"generation", service.Generation,
+			"inferenceServiceUID", service.Annotations[constants.AnnotationMigrationPreserveInferenceServiceUID],
+		)
+		return
+	}
+
+	isvc := buildInferenceServiceFromProfile(service, obs)
+	if isvc == nil {
+		return
+	}
+	if aimadapter.PreserveExistingMount(service, obs.adapterState) && isvcExists {
+		// Preserve the current mount while the next PVC generation is unknown
+		// or its service subtree has not finished synchronizing.
+		logger.V(1).Info("Adapter disk binding not mountable yet; preserving running ISVC adapter wiring")
+		planResult.RequestRequeueAfter(5 * time.Second)
+		return
+	}
+	if service.Spec.AdaptersEnabled() {
+		aimadapter.AddVolumeMount(
+			isvc,
+			service,
+			obs.adapterState.MountedAdapterDiskPVC(),
+			obs.adapterState.MaxRank,
+		)
+	}
+	planResult.Apply(isvc)
 }
 
 func shouldPreserveMigratedInferenceService(
@@ -1464,20 +1619,18 @@ func planLegacyProfileConfigMapCleanup(plan *controllerutils.PlanResult, obs Ser
 
 // planStaleChildCleanup deletes the Dedicated AIMProfileCaches and overlay
 // AIMProfiles this service created for an AIMProfile other than the current
-// one. It waits until the predictor rollout has finished and neither the
-// InferenceService nor any predictor pod is labeled with that AIMProfile,
-// because those pods mount its cache PVC and its profile ConfigMap, and going
-// back to it before the new revision serves would download its weights again.
+// one. It waits until the workload serves the current AIMProfile and neither
+// the workload nor any of its pods is labeled with that AIMProfile, because
+// those pods mount its cache PVC and its profile ConfigMap, and going back to
+// it before the new revision serves would download its weights again.
 func planStaleChildCleanup(plan *controllerutils.PlanResult, obs ServiceObservation, logger logr.Logger) {
-	isvc, pods := obs.inferenceService.Value, obs.inferenceServicePods
 	caches, overlays := obs.serviceProfileCaches, obs.serviceOverlayProfiles
-	if isvc == nil || pods == nil || pods.HasError() || caches.HasError() || overlays.HasError() ||
-		caches.Value == nil || overlays.Value == nil || !predictorRolloutFinished(obs) {
+	if caches.HasError() || overlays.HasError() || caches.Value == nil || overlays.Value == nil {
 		return
 	}
-	inUse := map[string]bool{isvc.Labels[constants.LabelProfile]: true}
-	for _, pod := range pods.Value.Items {
-		inUse[pod.Labels[constants.LabelProfile]] = true
+	inUse, settled := workloadProfilesInUse(obs)
+	if !settled {
+		return
 	}
 	stale := func(child client.Object, profileName string) bool {
 		label, _ := utils.SanitizeLabelValue(profileName)
@@ -1495,6 +1648,60 @@ func planStaleChildCleanup(plan *controllerutils.PlanResult, obs ServiceObservat
 			plan.Delete(overlay)
 		}
 	}
+}
+
+// workloadProfilesInUse returns the AIMProfile labels of the serving workload
+// and its pods. It reports false until the workload serves the current
+// AIMProfile.
+func workloadProfilesInUse(obs ServiceObservation) (map[string]bool, bool) {
+	if obs.servesLLM {
+		return llmWorkloadProfilesInUse(obs)
+	}
+	isvc, pods := obs.inferenceService.Value, obs.inferenceServicePods
+	if isvc == nil || pods == nil || pods.HasError() || !predictorRolloutFinished(obs) {
+		return nil, false
+	}
+	inUse := map[string]bool{isvc.Labels[constants.LabelProfile]: true}
+	for _, pod := range pods.Value.Items {
+		inUse[pod.Labels[constants.LabelProfile]] = true
+	}
+	return inUse, true
+}
+
+// llmWorkloadProfilesInUse is workloadProfilesInUse for an LLMInferenceService.
+// The workload Deployment is not in the operator's cache, so the rollout is
+// read from the pods: the LLMInferenceService is Ready for its generation and
+// a ready pod serves the current AIMProfile. A pod without the AIMProfile
+// label could use any AIMProfile, so it holds back the cleanup.
+func llmWorkloadProfilesInUse(obs ServiceObservation) (map[string]bool, bool) {
+	llmService, pods := obs.llmInferenceService.Value, obs.llmInferenceServicePods
+	if llmService == nil || pods == nil || pods.HasError() || !llmInferenceServiceReady(obs.llmInferenceService) {
+		return nil, false
+	}
+	current := llmService.Labels[constants.LabelProfile]
+	inUse := map[string]bool{current: true}
+	servesCurrent := false
+	for i := range pods.Value.Items {
+		pod := &pods.Value.Items[i]
+		profile, labeled := pod.Labels[constants.LabelProfile]
+		if !labeled {
+			return nil, false
+		}
+		inUse[profile] = true
+		if profile == current && pod.DeletionTimestamp == nil && podReady(pod) {
+			servesCurrent = true
+		}
+	}
+	return inUse, servesCurrent
+}
+
+func podReady(pod *corev1.Pod) bool {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // predictorRolloutFinished reports whether the observed InferenceService spec
@@ -1540,6 +1747,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 ) {
 	clearTemplateEraStatus(status, cm)
 	setTemplateFieldsIgnoredCondition(cm, obs.service.Spec)
+	status.ServingAPI = obs.servingAPI
 
 	// Report-only: whether KEDA can read the scale-from-zero activation
 	// trigger. Never gates readiness.
@@ -1548,8 +1756,10 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 		obs.service,
 		obs.mergedRuntimeConfig.Value,
 		obs.hpa,
-		podItemCount(obs.inferenceServicePods),
+		obs.workloadPodCount(),
 	)
+	setProfileContractCondition(cm, obs)
+	deleteInapplicableLLMConditions(cm, obs)
 
 	if obs.profileName != "" && obs.profileReadyForService() {
 		status.ResolvedProfile = &aimv1alpha1.AIMResolvedReference{
