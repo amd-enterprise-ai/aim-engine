@@ -14,7 +14,8 @@ spec:
     A third, Shared template service is moved later with
     v0.2.7's aim-template-migration. A spec.model.custom service, which the
     guide replaces with an AIMProfile of another model, and a ConfigMap with a
-    v1alpha1 owner reference to it.
+    v1alpha1 owner reference to it. An autoscaled service on the profile
+    pipeline, whose metrics collector KServe created and injected.
   timeouts:
     assert: 420s
     cleanup: 180s
@@ -242,6 +243,48 @@ spec:
                 acceleratorType: cpu
               status:
                 status: Ready
+
+    - name: Wait for the autoscaled service and the collector KServe created
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-autoscaled-service
+              status:
+                status: Running
+                reconcilerPipeline: profile
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-autoscaled-service
+                  app.kubernetes.io/component: inference
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        # KServe's collector has no labels, so it is found through the name of
+        # the InferenceService.
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              isvc=$(kubectl get inferenceservices -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=upgrade-autoscaled-service -o jsonpath='{.items[0].metadata.name}')
+              kubectl get opentelemetrycollectors.opentelemetry.io "${isvc}-predictor" -n "$NAMESPACE" -o json \
+                | jq -e --arg isvc "$isvc" '
+                    [.metadata.ownerReferences[] | select(.controller) | "\(.kind)/\(.name)"] == ["InferenceService/\($isvc)"]
+                    and .spec.securityContext == null
+                  ' >/dev/null
+              kubectl get pods -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=upgrade-autoscaled-service,app.kubernetes.io/component=inference -o json \
+                | jq -e '[.items[] | [.spec.initContainers[]?, .spec.containers[]] | any(.name == "otc-container")] | all and length > 0' \
+                >/dev/null
 
     - name: Create a ConfigMap owned through a v1alpha1 owner reference
       try:

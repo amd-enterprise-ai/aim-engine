@@ -9,7 +9,8 @@ spec:
     After the upgrade guide's rollback, the v0.2.7 operator replaced the
     candidate and runs without restarts. The services moved to the profile
     pipeline before the upgrade, and the service created after it with only
-    spec.model.name, stay on it. The PVCs, adapter and discovered model whose
+    spec.model.name, stay on it. KServe controls the autoscaled service's
+    collector again. The PVCs, adapter and discovered model whose
     owner references the candidate moved to v1alpha2 still exist, although
     v0.2.7 doesn't serve that version.
   timeouts:
@@ -66,6 +67,34 @@ spec:
                 name: upgrade-post-upgrade-service
               status:
                 reconcilerPipeline: profile
+
+    # v0.2.7 passes the metrics to the InferenceService again, so KServe
+    # updates the collector AIM Engine created and becomes its controller. The
+    # lane compares the predictor pods with the ones before the rollback.
+    - name: KServe took the autoscaled service's collector back
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              isvc=$(kubectl get inferenceservices -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=upgrade-autoscaled-service -o jsonpath='{.items[0].metadata.name}')
+              for attempt in $(seq 1 30); do
+                if kubectl get opentelemetrycollectors.opentelemetry.io "${isvc}-predictor" -n "$NAMESPACE" -o json \
+                  | jq -e --arg isvc "$isvc" '
+                      [.metadata.ownerReferences[] | select(.controller) | "\(.kind)/\(.name)"] == ["InferenceService/\($isvc)"]
+                      and .spec.securityContext == null
+                    ' >/dev/null; then
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "ERROR: KServe does not control the collector ${isvc}-predictor:"
+              kubectl get opentelemetrycollectors.opentelemetry.io "${isvc}-predictor" -n "$NAMESPACE" -o yaml
+              exit 1
 
     # A v0.2.7 pod that can't sync its watches exits about every two minutes
     # and reports Ready in between, so readiness alone doesn't show it.

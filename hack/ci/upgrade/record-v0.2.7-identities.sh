@@ -3,7 +3,8 @@
 # Records the UID and owner references of the v0.2.7 lane's services, their
 # InferenceServices, profile caches, artifacts and PVCs, its models, the profiles
 # its models produce with their primary flag, the predictor pods of the service
-# moved by aim-template-migration, and the chart-managed AIMClusterRuntimeConfig.
+# moved by aim-template-migration and of the autoscaled service, and the
+# chart-managed AIMClusterRuntimeConfig.
 # The lane records them after that move and before and after the upgrade, and
 # diffs the files.
 
@@ -31,7 +32,8 @@ mkdir -p "$(dirname "${output}")"
     kubectl get "${resource}" -n "${namespace}" -o json | identities
   done
   kubectl get pods -n "${namespace}" \
-    -l aim.eai.amd.com/service=upgrade-migrated-service,app.kubernetes.io/component=inference -o json | identities
+    -l 'aim.eai.amd.com/service in (upgrade-migrated-service,upgrade-autoscaled-service),app.kubernetes.io/component=inference' \
+    -o json | identities
   for resource in aimclustermodelsources aimclustermodels aimclusterruntimeconfigs; do
     kubectl get "${resource}" -o json | identities
   done

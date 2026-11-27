@@ -11,7 +11,8 @@ spec:
     the guide moved keep serving from their profile caches, the service
     aim-template-migration moved keeps its InferenceService and pods, the
     replaced spec.model.custom service serves from the AIMProfile of its new
-    model, none of the moved services keeps template-era status, objects written through
+    model, AIM Engine took over the collector KServe created for the autoscaled
+    service, none of the moved services keeps template-era status, objects written through
     v1alpha1 stay updatable at v1alpha2, the image and discovered models stay
     Ready with their image status and Version column, no dependent object is
     owned through v1alpha1, and the template CRDs are gone.
@@ -140,6 +141,56 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service: upgrade-migrated-service
+                  app.kubernetes.io/component: inference
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    # The lane's identity diff shows that the takeover kept the predictor pods.
+    - name: AIM Engine took over the autoscaled service's collector
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-autoscaled-service
+              status:
+                status: Running
+                (conditions[?type == 'OpenTelemetryCollectorReady'] | length(@)): 0
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-autoscaled-service
+              spec:
+                predictor:
+                  (autoScaling == null): true
+        - assert:
+            resource:
+              apiVersion: opentelemetry.io/v1beta1
+              kind: OpenTelemetryCollector
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-autoscaled-service
+                (ownerReferences[?controller] | [0].kind): AIMService
+                (ownerReferences[?controller] | [0].name): upgrade-autoscaled-service
+              spec:
+                mode: sidecar
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                      - ALL
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-autoscaled-service
                   app.kubernetes.io/component: inference
               status:
                 (conditions[?type == 'Ready']):
