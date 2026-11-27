@@ -982,6 +982,95 @@ func TestGetInferenceServiceHealth_ScaleToZeroWithFailedCreate(t *testing.T) {
 	}
 }
 
+func TestInferenceServicePodsHealth_DeletedFailedPod(t *testing.T) {
+	readyPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-predictor-new", Namespace: testNamespace},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	// The kubelet reports a deleted pod Failed once a container exits non-zero
+	// on SIGTERM.
+	failedPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-predictor-old", Namespace: testNamespace},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodFailed,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "kserve-container",
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 2, Reason: "Error"}},
+			}},
+		},
+	}
+	deletedFailedPod := *failedPod.DeepCopy()
+	deletedFailedPod.DeletionTimestamp = ptr.To(metav1.Now())
+
+	fixedReplicas := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: testNamespace},
+		Spec:       aimv1alpha1.AIMServiceSpec{Replicas: ptr.To(int32(1))},
+	}
+	scaleToZero := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: testNamespace},
+		Spec:       aimv1alpha1.AIMServiceSpec{MinReplicas: ptr.To(int32(0)), MaxReplicas: ptr.To(int32(3))},
+	}
+	idleHPA := controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{
+		Value: hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled),
+	}
+
+	tests := []struct {
+		name       string
+		service    *aimv1alpha2.AIMService
+		hpa        controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
+		pods       []corev1.Pod
+		wantState  constants.AIMStatus
+		wantReason string
+		wantErrors bool
+	}{
+		{
+			name:       "a pod that failed while a rollout replaced it does not fail the service",
+			service:    fixedReplicas,
+			pods:       []corev1.Pod{readyPod, deletedFailedPod},
+			wantState:  constants.AIMStatusReady,
+			wantReason: "PodsReady",
+		},
+		{
+			name:       "a pod that failed while scaling to zero leaves the service idle",
+			service:    scaleToZero,
+			hpa:        idleHPA,
+			pods:       []corev1.Pod{deletedFailedPod},
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonScaledToZero,
+		},
+		{
+			name:       "a failed pod that is not being deleted still fails the service",
+			service:    fixedReplicas,
+			pods:       []corev1.Pod{readyPod, failedPod},
+			wantState:  constants.AIMStatusFailed,
+			wantReason: "PodFailed",
+			wantErrors: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pods := &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{Items: tt.pods}}
+
+			health, ok := inferenceServicePodsHealth(context.Background(), nil, tt.service, tt.hpa, pods)
+			if !ok {
+				t.Fatal("inferenceServicePodsHealth() reported nothing for a fetched pod list")
+			}
+			if health.GetState() != tt.wantState || health.GetReason() != tt.wantReason {
+				t.Fatalf("health = %s/%s, want %s/%s", health.GetState(), health.GetReason(), tt.wantState, tt.wantReason)
+			}
+			if gotErrors := len(health.Errors) > 0; gotErrors != tt.wantErrors {
+				t.Errorf("errors = %v, want errors: %t", health.Errors, tt.wantErrors)
+			}
+			if len(pods.Value.Items) != len(tt.pods) {
+				t.Errorf("pod list has %d pods after the health check, want the %d fetched", len(pods.Value.Items), len(tt.pods))
+			}
+		})
+	}
+}
+
 // podsWithReady returns a Pod list of length `total`, of which `ready`
 // pods carry PodReady=True.
 func podsWithReady(total, ready int) *corev1.PodList {

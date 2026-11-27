@@ -412,6 +412,7 @@ func inferenceServicePodsHealth(
 	if pods == nil {
 		return controllerutils.ComponentHealth{}, false
 	}
+	pods = withoutDeletedFailedPods(pods)
 
 	if scaledToZeroNow(service, hpa, podItemCount(pods)) &&
 		pods.OK() && pods.Value != nil && len(pods.Value.Items) == 0 {
@@ -435,6 +436,33 @@ func inferenceServicePodsHealth(
 	return controllerutils.DemoteUpstreamDependencyErrors(pods.ToComponentHealthWithContext(
 		ctx, clientset, "InferenceServicePods", controllerutils.GetPodsHealth,
 	)), true
+}
+
+// withoutDeletedFailedPods drops the predictor pods that failed while being
+// deleted. A rollout or scale-down deletes the pods it replaces, and a
+// container that exits non-zero on SIGTERM leaves its pod Failed until the pod
+// is gone. Such a pod says nothing about the service's spec, but the shared pod
+// inspector would report it as an invalid spec, which blocks apply and emits a
+// Warning event on every reconcile.
+func withoutDeletedFailedPods(
+	pods *controllerutils.FetchResult[*corev1.PodList],
+) *controllerutils.FetchResult[*corev1.PodList] {
+	if !pods.OK() || pods.Value == nil {
+		return pods
+	}
+	kept := make([]corev1.Pod, 0, len(pods.Value.Items))
+	for i := range pods.Value.Items {
+		pod := &pods.Value.Items[i]
+		if pod.DeletionTimestamp == nil || pod.Status.Phase != corev1.PodFailed {
+			kept = append(kept, *pod)
+		}
+	}
+	if len(kept) == len(pods.Value.Items) {
+		return pods
+	}
+	return &controllerutils.FetchResult[*corev1.PodList]{
+		Value: &corev1.PodList{ListMeta: pods.Value.ListMeta, Items: kept},
+	}
 }
 
 // inferenceServiceReady reports whether the fetched InferenceService has
