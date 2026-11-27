@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
@@ -49,11 +50,13 @@ import (
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
 
@@ -602,6 +605,43 @@ func TestBuildLLMInferenceServiceFromProfile_workloadPodsCarryAIMLabels(t *testi
 	}
 }
 
+func TestBuildLLMInferenceServiceFromProfile_workloadPodsCarryPropagatedLabels(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	service.Labels = map[string]string{
+		"team.example.com/owner":      "llm-serving",
+		"app.kubernetes.io/name":      "chat",
+		"app.kubernetes.io/version":   "v2",
+		"app.kubernetes.io/component": "frontend",
+		"unmatched":                   "kept-off",
+	}
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.LabelPropagation = &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
+		Enabled: true,
+		Match:   []string{"team.example.com/*", "app.kubernetes.io/*"},
+	}
+	obs.mergedRuntimeConfig = controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig}
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	podLabels := llmService.Spec.Labels
+	if podLabels["team.example.com/owner"] != "llm-serving" || podLabels["app.kubernetes.io/version"] != "v2" {
+		t.Errorf("pod labels = %v, want the labels the runtime config propagates", podLabels)
+	}
+	if podLabels[constants.LabelProfile] == "" {
+		t.Errorf("pod labels = %v, want the AIM labels kept", podLabels)
+	}
+	for key := range llmWorkloadPodLabels(llmService.Name) {
+		if _, set := podLabels[key]; set {
+			t.Errorf("pod label %q is set; KServe would copy it over its Deployment selector", key)
+		}
+	}
+	if _, set := podLabels["unmatched"]; set {
+		t.Error("a label the runtime config does not match must not reach the pods")
+	}
+}
+
 func TestLLMInferenceServiceComponentHealth(t *testing.T) {
 	readyService := func(status corev1.ConditionStatus, observedGeneration int64) *kservev1alpha2.LLMInferenceService {
 		llmService := &kservev1alpha2.LLMInferenceService{ObjectMeta: metav1.ObjectMeta{Name: "svc", Generation: 2}}
@@ -627,6 +667,179 @@ func TestLLMInferenceServiceComponentHealth(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := llmInferenceServiceComponentHealth(tc.fetch, nil, controllerutils.FetchResult[*appsv1.Deployment]{}); got.State != tc.wantState {
 				t.Fatalf("state = %q (%s), want %q", got.State, got.Message, tc.wantState)
+			}
+		})
+	}
+}
+
+func TestLLMInferenceServiceComponentHealth_rollout(t *testing.T) {
+	llmService := func(ready corev1.ConditionStatus, observedGeneration int64) *kservev1alpha2.LLMInferenceService {
+		svc := &kservev1alpha2.LLMInferenceService{ObjectMeta: metav1.ObjectMeta{Name: "svc", Generation: 2}}
+		svc.Status.Status = duckv1.Status{
+			ObservedGeneration: observedGeneration,
+			Conditions:         duckv1.Conditions{{Type: apis.ConditionReady, Status: ready}},
+		}
+		return svc
+	}
+	readyPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-kserve-old"},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	unschedulablePod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-kserve-new"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			Conditions: []corev1.PodCondition{{
+				Type:    corev1.PodScheduled,
+				Status:  corev1.ConditionFalse,
+				Reason:  corev1.PodReasonUnschedulable,
+				Message: "0/3 nodes are available: 3 Insufficient memory.",
+			}},
+		},
+	}
+	crashLoopingPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-kserve-new"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "main",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+					Reason:  "CrashLoopBackOff",
+					Message: "back-off 40s restarting failed container=main",
+				}},
+			}},
+		},
+	}
+	refused := appsv1.DeploymentCondition{
+		Type:    appsv1.DeploymentReplicaFailure,
+		Status:  corev1.ConditionTrue,
+		Reason:  "FailedCreate",
+		Message: `pods "svc-kserve-new" is forbidden: exceeded quota: compute`,
+	}
+	deadlineExceeded := appsv1.DeploymentCondition{
+		Type:    appsv1.DeploymentProgressing,
+		Status:  corev1.ConditionFalse,
+		Reason:  "ProgressDeadlineExceeded",
+		Message: `ReplicaSet "svc-kserve-new" has timed out progressing.`,
+	}
+	deployment := func(replicas, updated int32, conditions ...appsv1.DeploymentCondition) controllerutils.FetchResult[*appsv1.Deployment] {
+		return controllerutils.FetchResult[*appsv1.Deployment]{Value: &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "svc-kserve"},
+			Status:     appsv1.DeploymentStatus{Replicas: replicas, UpdatedReplicas: updated, ReadyReplicas: 1, Conditions: conditions},
+		}}
+	}
+
+	for _, tc := range []struct {
+		name            string
+		llmService      *kservev1alpha2.LLMInferenceService
+		pods            []corev1.Pod
+		deployment      controllerutils.FetchResult[*appsv1.Deployment]
+		wantState       constants.AIMStatus
+		wantReason      string
+		wantServing     bool
+		wantUserFixable bool
+		wantMessage     string
+	}{
+		{
+			name:        "new pod crash-loops while KServe reports the LLMInferenceService ready",
+			llmService:  llmService(corev1.ConditionTrue, 2),
+			pods:        []corev1.Pod{readyPod, crashLoopingPod},
+			deployment:  deployment(2, 1),
+			wantState:   constants.AIMStatusDegraded,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutStalled,
+			wantServing: true,
+			wantMessage: "Workload rollout of Deployment svc-kserve is stalled: pod svc-kserve-new is CrashLoopBackOff: " +
+				"back-off 40s restarting failed container=main; 1 pod(s) are ready and serving",
+		},
+		{
+			name:            "progress deadline exceeded on an unschedulable new pod",
+			llmService:      llmService(corev1.ConditionTrue, 2),
+			pods:            []corev1.Pod{readyPod, unschedulablePod},
+			deployment:      deployment(2, 1, deadlineExceeded),
+			wantState:       constants.AIMStatusDegraded,
+			wantReason:      aimv1alpha1.AIMServiceReasonRolloutStalled,
+			wantServing:     true,
+			wantUserFixable: true,
+		},
+		{
+			name:        "old revision serves while new pod is unschedulable",
+			llmService:  llmService(corev1.ConditionTrue, 2),
+			pods:        []corev1.Pod{readyPod, unschedulablePod},
+			deployment:  deployment(2, 1),
+			wantState:   constants.AIMStatusProgressing,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutInProgress,
+			wantServing: true,
+			wantMessage: "Workload rollout in progress: 1 of 2 pods are on the new revision, 1 pod(s) are ready and serving; " +
+				"pod svc-kserve-new is Pending: Unschedulable: 0/3 nodes are available: 3 Insufficient memory.",
+		},
+		{
+			name:        "old revision serves while the new pod is refused",
+			llmService:  llmService(corev1.ConditionTrue, 2),
+			pods:        []corev1.Pod{readyPod},
+			deployment:  deployment(1, 0, refused),
+			wantState:   constants.AIMStatusProgressing,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutInProgress,
+			wantServing: true,
+			wantMessage: "Workload rollout in progress: 0 of 1 pods are on the new revision, 1 pod(s) are ready and serving; " +
+				`the workload Deployment cannot create a pod: pods "svc-kserve-new" is forbidden: exceeded quota: compute`,
+		},
+		{
+			name:       "ready with the rollout finished",
+			llmService: llmService(corev1.ConditionTrue, 2),
+			pods:       []corev1.Pod{readyPod},
+			deployment: deployment(1, 1),
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonRuntimeReady,
+		},
+		{
+			name:       "ready pods override a stale generation",
+			llmService: llmService(corev1.ConditionTrue, 1),
+			pods:       []corev1.Pod{readyPod},
+			deployment: deployment(1, 1),
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonRuntimeScaling,
+		},
+		{
+			name:       "scale-up on the current revision stays ready",
+			llmService: llmService(corev1.ConditionFalse, 2),
+			pods:       []corev1.Pod{readyPod, unschedulablePod},
+			deployment: deployment(2, 2),
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonRuntimeScaling,
+		},
+		{
+			name:       "no ready pod during a stale generation",
+			llmService: llmService(corev1.ConditionTrue, 1),
+			pods:       []corev1.Pod{unschedulablePod},
+			deployment: deployment(1, 1),
+			wantState:  constants.AIMStatusProgressing,
+			wantReason: reasonLLMInferenceServiceNotReady,
+		},
+		{
+			name:       "workload Deployment fetch error is reported",
+			llmService: llmService(corev1.ConditionFalse, 2),
+			pods:       []corev1.Pod{readyPod},
+			deployment: controllerutils.FetchResult[*appsv1.Deployment]{Error: errors.New("api unavailable")},
+			wantState:  constants.AIMStatusFailed,
+			wantReason: reasonFetchError,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pods := &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{Items: tc.pods}}
+			health := llmInferenceServiceComponentHealth(
+				controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]{Value: tc.llmService}, pods, tc.deployment,
+			)
+			if health.State != tc.wantState || health.Reason != tc.wantReason || health.Serving != tc.wantServing ||
+				health.UserFixable != tc.wantUserFixable {
+				t.Fatalf("health = %s/%s serving=%t userFixable=%t (%s), want %s/%s serving=%t userFixable=%t",
+					health.State, health.Reason, health.Serving, health.UserFixable, health.Message,
+					tc.wantState, tc.wantReason, tc.wantServing, tc.wantUserFixable)
+			}
+			if tc.wantMessage != "" && health.Message != tc.wantMessage {
+				t.Errorf("message = %q, want %q", health.Message, tc.wantMessage)
 			}
 		})
 	}
@@ -1491,7 +1704,7 @@ func TestLLMInferenceServiceComponentHealth_refusedPod(t *testing.T) {
 	}
 }
 
-func TestPlanLLMInferenceService_pollsWorkloadDeploymentWhileNotReady(t *testing.T) {
+func TestPlanLLMInferenceService_pollsWorkloadDeploymentUntilSettled(t *testing.T) {
 	service, obs := llmRuntimeConfigObservation(t)
 	plan := controllerutils.PlanResult{}
 	planLLMInferenceService(&plan, service, obs, true, logr.Discard())
@@ -1503,7 +1716,25 @@ func TestPlanLLMInferenceService_pollsWorkloadDeploymentWhileNotReady(t *testing
 	plan = controllerutils.PlanResult{}
 	planLLMInferenceService(&plan, service, obs, true, logr.Discard())
 	if plan.RequeueAfter != llmWorkloadDeploymentPollInterval {
-		t.Errorf("RequeueAfter = %s, want %s", plan.RequeueAfter, llmWorkloadDeploymentPollInterval)
+		t.Errorf("RequeueAfter = %s while not ready, want %s", plan.RequeueAfter, llmWorkloadDeploymentPollInterval)
+	}
+
+	llmService := &kservev1alpha2.LLMInferenceService{ObjectMeta: metav1.ObjectMeta{Name: "svc", Generation: 1}}
+	llmService.Status.ObservedGeneration = 1
+	llmService.Status.Conditions = duckv1.Conditions{{Type: apis.ConditionReady, Status: corev1.ConditionTrue}}
+	obs.llmInferenceService = controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]{Value: llmService}
+	obs.llmWorkloadDeployment.Value.Status = appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1}
+	plan = controllerutils.PlanResult{}
+	planLLMInferenceService(&plan, service, obs, true, logr.Discard())
+	if plan.RequeueAfter != 0 {
+		t.Errorf("RequeueAfter = %s for a ready, rolled-out workload, want 0", plan.RequeueAfter)
+	}
+
+	obs.llmWorkloadDeployment.Value.Status = appsv1.DeploymentStatus{Replicas: 2, UpdatedReplicas: 1}
+	plan = controllerutils.PlanResult{}
+	planLLMInferenceService(&plan, service, obs, true, logr.Discard())
+	if plan.RequeueAfter != llmWorkloadDeploymentPollInterval {
+		t.Errorf("RequeueAfter = %s during a rollout, want %s", plan.RequeueAfter, llmWorkloadDeploymentPollInterval)
 	}
 }
 
@@ -1533,5 +1764,345 @@ func TestBuildLLMInferenceServiceFromProfile_annotationsRenderLiterally(t *testi
 	}
 	if rendered.Spec.Template.HostPID {
 		t.Error("an annotation value set hostPID on the rendered workload")
+	}
+}
+
+func TestPlanServiceHTTPRoute_targetsLLMWorkloadService(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	service.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
+		Enabled:    ptr.To(true),
+		GatewayRef: &gatewayapiv1.ParentReference{Name: "inference-gateway"},
+	}
+
+	route, ok := planServiceHTTPRoute(context.Background(), service, obs).(*gatewayapiv1.HTTPRoute)
+	if !ok || route == nil {
+		t.Fatalf("planServiceHTTPRoute() = %T, want an HTTPRoute", route)
+	}
+	if len(route.Spec.Rules) == 0 || len(route.Spec.Rules[0].BackendRefs) != 1 {
+		t.Fatalf("route rules = %+v, want one backend", route.Spec.Rules)
+	}
+	backend := route.Spec.Rules[0].BackendRefs[0]
+	if want := llmWorkloadServiceName(obs.isvcName); string(backend.Name) != want {
+		t.Errorf("backend = %q, want the KServe workload Service %q", backend.Name, want)
+	}
+	if backend.Port == nil || *backend.Port != constants.DefaultHTTPPort {
+		t.Errorf("backend port = %v, want %d", backend.Port, constants.DefaultHTTPPort)
+	}
+}
+
+func TestBuildLLMInferenceServiceFromProfile_projectsAdditionalCABundle(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{Name: "company-ca", Key: "ca.crt"},
+		Artifact:              &aimv1alpha1.AIMArtifactConfig{ModelDownloadImage: "registry.example.test/downloader:v1"},
+	}
+	obs.mergedRuntimeConfig = controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig}
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	if len(llmService.Spec.Template.InitContainers) != 0 {
+		t.Fatalf("init containers = %d without the CA bundle ConfigMap, want none", len(llmService.Spec.Template.InitContainers))
+	}
+
+	obs.additionalCABundle = controllerutils.FetchResult[*corev1.ConfigMap]{
+		Value: &corev1.ConfigMap{Data: map[string]string{"ca.crt": "rotation-one"}},
+	}
+	llmService, err = buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	template := llmService.Spec.Template
+	if len(template.InitContainers) != 1 || template.InitContainers[0].Image != "registry.example.test/downloader:v1" {
+		t.Fatalf("init containers = %+v, want the trust projection with the download image", template.InitContainers)
+	}
+	if got := overlayEnvValue(template.Containers[0].Env, "REQUESTS_CA_BUNDLE"); got != trust.OutputFilePath {
+		t.Errorf("REQUESTS_CA_BUNDLE = %q, want %q", got, trust.OutputFilePath)
+	}
+	if len(template.Volumes) == 0 || len(template.Containers[0].VolumeMounts) == 0 {
+		t.Errorf("volumes = %+v, mounts = %+v, want the combined bundle mounted", template.Volumes, template.Containers[0].VolumeMounts)
+	}
+}
+
+func idleLLMObservation(t *testing.T) ServiceObservation {
+	t.Helper()
+	service, obs := llmRuntimeConfigObservation(t)
+	service.Spec.MinReplicas = ptr.To[int32](0)
+	service.Spec.MaxReplicas = ptr.To[int32](3)
+	service.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Enabled: ptr.To(true)}
+	obs.resolvedProfileStatus = &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady, Deployable: true}
+	obs.hpa = controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{Value: &autoscalingv2.HorizontalPodAutoscaler{
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{
+			Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+				{Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "ScalingDisabled"},
+			},
+		},
+	}}
+	llmService := &kservev1alpha2.LLMInferenceService{ObjectMeta: metav1.ObjectMeta{Name: obs.isvcName, Generation: 1}}
+	llmService.Status.ObservedGeneration = 1
+	llmService.Status.Conditions = duckv1.Conditions{{Type: apis.ConditionReady, Status: corev1.ConditionTrue}}
+	obs.llmInferenceService = controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]{Value: llmService}
+	obs.llmInferenceServicePods = &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{}}
+	obs.llmWorkloadDeployment = controllerutils.FetchResult[*appsv1.Deployment]{Value: &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: llmDeploymentName(obs.isvcName)},
+		Spec:       appsv1.DeploymentSpec{Replicas: ptr.To[int32](0)},
+	}}
+	return obs
+}
+
+func componentHealthByName(entries []controllerutils.ComponentHealth, component string) *controllerutils.ComponentHealth {
+	for i := range entries {
+		if entries[i].Component == component {
+			return &entries[i]
+		}
+	}
+	return nil
+}
+
+func TestGetComponentHealth_idleScaleToZeroLLMReportsReady(t *testing.T) {
+	entries := idleLLMObservation(t).GetComponentHealth(context.Background(), nil)
+
+	for _, tc := range []struct{ component, reason string }{
+		{llmInferenceServiceComponent, aimv1alpha1.AIMServiceReasonRuntimeReady},
+		{llmInferenceServicePodsComponent, aimv1alpha1.AIMServiceReasonScaledToZero},
+		{"HPA", aimv1alpha1.AIMServiceReasonScaledToZero},
+	} {
+		health := componentHealthByName(entries, tc.component)
+		if health == nil {
+			t.Fatalf("no %s entry in %+v", tc.component, entries)
+		}
+		if health.State != constants.AIMStatusReady || health.Reason != tc.reason {
+			t.Errorf("%s = %s/%s (%s), want Ready/%s", tc.component, health.State, health.Reason, health.Message, tc.reason)
+		}
+	}
+}
+
+func TestGetComponentHealth_scaleToZeroLLMWithRefusedPod(t *testing.T) {
+	const refusal = `pods "svc-kserve-6d8f-abcde" is forbidden: exceeded quota`
+	obs := idleLLMObservation(t)
+	obs.llmInferenceService.Value.Status.Conditions = duckv1.Conditions{{
+		Type: apis.ConditionReady, Status: corev1.ConditionFalse, Reason: "MinimumReplicasUnavailable",
+	}}
+	obs.llmWorkloadDeployment.Value.Spec.Replicas = ptr.To[int32](1)
+	obs.llmWorkloadDeployment.Value.Status.Conditions = []appsv1.DeploymentCondition{{
+		Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: refusal,
+	}}
+
+	entries := obs.GetComponentHealth(context.Background(), nil)
+
+	llmHealth := componentHealthByName(entries, llmInferenceServiceComponent)
+	if llmHealth == nil || llmHealth.State != constants.AIMStatusFailed ||
+		llmHealth.Reason != aimv1alpha1.AIMServiceReasonPodCreationFailed || !strings.Contains(llmHealth.Message, refusal) {
+		t.Fatalf("LLMInferenceService = %+v, want Failed/PodCreationFailed with the refusal text", llmHealth)
+	}
+	for _, component := range []string{llmInferenceServicePodsComponent, "HPA"} {
+		health := componentHealthByName(entries, component)
+		if health == nil || health.State != constants.AIMStatusReady || health.Reason != aimv1alpha1.AIMServiceReasonScaledToZero {
+			t.Errorf("%s = %+v, want Ready/ScaledToZero", component, health)
+		}
+	}
+}
+
+func TestPlanResources_llmActivationMetricGraceDeadline(t *testing.T) {
+	t.Setenv(constants.EnvAIMGatewayActivationScope, constants.GatewayActivationScopeHTTPRoute)
+	obs := idleLLMObservation(t)
+	obs.hpa.Value = &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Generation: 1},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			Metrics: []autoscalingv2.MetricSpec{{
+				Type: autoscalingv2.ExternalMetricSourceType,
+				External: &autoscalingv2.ExternalMetricSource{
+					Metric: autoscalingv2.MetricIdentifier{Name: "s0-" + obs.service.Name},
+					Target: autoscalingv2.MetricTarget{Type: autoscalingv2.ValueMetricType, Value: ptr.To(resource.MustParse("1"))},
+				},
+			}},
+		},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{
+			ObservedGeneration: ptr.To(int64(1)),
+			Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{{
+				Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "FailedGetExternalMetric",
+			}},
+		},
+	}
+	obs.llmInferenceServicePods = &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{Items: []corev1.Pod{{}}}}
+
+	plan := (&ProfileServiceReconciler{}).PlanResources(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: obs.service},
+		obs,
+	)
+	const gracePeriod = 3 * time.Minute
+	if plan.RequeueAfter < gracePeriod-10*time.Second || plan.RequeueAfter > gracePeriod {
+		t.Errorf("RequeueAfter = %s, want approximately %s", plan.RequeueAfter, gracePeriod)
+	}
+}
+
+// TestBuildLLMInferenceServiceFromProfile_keepsConfigEnvEntryKServeCannotReplace
+// pins that KServe's merge of the LLMInferenceService over the profile's
+// LLMInferenceServiceConfig, which merges env entries by name, never gets a
+// service entry whose value or valueFrom would combine with the profile's.
+func TestBuildLLMInferenceServiceFromProfile_keepsConfigEnvEntryKServeCannotReplace(t *testing.T) {
+	profileSecret := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "profile-token"},
+		Key:                  "token",
+	}}
+	serviceSecret := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "service-home"},
+		Key:                  "home",
+	}}
+	for _, tc := range []struct {
+		name       string
+		profileEnv corev1.EnvVar
+		serviceEnv corev1.EnvVar
+	}{
+		{"value over a profile valueFrom", corev1.EnvVar{Name: "HF_TOKEN", ValueFrom: profileSecret}, corev1.EnvVar{Name: "HF_TOKEN", Value: "hf_service"}},
+		{"valueFrom over a profile value", corev1.EnvVar{Name: "HOME", Value: "/profile-home"}, corev1.EnvVar{Name: "HOME", ValueFrom: serviceSecret}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service, obs := llmRuntimeConfigObservation(t)
+			obs.desiredProfileRuntime.Spec.Containers[0].Env = []corev1.EnvVar{tc.profileEnv}
+			service.Spec.Env = []corev1.EnvVar{tc.serviceEnv}
+
+			llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+			if err != nil || llmService == nil {
+				t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+			}
+			for _, env := range llmService.Spec.Template.Containers[0].Env {
+				if env.Name == tc.serviceEnv.Name {
+					t.Errorf("env %+v is set; KServe would merge it with the profile entry into one with a value and a valueFrom", env)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildLLMInferenceServiceFromProfile_annotationPropagation(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	service.Annotations = map[string]string{
+		"cluster-auth/allowed-group":            "ce0c754f-bb1b-63bb-5134-5501142effe7",
+		constants.AnnotationModelId:             "user-tried-to-override",
+		"aim.eai.amd.com/reconciliation-paused": "true",
+		"example.com/foreign":                   "drop-me",
+	}
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	annotations := llmService.Annotations
+	if got := annotations["cluster-auth/allowed-group"]; got != "ce0c754f-bb1b-63bb-5134-5501142effe7" {
+		t.Errorf("cluster-auth annotation = %q, want it propagated", got)
+	}
+	for _, key := range []string{"example.com/foreign", "aim.eai.amd.com/reconciliation-paused"} {
+		if _, set := annotations[key]; set {
+			t.Errorf("annotation %q must not be propagated", key)
+		}
+	}
+	if got, want := annotations[constants.AnnotationModelId], serving.ResolvedServedModelID(obs.resolvedProfileSpec); got != want {
+		t.Errorf("model-id annotation = %q, want the controller-owned %q", got, want)
+	}
+	if got := annotations[constants.AnnotationRuntimeProfile]; got != testProfileA {
+		t.Errorf("runtime-profile annotation = %q, want %q", got, testProfileA)
+	}
+}
+
+func TestBuildLLMInferenceServiceFromProfile_replicasDefaultToOne(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	service.Spec.Replicas = nil
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	if got := llmService.Spec.Replicas; got == nil || *got != 1 {
+		t.Errorf("replicas = %v, want 1", got)
+	}
+}
+
+func TestBuildLLMInferenceServiceFromProfile_serviceAccountAndPullSecrets(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	obs.resolvedProfileSpec.ServiceAccountName = "workload-profile-sa"
+	service.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "registry-creds"}}
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	template := llmService.Spec.Template
+	if template.ServiceAccountName != "workload-profile-sa" {
+		t.Errorf("service account = %q, want the profile's workload-profile-sa", template.ServiceAccountName)
+	}
+	if len(template.ImagePullSecrets) != 1 || template.ImagePullSecrets[0].Name != "registry-creds" {
+		t.Errorf("image pull secrets = %+v, want the service's registry-creds", template.ImagePullSecrets)
+	}
+
+	service.Spec.ServiceAccountName = "workload-service-sa"
+	llmService, err = buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	if got := llmService.Spec.Template.ServiceAccountName; got != "workload-service-sa" {
+		t.Errorf("service account = %q, want the service's workload-service-sa", got)
+	}
+}
+
+func TestBuildLLMInferenceServiceFromProfile_sharedCacheNotOverlaid(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	service.Spec.Caching = &aimv1alpha1.AIMServiceCachingConfig{Mode: aimv1alpha1.CachingModeShared}
+	obs.profileCache = controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: readyCacheFixture()}
+	obs.profileCacheReady = true
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	template := llmService.Spec.Template
+	if len(template.Volumes) != 0 || len(template.Containers[0].VolumeMounts) != 0 {
+		t.Errorf("a Shared cache is mounted by the profile's LLMInferenceServiceConfig; volumes=%+v mounts=%+v",
+			template.Volumes, template.Containers[0].VolumeMounts)
+	}
+	if _, set := envMap(template.Containers[0].Env)[constants.EnvAIMModelID]; set {
+		t.Errorf("a Shared cache must not add the %s redirect env", constants.EnvAIMModelID)
+	}
+}
+
+func TestBuildLLMInferenceServiceFromProfile_dedicatedCacheOverridesDirectVLLMModelReference(t *testing.T) {
+	service, obs := llmRuntimeConfigObservation(t)
+	service.Spec.Caching = &aimv1alpha1.AIMServiceCachingConfig{Mode: aimv1alpha1.CachingModeDedicated}
+	obs.resolvedProfileSpec.Engine = "vllm"
+	obs.resolvedProfileSpec.AcceleratorVendor = aimv1alpha1.AcceleratorVendorNVIDIA
+	obs.profileCache = controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: readyCacheFixture()}
+	obs.profileCacheReady = true
+
+	llmService, err := buildLLMInferenceServiceFromProfile(service, obs)
+	if err != nil || llmService == nil {
+		t.Fatalf("buildLLMInferenceServiceFromProfile() = %v, %v", llmService, err)
+	}
+	env := envMap(llmService.Spec.Template.Containers[0].Env)
+	if got := env[constants.EnvAIMVLLMModel]; got != "/workspace/cache/org/model" {
+		t.Errorf("%s = %q, want the dedicated cache mount", constants.EnvAIMVLLMModel, got)
+	}
+	if env["HF_HUB_OFFLINE"] != "1" || env["TRANSFORMERS_OFFLINE"] != "1" {
+		t.Errorf("a dedicated direct-vLLM cache must force offline mode: %#v", env)
+	}
+}
+
+func TestPlanLLMInferenceService_dynamicAdapterMode(t *testing.T) {
+	service, obs := llmAdapterObservation(t)
+	service.Spec.AdapterMode = aimv1alpha1.AdapterModeDynamic
+	plan := controllerutils.PlanResult{}
+	planLLMInferenceService(&plan, service, obs, true, logr.Discard())
+
+	llmService := appliedLLMInferenceService(plan.GetToApply())
+	if llmService == nil {
+		t.Fatal("the LLMInferenceService was not planned")
+	}
+	env := envMap(llmService.Spec.Template.Containers[0].Env)
+	if got := env[constants.EnvAIMAdapterMode]; got != string(aimv1alpha1.AdapterModeDynamic) {
+		t.Errorf("%s = %q, want %q", constants.EnvAIMAdapterMode, got, aimv1alpha1.AdapterModeDynamic)
+	}
+	if env[constants.EnvAIMAdapterRefreshInterval] == "" {
+		t.Errorf("dynamic mode must set %s; env = %#v", constants.EnvAIMAdapterRefreshInterval, env)
 	}
 }

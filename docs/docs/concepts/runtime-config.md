@@ -604,7 +604,7 @@ spec:
 
 When enabled, labels matching the `match` patterns are automatically copied:
 
-- **AIMService** → `InferenceService`, `HTTPRoute`, PVCs, auto-created `AIMModel`, `AIMProfileCache`
+- **AIMService** → `InferenceService` or `LLMInferenceService`, `HTTPRoute`, PVCs, auto-created `AIMModel`, `AIMProfileCache`
 - **AIMProfileCache** → `AIMArtifact` resources
 - **AIMArtifact** → PVCs, download `Job`s
 - **AIMModel** / **AIMClusterModel** → `AIMProfile` (discovery), child `AIMProfileSet` (derivation)
@@ -627,6 +627,10 @@ For `Job` resources, propagated labels are applied to **both**:
 2. The `Job`'s `PodTemplateSpec` labels.
 
 This enables pod-level tracking, so discovery and download pods inherit the same cost-allocation labels as the parent service.
+
+### Inference pods
+
+KServe copies the `InferenceService` labels to the predictor pods, so propagated labels reach them. KServe does not copy the `LLMInferenceService` labels to its workload pods, so for `spec.servingAPI: LLMInferenceService` AIM Engine also sets the propagated labels in the `LLMInferenceService` `spec.labels`, which KServe applies to the pods. The keys KServe uses to select the workload pods (`app.kubernetes.io/name`, `app.kubernetes.io/part-of` and `app.kubernetes.io/component`) are left out there, even when a pattern matches them.
 
 ### Example: multi-tenant cost tracking
 

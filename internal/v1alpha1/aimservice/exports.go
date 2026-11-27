@@ -149,6 +149,26 @@ func InferenceServiceComponentHealth(
 	return inferenceServiceComponentHealth(inferenceService, inferenceServicePods, predictorDeployment)
 }
 
+// ServingPodsHealth fills health when ready pods keep a service running while
+// KServe does not report the serving resource ready or its Deployment rolls
+// out, as for an InferenceService predictor. It reports false when no pod is
+// ready. Exported for the v1alpha2 LLMInferenceService health.
+func ServingPodsHealth(
+	health *controllerutils.ComponentHealth,
+	kind, workload string,
+	pods *controllerutils.FetchResult[*corev1.PodList],
+	deployment controllerutils.FetchResult[*appsv1.Deployment],
+	refusalDetail string,
+) bool {
+	return servingPodsHealth(health, kind, workload, pods, deployment, refusalDetail)
+}
+
+// DeploymentRollingOut reports whether some of the Deployment's pods are not
+// yet on its current revision.
+func DeploymentRollingOut(deployment *appsv1.Deployment) bool {
+	return deploymentRollingOut(deployment)
+}
+
 // ActivePodCount counts the pods that a ReplicaSet counts as replicas: not
 // terminating and not in a terminal phase.
 func ActivePodCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {

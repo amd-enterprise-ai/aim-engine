@@ -76,9 +76,7 @@ func inferenceServiceComponentHealth(
 
 	// KServe v0.20 reports the InferenceService Ready while old pods keep the
 	// predictor Deployment available, so a rollout is checked first.
-	rollingOut := predictorDeployment.Value != nil &&
-		predictorDeployment.Value.Status.UpdatedReplicas < predictorDeployment.Value.Status.Replicas
-	if inferenceServiceReady(inferenceService) && !rollingOut {
+	if inferenceServiceReady(inferenceService) && !deploymentRollingOut(predictorDeployment.Value) {
 		health.State = constants.AIMStatusReady
 		health.Reason = aimv1alpha1.AIMServiceReasonRuntimeReady
 		health.Message = "InferenceService is ready"
@@ -86,54 +84,9 @@ func inferenceServiceComponentHealth(
 	}
 
 	// If pods are still serving traffic, keep status running.
-	if inferenceServicePods != nil && inferenceServicePods.OK() && inferenceServicePods.Value != nil {
-		readyPodCount := 0
-		for _, pod := range inferenceServicePods.Value.Items {
-			for _, cond := range pod.Status.Conditions {
-				if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
-					readyPodCount++
-					break
-				}
-			}
-		}
-		if readyPodCount > 0 {
-			if predictorDeployment.HasError() && !predictorDeployment.IsNotFound() {
-				health.State = constants.AIMStatusFailed
-				health.Reason = "FetchError"
-				health.Message = predictorDeployment.Error.Error()
-				health.Errors = []error{predictorDeployment.Error}
-				return health
-			}
-			// While previous-revision pods remain, ready pods may all be old ones,
-			// so they keep the service running without proving the rollout ready.
-			if deployment := predictorDeployment.Value; deployment != nil &&
-				deployment.Status.UpdatedReplicas < deployment.Status.Replicas {
-				health.Serving = true
-				if stall, userFixable := rolloutStallDetail(deployment, inferenceServicePods.Value.Items); stall != "" {
-					health.State = constants.AIMStatusDegraded
-					health.Reason = aimv1alpha1.AIMServiceReasonRolloutStalled
-					health.UserFixable = userFixable
-					health.Message = fmt.Sprintf("Predictor rollout of Deployment %s is stalled: %s; %d pod(s) are ready and serving%s",
-						deployment.Name, stall, readyPodCount, podCreationRefusalDetail(isvc))
-					return health
-				}
-				health.State = constants.AIMStatusProgressing
-				health.Reason = aimv1alpha1.AIMServiceReasonRolloutInProgress
-				health.Message = fmt.Sprintf(
-					"Predictor rollout in progress: %d of %d pods are on the new revision, %d pod(s) are ready and serving%s",
-					deployment.Status.UpdatedReplicas,
-					deployment.Status.Replicas,
-					readyPodCount,
-					pendingPodDetail(inferenceServicePods.Value.Items),
-				) + podCreationRefusalDetail(isvc)
-				return health
-			}
-			health.State = constants.AIMStatusReady
-			health.Reason = aimv1alpha1.AIMServiceReasonRuntimeScaling
-			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount) +
-				podCreationRefusalDetail(isvc)
-			return health
-		}
+	if servingPodsHealth(&health, "InferenceService", "Predictor", inferenceServicePods, predictorDeployment,
+		podCreationRefusalDetail(isvc)) {
+		return health
 	}
 
 	// Checked before the generation guard: in RawDeployment mode KServe copies
@@ -167,6 +120,78 @@ func inferenceServiceComponentHealth(
 	health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
 	health.Message = "InferenceService is not ready"
 	return health
+}
+
+// servingPodsHealth fills health when ready pods keep the service running
+// although KServe does not report the serving resource ready, or its
+// Deployment still rolls out. While previous-revision pods remain, ready pods
+// may all be old ones, so they keep the service running without proving the
+// rollout ready: the verdict is Degraded RolloutStalled once the rollout
+// stalls, Progressing RolloutInProgress until then, and Ready RuntimeScaling
+// when the Deployment has finished rolling out. kind names the KServe resource
+// and workload the Deployment in messages; refusalDetail is appended to them.
+// It reports false when no pod is ready.
+func servingPodsHealth(
+	health *controllerutils.ComponentHealth,
+	kind, workload string,
+	pods *controllerutils.FetchResult[*corev1.PodList],
+	deployment controllerutils.FetchResult[*appsv1.Deployment],
+	refusalDetail string,
+) bool {
+	if pods == nil || !pods.OK() || pods.Value == nil {
+		return false
+	}
+	readyPodCount := 0
+	for _, pod := range pods.Value.Items {
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+				readyPodCount++
+				break
+			}
+		}
+	}
+	if readyPodCount == 0 {
+		return false
+	}
+	if deployment.HasError() && !deployment.IsNotFound() {
+		health.State = constants.AIMStatusFailed
+		health.Reason = "FetchError"
+		health.Message = deployment.Error.Error()
+		health.Errors = []error{deployment.Error}
+		return true
+	}
+	if d := deployment.Value; deploymentRollingOut(d) {
+		health.Serving = true
+		if stall, userFixable := rolloutStallDetail(d, pods.Value.Items); stall != "" {
+			health.State = constants.AIMStatusDegraded
+			health.Reason = aimv1alpha1.AIMServiceReasonRolloutStalled
+			health.UserFixable = userFixable
+			health.Message = fmt.Sprintf("%s rollout of Deployment %s is stalled: %s; %d pod(s) are ready and serving%s",
+				workload, d.Name, stall, readyPodCount, refusalDetail)
+			return true
+		}
+		health.State = constants.AIMStatusProgressing
+		health.Reason = aimv1alpha1.AIMServiceReasonRolloutInProgress
+		health.Message = fmt.Sprintf(
+			"%s rollout in progress: %d of %d pods are on the new revision, %d pod(s) are ready and serving%s",
+			workload,
+			d.Status.UpdatedReplicas,
+			d.Status.Replicas,
+			readyPodCount,
+			pendingPodDetail(pods.Value.Items),
+		) + refusalDetail
+		return true
+	}
+	health.State = constants.AIMStatusReady
+	health.Reason = aimv1alpha1.AIMServiceReasonRuntimeScaling
+	health.Message = fmt.Sprintf("%s has %d ready pod(s), scaling in progress", kind, readyPodCount) + refusalDetail
+	return true
+}
+
+// deploymentRollingOut reports whether some of the Deployment's pods are not
+// yet on its current revision.
+func deploymentRollingOut(deployment *appsv1.Deployment) bool {
+	return deployment != nil && deployment.Status.UpdatedReplicas < deployment.Status.Replicas
 }
 
 // deploymentReasonFailedCreate is the reason of the Deployment ReplicaFailure

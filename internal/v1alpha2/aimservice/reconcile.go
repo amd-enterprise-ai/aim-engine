@@ -105,9 +105,10 @@ type ServiceFetchResult struct {
 
 	llmInferenceService     controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService]
 	llmInferenceServicePods *controllerutils.FetchResult[*corev1.PodList]
-	// llmWorkloadDeployment is the LLMInferenceService workload Deployment,
-	// fetched only while the LLMInferenceService is not ready, to report a
-	// refused Pod. KServe does not copy its ReplicaFailure condition.
+	// llmWorkloadDeployment is the LLMInferenceService workload Deployment. It
+	// reports a rollout and a refused Pod: KServe reports the
+	// LLMInferenceService Ready while old pods serve, and does not copy the
+	// Deployment's ReplicaFailure condition.
 	llmWorkloadDeployment controllerutils.FetchResult[*appsv1.Deployment]
 	// profileLLMConfig is the namespaced LLMInferenceServiceConfig the
 	// LLMInferenceService references. Like profileRuntime, it must be current
@@ -718,12 +719,10 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			result.hpa = v1alpha1service.FetchHPAForDeployment(ctx, c, llmService.Namespace, llmDeploymentName(llmService.Name))
 			pods := fetchLLMWorkloadPods(ctx, c, llmService)
 			result.llmInferenceServicePods = &pods
-			if !llmInferenceServiceReady(result.llmInferenceService) {
-				result.llmWorkloadDeployment = controllerutils.FetchDirect(ctx, reader, client.ObjectKey{
-					Namespace: llmService.Namespace,
-					Name:      llmDeploymentName(llmService.Name),
-				}, &appsv1.Deployment{})
-			}
+			result.llmWorkloadDeployment = controllerutils.FetchDirect(ctx, reader, client.ObjectKey{
+				Namespace: llmService.Namespace,
+				Name:      llmDeploymentName(llmService.Name),
+			}, &appsv1.Deployment{})
 		}
 	} else {
 		result.inferenceService = fetchInferenceService(ctx, c, service)

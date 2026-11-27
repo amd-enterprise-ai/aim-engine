@@ -52,6 +52,7 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	v1alpha1svc "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
@@ -266,9 +267,11 @@ func llmInferenceServiceReady(fetch controllerutils.FetchResult[*kservev1alpha2.
 }
 
 // llmInferenceServiceComponentHealth is the LLMInferenceService health
-// verdict. A workload Deployment that cannot create a Pod makes the service
-// Failed with the refusal text, as for the InferenceService predictor, unless
-// a pod exists that can still become ready.
+// verdict, built like the InferenceService one: ready pods keep the service
+// running through a rollout of the workload Deployment, which is reported as
+// RolloutInProgress or RolloutStalled, and a Deployment that cannot create a
+// Pod makes the service Failed with the refusal text unless a pod exists that
+// can still become ready.
 func llmInferenceServiceComponentHealth(
 	fetch controllerutils.FetchResult[*kservev1alpha2.LLMInferenceService],
 	pods *controllerutils.FetchResult[*corev1.PodList],
@@ -291,14 +294,24 @@ func llmInferenceServiceComponentHealth(
 		health.Message = "LLMInferenceService not found"
 		return health
 	}
-	if llmInferenceServiceReady(fetch) {
+	// KServe v0.20 reports the LLMInferenceService Ready while old pods keep the
+	// workload Deployment available, so a rollout is checked first.
+	if llmInferenceServiceReady(fetch) && !v1alpha1svc.DeploymentRollingOut(deployment.Value) {
 		health.State = constants.AIMStatusReady
 		health.Reason = aimv1alpha1.AIMServiceReasonRuntimeReady
 		health.Message = "LLMInferenceService is ready"
 		return health
 	}
 
-	if refusal, refused := v1alpha1svc.DeploymentPodCreationFailure(deployment.Value); refused {
+	refusal, refused := v1alpha1svc.DeploymentPodCreationFailure(deployment.Value)
+	refusalDetail := ""
+	if refused {
+		refusalDetail = "; the workload Deployment cannot create a pod: " + refusal
+	}
+	if v1alpha1svc.ServingPodsHealth(&health, "LLMInferenceService", "Workload", pods, deployment, refusalDetail) {
+		return health
+	}
+	if refused {
 		if starting := v1alpha1svc.ActivePodCount(pods); starting > 0 {
 			health.State = constants.AIMStatusProgressing
 			health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
@@ -445,7 +458,7 @@ func buildLLMInferenceServiceFromProfile(
 		),
 		WorkloadSpec: kservev1alpha2.WorkloadSpec{
 			Replicas:    replicas,
-			Labels:      llmWorkloadPodAIMLabels(labels),
+			Labels:      llmWorkloadSpecLabels(service, labels, aimruntimeconfig.GetLabelPropagationSettings(obs.mergedRuntimeConfig.Value)),
 			Annotations: podAnnotations,
 			Template:    template,
 		},
@@ -491,17 +504,28 @@ func llmContainerSecurityContext(
 	return container
 }
 
-// llmWorkloadPodAIMLabels returns the AIM labels for the workload pods. KServe
-// copies spec.labels over the pod labels it sets, which include its Deployment
-// selector, so only labels in the AIM domain are passed on.
-func llmWorkloadPodAIMLabels(labels map[string]string) map[string]string {
-	out := map[string]string{}
+// llmWorkloadSpecLabels returns spec.labels for the workload pods: the AIM
+// labels and the service labels the runtime config propagates. KServe copies
+// the InferenceService labels to the predictor pods, but not the
+// LLMInferenceService labels, so they are passed through spec.labels. KServe
+// copies spec.labels over the pod labels it sets, so the keys of its
+// Deployment selector are left out.
+func llmWorkloadSpecLabels(
+	service *aimv1alpha2.AIMService,
+	labels map[string]string,
+	propagation *controllerutils.LabelPropagationSettings,
+) map[string]string {
+	pod := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{}}}
 	for key, value := range labels {
 		if strings.HasPrefix(key, constants.AimLabelDomain+"/") {
-			out[key] = value
+			pod.Labels[key] = value
 		}
 	}
-	return out
+	controllerutils.PropagateLabels(service, pod, propagation)
+	for key := range llmWorkloadPodLabels("") {
+		delete(pod.Labels, key)
+	}
+	return pod.Labels
 }
 
 // profileLLMConfigCurrent reports whether the namespaced LLMInferenceServiceConfig
@@ -533,9 +557,11 @@ func planLLMInferenceService(
 	llmServiceExists bool,
 	logger logr.Logger,
 ) {
-	if obs.llmWorkloadDeployment.OK() && obs.llmWorkloadDeployment.Value != nil {
-		// The workload Deployment is not cached, and KServe does not surface
-		// its ReplicaFailure condition, so a refused pod triggers no reconcile.
+	if deployment := obs.llmWorkloadDeployment.Value; obs.llmWorkloadDeployment.OK() && deployment != nil &&
+		(!llmInferenceServiceReady(obs.llmInferenceService) || v1alpha1svc.DeploymentRollingOut(deployment)) {
+		// The workload Deployment is not cached, and KServe surfaces neither its
+		// ReplicaFailure condition nor an exceeded progress deadline, so a
+		// refused pod or a stalled rollout triggers no reconcile.
 		planResult.RequestRequeueAfter(llmWorkloadDeploymentPollInterval)
 	}
 	if !llmBaseRefsUsable(obs.llmBaseRefs) {

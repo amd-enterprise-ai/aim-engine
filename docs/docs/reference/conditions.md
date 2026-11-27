@@ -61,7 +61,7 @@ Overall readiness — the aggregate of all other conditions and component health
 | `False` | `ComponentsNotReady` | One or more components are not ready |
 | `False` | `Progressing` | Waiting for components to become ready |
 
-When a component fails, `Ready` takes that component's reason. `AIMService` also reports `Ready=False` with reason `RolloutInProgress` while a new predictor revision is not ready and the previous revision still serves, or `RolloutStalled` once that revision can't progress. See [InferenceServiceReady](#inferenceserviceready).
+When a component fails, `Ready` takes that component's reason. `AIMService` also reports `Ready=False` with reason `RolloutInProgress` while a new predictor or LLMInferenceService workload revision is not ready and the previous revision still serves, or `RolloutStalled` once that revision can't progress. See [InferenceServiceReady](#inferenceserviceready).
 
 ## Template-era fields condition
 
@@ -149,9 +149,12 @@ Replaces `InferenceServiceReady` when `status.servingAPI` is `LLMInferenceServic
 
 | Status | Reason | Description |
 |---|---|---|
-| `True` | `RuntimeReady` | KServe `LLMInferenceService` is ready |
+| `True` | `RuntimeReady` | KServe `LLMInferenceService` is ready and the workload Deployment has no rollout in progress |
+| `True` | `RuntimeScaling` | Workload pods on the current revision are ready while KServe reports the LLMInferenceService not ready, for example during a scale-up |
 | `False` | `CreatingRuntime` | Creating the LLMInferenceService. While a workload pod starts and the workload Deployment cannot create another one, the message contains the refusal text |
-| `False` | `PodCreationFailed` | The workload Deployment cannot create a pod because the API server or an admission policy refuses it, for example because of Pod Security admission or a ResourceQuota. The message contains the refusal text. The service status is `Failed` until a pod can be created |
+| `False` | `PodCreationFailed` | The workload Deployment cannot create a pod because the API server or an admission policy refuses it, for example because of Pod Security admission or a ResourceQuota. The message contains the refusal text. The service status is `Failed` until a pod can be created. While an older workload pod is ready, the reason stays `RuntimeScaling`, or `RolloutInProgress` during a rollout, and its message contains the refusal text |
+| `False` | `RolloutInProgress` | A new workload revision is not ready yet while previous-revision pods keep serving. KServe keeps the LLMInferenceService `Ready` during a rollout, so AIM Engine reads the workload Deployment. Otherwise as for [InferenceServiceReady](#inferenceserviceready) |
+| `False` | `RolloutStalled` | The new workload revision can't progress while previous-revision pods keep serving: one of its pods is in `CrashLoopBackOff`, or the workload Deployment reports `ProgressDeadlineExceeded`. Otherwise as for [InferenceServiceReady](#inferenceserviceready) |
 | `False` | `LLMInferenceServiceNotReady` | KServe reports the LLMInferenceService not ready; the message carries KServe's reason |
 
 ### LLMInferenceServiceBaseRefsReady

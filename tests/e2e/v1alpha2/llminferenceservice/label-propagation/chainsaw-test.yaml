@@ -1,0 +1,99 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Service labels matching the runtime config's labelPropagation rules reach the
+# LLMInferenceService, the HTTPRoute and the workload pods. KServe does not
+# copy the LLMInferenceService labels to its pods, so AIM Engine also sets them
+# in the LLMInferenceService spec.labels, which KServe applies to the pods
+# alongside its own selector labels.
+#
+# The service carries team-alpha and cost-center, which match the rules, and
+# env, which does not. The cache chain (AIMProfileCache, AIMArtifact, PVC,
+# download Job) is the same as for an InferenceService and is covered by
+# v1alpha2/aimservice/label-propagation.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: llminferenceservice-label-propagation
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the runtime config, profile and labelled service
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-labels
+              status:
+                status: Running
+
+    - name: Matching labels reach the LLMInferenceService, the HTTPRoute and the workload pods
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-labels
+                  team-alpha: frontend
+                  cost-center: cc-12345
+              spec:
+                labels:
+                  team-alpha: frontend
+                  cost-center: cc-12345
+        - assert:
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-labels
+                  team-alpha: frontend
+                  cost-center: cc-12345
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  app.kubernetes.io/component: llminferenceservice-workload
+                  aim.eai.amd.com/service: llmisvc-labels
+                  team-alpha: frontend
+                  cost-center: cc-12345
+
+    - name: The non-matching label is not propagated
+      try:
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  env: test
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  env: test
