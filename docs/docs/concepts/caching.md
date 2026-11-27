@@ -347,7 +347,7 @@ The default has no CPU limit, because a CPU limit throttles the download also wh
 To change the values, set `spec.artifact.downloadJobResources` in an `AIMClusterRuntimeConfig` or a namespace `AIMRuntimeConfig`. The value replaces the default as a whole, and the value of a namespace runtime config replaces the value of the cluster runtime config as a whole. With the Helm chart, set it in `clusterRuntimeConfig.spec`.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
