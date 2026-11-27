@@ -67,6 +67,7 @@ The chart also exposes these scale-from-zero controller-config values:
 | Value | Default | Purpose |
 |---|---|---|
 | `scaleFromZero.scalerAddress` | `keda-otel-scaler.keda.svc:4318` | gRPC endpoint the controller writes into every external KEDA trigger it authors. |
+| `scaleFromZero.receiverEndpoint` | `keda-otel-scaler.keda.svc:4317` | OTLP gRPC endpoint that the metrics collector sidecars of services with `spec.autoScaling.metrics` send the pod metrics to. Point it at the same keda-otel-add-on instance as `scalerAddress`. |
 | `scaleFromZero.cooldownSecondsPerGiMemory` | `5` | Seconds-per-GiB multiplier used to derive each service's `cooldownPeriod` from the predictor's memory request (`cooldownPeriod = clamp(300 + memGiB × this, 300, 1200)`). Default budgets for ~1.6 GB/s warm-cache throughput; tune lower for faster storage (local NVMe, hugepages) or higher for slower storage (NFS, network PVC). The 300 s floor ensures every predictor gets enough cooldown to absorb a real warmup; the 1200 s ceiling caps the worst-case overcooling on multi-GPU services. See the comment in `values.yaml` for worked examples per model size. |
 
 ## Next Steps

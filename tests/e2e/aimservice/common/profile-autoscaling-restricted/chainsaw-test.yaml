@@ -1,0 +1,207 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Autoscaling in a Restricted Namespace (v1alpha2, Kind)
+#
+# An autoscaled predictor gets an OpenTelemetry collector sidecar that feeds
+# its pod metrics to KEDA. The test namespace enforces the Pod Security
+# Standard restricted, so the predictor pods are admitted only if the sidecar
+# and the inference container both comply:
+#
+#   AIMRuntimeConfig default (restricted security contexts, as in the guide)
+#   AIMModel (aim-dummy image discovery -> CPU AIMProfile)
+#       -> AIMService (minReplicas=1, maxReplicas=3, pod metric trigger)
+#       -> OpenTelemetryCollector <isvc>-predictor (owned by the AIMService,
+#                                  restricted container security context;
+#                                  user and seccomp come from the Pod)
+#       -> InferenceService (no predictor.autoScaling, so KServe does not
+#                            create its own collector)
+#       -> predictor pods with the injected otc-container
+#       -> KEDA ScaledObject + HPA scale the predictor under load
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-autoscaling-restricted
+  labels:
+    hf-access: live
+spec:
+  description: Autoscaled v1alpha2 AIMService runs and scales in a namespace that enforces restricted Pod Security
+  namespaceTemplate:
+    metadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/warn: restricted
+  timeouts:
+    assert: 300s
+  steps:
+    - use:
+        template: ../../../_shared/hf-token-step.yaml
+
+    - name: Create the restricted runtime config and the model
+      try:
+        - apply:
+            file: runtimeconfig.yaml
+        - apply:
+            file: model.yaml
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: test-profile-autoscaling-restricted-model
+              status:
+                status: Ready
+
+    - name: Create the autoscaled service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify AIM Engine owns a restricted-compliant collector
+      try:
+        - assert:
+            resource:
+              apiVersion: opentelemetry.io/v1beta1
+              kind: OpenTelemetryCollector
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-profile-autoscaling-restricted-service
+                  app.kubernetes.io/component: autoscaling
+                  app.kubernetes.io/managed-by: aim-engine
+                (ownerReferences[?kind == 'AIMService' && controller]):
+                  - name: test-profile-autoscaling-restricted-service
+              spec:
+                mode: sidecar
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop: [ALL]
+
+    - name: Verify KServe does not manage the collector
+      description: |
+        KServe creates its own collector, without a security context, for an
+        InferenceService whose predictor.autoScaling declares pod metrics.
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-profile-autoscaling-restricted-service
+                annotations:
+                  serving.kserve.io/autoscalerClass: external
+              (spec.predictor.autoScaling == null): true
+
+    - name: Verify the service runs with the sidecar
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-profile-autoscaling-restricted-service
+              status:
+                status: Running
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-profile-autoscaling-restricted-service
+                  app.kubernetes.io/component: inference
+              spec:
+                (initContainers[?name == 'otc-container']):
+                  - securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop: [ALL]
+              status:
+                phase: Running
+      catch:
+        - describe:
+            apiVersion: aim.eai.amd.com/v1alpha2
+            kind: AIMService
+        - describe:
+            apiVersion: serving.kserve.io/v1beta1
+            kind: InferenceService
+        - describe:
+            apiVersion: opentelemetry.io/v1beta1
+            kind: OpenTelemetryCollector
+        - describe:
+            apiVersion: apps/v1
+            kind: ReplicaSet
+        - events: {}
+
+    - name: Verify KEDA scales the service under load
+      description: |
+        A restricted-compliant load generator sends requests to the predictor.
+        The successful-request rate reaches the scaler only through the
+        collector sidecar, so scaling out proves the sidecar runs and exports.
+      try:
+        - script:
+            timeout: 300s
+            content: |
+              set -eu
+              ISVC=$(kubectl get inferenceservices.serving.kserve.io -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=test-profile-autoscaling-restricted-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              PREDICTOR="$ISVC-predictor"
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: load-generator
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 1000
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: curl
+                    image: docker.io/curlimages/curl:8.11.1
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop: [ALL]
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - |
+                        while true; do
+                          for i in 1 2 3 4; do
+                            curl -s -o /dev/null \
+                              -H 'Content-Type: application/json' \
+                              -d '{"model":"qwen2.5-0.5b-instruct","messages":[{"role":"user","content":"hi"}],"max_tokens":4}' \
+                              http://$PREDICTOR/v1/chat/completions &
+                          done
+                          wait
+                          sleep 0.2
+                        done
+              EOF
+              for _ in $(seq 1 56); do
+                READY=$(kubectl get deployment -n "$NAMESPACE" "$PREDICTOR" -o jsonpath='{.status.readyReplicas}')
+                if [ "${READY:-0}" -ge 2 ]; then
+                  echo "Scaled out to $READY ready replicas"
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "ERROR: predictor did not scale out under load"
+              kubectl get hpa -n "$NAMESPACE" -o yaml
+              exit 1
+      catch:
+        - describe:
+            apiVersion: keda.sh/v1alpha1
+            kind: ScaledObject
+        - describe:
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+        - podLogs:
+            selector: aim.eai.amd.com/service=test-profile-autoscaling-restricted-service
+            container: otc-container
+            tail: 40
+        - events: {}

@@ -72,16 +72,32 @@ The values 44 (`video`) and 110 (`render`) in the example are from one Ubuntu no
 
 If the runtime config sets `additionalCABundleRef`, the inference pods also get a CA init container. It runs as UID 1000 without privilege escalation and drops all capabilities, and the Pod `seccompProfile` applies to it.
 
+## Autoscaling Sidecar
+
+A service that [autoscales](scaling-and-autoscaling.md#autoscaling-with-keda) on `spec.autoScaling.metrics` gets an OpenTelemetry collector sidecar container, `otc-container`, in each inference Pod. The sidecar runs without privilege escalation and drops all capabilities. `spec.securityContext` does not apply to it; it gets `runAsNonRoot`, the user and the seccomp profile from `spec.podSecurityContext`. Set these fields in `spec.podSecurityContext`, as in the example above, and not only in `spec.securityContext`. Otherwise Pod Security admission refuses the Pod because of the sidecar.
+
 ## Limitations
 
-Autoscaled services cannot run in a namespace that enforces `restricted`. For [autoscaling](scaling-and-autoscaling.md#autoscaling-with-keda), the inference Pod gets an OpenTelemetry collector sidecar container, `otc-container`. `spec.securityContext` applies only to the inference container, and you cannot set a security context for the sidecar. The sidecar does not set `allowPrivilegeEscalation: false` and does not drop all capabilities, so Pod Security admission refuses the Pod. Run autoscaled services in a namespace that enforces `baseline`.
+The `aim-template-migration` tool of v0.2.7 can move an autoscaled service to a profile and keep its InferenceService, so that the model does not restart (see [Move template services](../admin/upgrading.md#move-template-services)). Until the next change to the spec of such a service, KServe keeps the collector of that InferenceService, and the sidecar of a new inference Pod has no security context. In a namespace that enforces `restricted`, Pod Security admission refuses such a Pod, for example when the service scales out. After the next change to the spec of the service, AIM Engine replaces the collector.
 
 ## Troubleshooting
 
-If a service stays in `Starting` and its condition `InferenceServicePodsReady` has the reason `NoPods`, it is possible that Pod Security admission refused the inference Pod. The status of the service does not show the Pod Security message. To see it, look at the `FailedCreate` events of the ReplicaSet:
+If Pod Security admission refuses the inference Pod, the service status is `Failed`, and the conditions `InferenceServiceReady` and `Ready` have the reason `PodCreationFailed`. While an older inference Pod still serves, the service stays `Running`, and only the `InferenceServiceReady` message has the refusal text. To see the text:
 
 ```bash
-kubectl get events -n my-models --field-selector reason=FailedCreate
+kubectl get aimservice <name> -n my-models \
+  -o jsonpath='{.status.conditions[?(@.type=="InferenceServiceReady")].message}'
 ```
 
-A message such as `violates PodSecurity "restricted:latest": runAsNonRoot != true` names the missing field and the container. A frequent cause is an AIMService that sets its own `podSecurityContext` or `securityContext`: this value replaces the runtime config value as a whole, also when it is `{}`. If the message names the container `otc-container`, the service uses autoscaling; see [Limitations](#limitations).
+A message such as `violates PodSecurity "restricted:latest": runAsNonRoot != true` names the missing field and the container. A frequent cause is an AIMService that sets its own `podSecurityContext` or `securityContext`: this value replaces the runtime config value as a whole, also when it is `{}`. If the message names the container `otc-container`, the reason tells which part is missing:
+
+- `runAsNonRoot != true` or `seccompProfile`: `spec.podSecurityContext` does not set the field, and the sidecar has no value of its own. See [Autoscaling Sidecar](#autoscaling-sidecar).
+- `allowPrivilegeEscalation != false` or `unrestricted capabilities`: the sidecar has no container security context. See [Limitations](#limitations).
+
+The ReplicaSet tries again to create the Pod, with an increasing delay of up to about 16 minutes. To try again at once after you fix the cause, restart the predictor Deployment:
+
+```bash
+kubectl rollout restart deployment/<isvc-name>-predictor -n my-models
+```
+
+To find `<isvc-name>`, run `kubectl get inferenceservice -n my-models -l aim.eai.amd.com/service.name=<name>`.

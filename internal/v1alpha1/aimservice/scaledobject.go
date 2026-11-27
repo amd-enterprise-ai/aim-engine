@@ -34,6 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -41,6 +42,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -217,6 +219,80 @@ func planScaledObject(
 
 	so.Object["spec"] = spec
 	return so
+}
+
+const kedaScaledObjectResource = "scaledobjects"
+
+// detectScaledObjectAPI reports whether the API server serves the
+// keda.sh/v1alpha1 ScaledObject kind.
+func detectScaledObjectAPI(client discovery.DiscoveryInterface) (bool, error) {
+	return utils.ServesResources(client, kedaScaledObjectGVK.GroupVersion().String(), kedaScaledObjectResource)
+}
+
+// fetchScaledObject fetches the metadata of the ScaledObject named after the
+// predictor Deployment. It returns an empty result when the cluster does not
+// serve the ScaledObject API, in which case no ScaledObject can exist.
+func fetchScaledObject(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha2.AIMService,
+	served bool,
+) controllerutils.FetchResult[*metav1.PartialObjectMetadata] {
+	if !served {
+		return controllerutils.FetchResult[*metav1.PartialObjectMetadata]{}
+	}
+	isvcName, err := GenerateInferenceServiceName(service.Name, service.Namespace)
+	if err != nil {
+		return controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Error: err}
+	}
+	so := &metav1.PartialObjectMetadata{}
+	so.SetGroupVersionKind(kedaScaledObjectGVK)
+	return controllerutils.Fetch(ctx, c, client.ObjectKey{
+		Namespace: service.Namespace,
+		Name:      isvcName + constants.PredictorServiceSuffix,
+	}, so)
+}
+
+// scaledObjectRequested reports whether the service asks for a ScaledObject:
+// it sets replica bounds or autoscaling, and at least one trigger resolves,
+// counting the activation trigger of a scale-to-zero service. A requested
+// ScaledObject that planScaledObject cannot build, for example because the
+// activation query is invalid, still counts, so its last applied version keeps
+// scaling the predictor.
+func scaledObjectRequested(service *aimv1alpha2.AIMService) bool {
+	hasAutoscaling := service.Spec.AutoScaling != nil ||
+		service.Spec.MinReplicas != nil ||
+		service.Spec.MaxReplicas != nil
+	if !hasAutoscaling {
+		return false
+	}
+	if minReplicas, _ := resolveReplicaBounds(service); minReplicas == 0 {
+		return true
+	}
+	for _, metric := range collectUserMetrics(service) {
+		if buildUserMetricTrigger(metric, service.Namespace, "") != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// planScaledObjectRemoval deletes the ScaledObject that the service controls
+// once the service no longer asks for one. KEDA would otherwise keep scaling
+// the predictor on triggers whose metrics collector sidecar has been removed.
+func planScaledObjectRemoval(
+	planResult *controllerutils.PlanResult,
+	service *aimv1alpha2.AIMService,
+	observed controllerutils.FetchResult[*metav1.PartialObjectMetadata],
+) {
+	current := observed.Value
+	if observed.Error != nil || current == nil || current.GetDeletionTimestamp() != nil {
+		return
+	}
+	if scaledObjectRequested(service) || !isControlledBy(current, service.UID) {
+		return
+	}
+	planResult.Delete(current)
 }
 
 // resolveReplicaBounds is the single source of truth for min/max replica
@@ -567,15 +643,9 @@ func buildUserMetricTrigger(metric aimv1alpha1.AIMServiceMetricsSpec, namespace,
 	}
 	pm := metric.PodMetric
 
-	metricQuery := pm.Metric.Query
-	if metricQuery == "" && len(pm.Metric.MetricNames) > 0 {
-		metricQuery = pm.Metric.MetricNames[0]
-	}
+	metricQuery := userMetricQuery(pm.Metric, namespace, predictorName)
 	if metricQuery == "" {
 		return nil
-	}
-	if !queryHasLabelSelector(metricQuery) {
-		metricQuery = scopedMetricQuery(metricQuery, namespace, predictorName)
 	}
 
 	metadata := map[string]interface{}{
@@ -591,6 +661,23 @@ func buildUserMetricTrigger(metric aimv1alpha1.AIMServiceMetricsSpec, namespace,
 		"type":     "external",
 		"metadata": metadata,
 	}
+}
+
+// userMetricQuery returns the keda-otel-add-on query of a user metric: its
+// query, or else its first metric name, scoped to the predictor's series unless
+// it carries a label selector. Empty when the metric sets neither.
+func userMetricQuery(metric *aimv1alpha1.AIMServicePodMetric, namespace, predictorName string) string {
+	metricQuery := metric.Query
+	if metricQuery == "" && len(metric.MetricNames) > 0 {
+		metricQuery = metric.MetricNames[0]
+	}
+	if metricQuery == "" {
+		return ""
+	}
+	if !queryHasLabelSelector(metricQuery) {
+		metricQuery = scopedMetricQuery(metricQuery, namespace, predictorName)
+	}
+	return metricQuery
 }
 
 // scopedMetricQuery wraps a bare metric name in a keda-otel-add-on

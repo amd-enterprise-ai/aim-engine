@@ -718,6 +718,10 @@ jobs:
             -l aim.eai.amd.com/service=upgrade-post-upgrade-service \
             -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.uid} {.metadata.generation}{"\n"}{end}' \
             > "${UPGRADE_REPORT_DIR}/post-upgrade-service-before-rollback.txt"
+          kubectl get pods -n "${UPGRADE_NAMESPACE}" \
+            -l aim.eai.amd.com/service=upgrade-autoscaled-service,app.kubernetes.io/component=inference \
+            -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.uid}{"\n"}{end}' \
+            > "${UPGRADE_REPORT_DIR}/autoscaled-pods-before-rollback.txt"
 
           # The steps at the start of docs/docs/admin/upgrading.md#rollback.
           kubectl get aimservices --all-namespaces -o json \
@@ -797,6 +801,21 @@ jobs:
             > "${UPGRADE_REPORT_DIR}/post-upgrade-service-after-rollback.txt"
           diff -u "${UPGRADE_REPORT_DIR}/post-upgrade-service-before-rollback.txt" \
             "${UPGRADE_REPORT_DIR}/post-upgrade-service-after-rollback.txt"
+
+      - name: The autoscaled service keeps its predictor pods through the rollback
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          kubectl get pods -n "${UPGRADE_NAMESPACE}" \
+            -l aim.eai.amd.com/service=upgrade-autoscaled-service,app.kubernetes.io/component=inference \
+            -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.uid}{"\n"}{end}' \
+            > "${UPGRADE_REPORT_DIR}/autoscaled-pods-after-rollback.txt"
+          if [[ ! -s "${UPGRADE_REPORT_DIR}/autoscaled-pods-before-rollback.txt" ]]; then
+            echo "upgrade-autoscaled-service had no predictor pod before the rollback" >&2
+            exit 1
+          fi
+          diff -u "${UPGRADE_REPORT_DIR}/autoscaled-pods-before-rollback.txt" \
+            "${UPGRADE_REPORT_DIR}/autoscaled-pods-after-rollback.txt"
 
       - name: Capture upgrade diagnostics
         if: always()

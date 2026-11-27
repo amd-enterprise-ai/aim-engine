@@ -61,6 +61,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -342,10 +343,33 @@ func setupControllers(mgr ctrl.Manager, runtimeProjectionMode aimv1alpha2.Runtim
 		return fmt.Errorf("AIMArtifact: %w", err)
 	}
 
+	// Autoscaled AIMServices feed KEDA through an OpenTelemetry Operator
+	// collector sidecar. The API is optional: without it, those services
+	// report ConfigValid=False. Installing it later requires a restart.
+	otelCollectorServed, err := aimservice.DetectOpenTelemetryCollectorAPI(clientset.Discovery())
+	if err != nil {
+		return fmt.Errorf("discover the OpenTelemetryCollector API: %w", err)
+	}
+	setupLog.Info("Resolved OpenTelemetryCollector API support",
+		"groupVersionKind", aimservice.OpenTelemetryCollectorGVK().String(),
+		"served", otelCollectorServed)
+
+	// KEDA is needed only by autoscaled AIMServices, so the controller reads
+	// ScaledObjects only where the API is served.
+	scaledObjectServed, err := aimservice.DetectScaledObjectAPI(clientset.Discovery())
+	if err != nil {
+		return fmt.Errorf("discover the ScaledObject API: %w", err)
+	}
+	setupLog.Info("Resolved ScaledObject API support",
+		"groupVersionKind", aimservice.ScaledObjectGVK().String(),
+		"served", scaledObjectServed)
+
 	if err := (&sharedcontroller.AIMServiceReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
+		Client:                       mgr.GetClient(),
+		Scheme:                       mgr.GetScheme(),
+		Clientset:                    clientset,
+		OpenTelemetryCollectorServed: otelCollectorServed,
+		ScaledObjectServed:           scaledObjectServed,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("AIMService: %w", err)
 	}

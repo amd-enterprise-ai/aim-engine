@@ -23,7 +23,6 @@
 package aimservice
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
@@ -211,12 +210,12 @@ func TestConfigureReplicasAndAutoscaling_AutoscalerClass(t *testing.T) {
 	}
 }
 
-// TestConfigureReplicasAndAutoscaling_ForwardsUserMetricsForOTelCollector
-// verifies user metrics are written into isvc.Spec.Predictor.AutoScaling.Metrics
-// so KServe's RawKubeReconciler creates the OpenTelemetryCollector CR that
-// feeds in-pod sidecar injection. The gateway-rate metric must NOT appear
-// here -- that trigger belongs solely on the controller-owned ScaledObject.
-func TestConfigureReplicasAndAutoscaling_ForwardsUserMetricsForOTelCollector(t *testing.T) {
+// TestConfigureReplicasAndAutoscaling_KeepsUserMetricsOffInferenceService
+// verifies user metrics stay off isvc.Spec.Predictor.AutoScaling: KServe would
+// otherwise create its own OpenTelemetryCollector for the predictor, without
+// the restricted-compliant security context of the controller-owned one. The
+// sidecar annotation still names the predictor collector.
+func TestConfigureReplicasAndAutoscaling_KeepsUserMetricsOffInferenceService(t *testing.T) {
 	service := NewService("svc").Build()
 	service.Spec.MinReplicas = ptr.To(int32(0))
 	service.Spec.MaxReplicas = ptr.To(int32(3))
@@ -245,28 +244,14 @@ func TestConfigureReplicasAndAutoscaling_ForwardsUserMetricsForOTelCollector(t *
 	}
 	configureReplicasAndAutoscaling(isvc, service)
 
-	if isvc.Spec.Predictor.AutoScaling == nil {
-		t.Fatal("isvc.Spec.Predictor.AutoScaling must be populated; got nil")
+	if isvc.Spec.Predictor.AutoScaling != nil {
+		t.Fatalf("isvc.Spec.Predictor.AutoScaling must stay unset; got %+v", isvc.Spec.Predictor.AutoScaling)
 	}
-	if len(isvc.Spec.Predictor.AutoScaling.Metrics) != 1 {
-		t.Fatalf("expected 1 forwarded user metric, got %d", len(isvc.Spec.Predictor.AutoScaling.Metrics))
+	if kserveManagesOTelCollector(isvc) {
+		t.Fatal("KServe must not manage the predictor collector")
 	}
-
-	got := isvc.Spec.Predictor.AutoScaling.Metrics[0]
-	if got.PodMetric == nil {
-		t.Fatalf("forwarded metric must be a PodMetric; got %+v", got)
-	}
-	if string(got.PodMetric.Metric.Backend) != "opentelemetry" {
-		t.Errorf("forwarded metric backend must be 'opentelemetry'; got %q", got.PodMetric.Metric.Backend)
-	}
-	if !reflect.DeepEqual(got.PodMetric.Metric.MetricNames, []string{"vllm:num_requests_running"}) {
-		t.Errorf("forwarded metric names mismatch; got %v", got.PodMetric.Metric.MetricNames)
-	}
-
-	for _, m := range isvc.Spec.Predictor.AutoScaling.Metrics {
-		if m.PodMetric != nil && strings.Contains(m.PodMetric.Metric.Query, "aim_activation_requests") {
-			t.Fatalf("controller must not inject the gateway activation metric into the ISVC AutoScaling spec; got: %+v", m)
-		}
+	if got, want := isvc.Annotations[constants.AnnotationOTelSidecarInject], "isvc"+constants.PredictorServiceSuffix; got != want {
+		t.Errorf("sidecar inject annotation: expected %q, got %q", want, got)
 	}
 }
 

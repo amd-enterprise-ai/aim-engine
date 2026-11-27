@@ -1761,8 +1761,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `backend` _string_ | Backend defines the metrics backend to use. If not specified, defaults to "opentelemetry". | opentelemetry | Enum: [opentelemetry] <br />Optional: \{\} |
-| `serverAddress` _string_ | ServerAddress specifies the address of the metrics backend server. If not specified, defaults to "keda-otel-scaler.keda.svc:4317" for OpenTelemetry backend. |  | Optional: \{\} |
-| `metricNames` _string array_ | MetricNames specifies which metrics to collect from pods and send to ServerAddress. Example: ["vllm:num_requests_running"] |  | Optional: \{\} |
+| `serverAddress` _string_ | ServerAddress overrides the gRPC address (host:port) of the KEDA OpenTelemetry scaler that the ScaledObject trigger for this metric queries. If not specified, AIM Engine uses its configured scaler address, by default "keda-otel-scaler.keda.svc:4318". The collector sidecar sends the pod metrics to the scaler's receiver endpoint, which this field does not change. |  | Optional: \{\} |
+| `metricNames` _string array_ | MetricNames lists scraped pod metrics that the collector sidecar forwards to the KEDA OpenTelemetry scaler, in addition to the metric that the query reads. If query is not set, the first name is the query. The collector forwards all scraped metrics only when a metric omits metricNames and its query is not a metric name, optionally with a \{label="value"\} selector and wrapped in sum, avg, min, max or count. Example: ["vllm:num_requests_running"] |  | Optional: \{\} |
 | `query` _string_ | Query specifies the query to run to retrieve metrics from the backend. The query syntax depends on the backend being used. Example: "vllm:num_requests_running" for OpenTelemetry. |  | Optional: \{\} |
 | `operationOverTime` _string_ | OperationOverTime specifies the operation to aggregate metrics over time. Valid values: "last_one", "avg", "max", "min", "rate", "count" Default: "last_one" |  | Optional: \{\} |
 

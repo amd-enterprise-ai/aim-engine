@@ -31,7 +31,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -95,15 +94,9 @@ func configureReplicasAndAutoscaling(isvc *servingv1beta1.InferenceService, serv
 		isvc.Spec.Predictor.MinReplicas = ptr.To(minReplicas)
 		isvc.Spec.Predictor.MaxReplicas = maxReplicas
 
-		// Under autoscalerClass=external, KServe still uses
-		// Spec.Predictor.AutoScaling.Metrics to size the per-ISVC
-		// OpenTelemetryCollector CR that drives in-pod sidecar injection.
-		// The duplication with planScaledObject's triggers is intentional:
-		// KServe reads this for the sidecar; the ScaledObject is the sole
-		// authority on trigger shape.
-		if service.Spec.AutoScaling != nil {
-			isvc.Spec.Predictor.AutoScaling = convertToKServeAutoScaling(service.Spec.AutoScaling)
-		}
+		// Predictor.AutoScaling stays unset: KServe would create its own
+		// OpenTelemetryCollector from those metrics, without the security
+		// context that the controller-owned collector in otelcollector.go sets.
 	} else if service.Spec.Replicas != nil {
 		// Legacy: fixed replica count, disable HPA
 		disableHPA(isvc)
@@ -130,10 +123,11 @@ func disableHPA(isvc *servingv1beta1.InferenceService) {
 
 // injectAutoscalingAnnotations adds the annotations the autoscaled predictor
 // needs from KServe. autoscalerClass=external keeps KServe's KEDA reconciler
-// out of the way so the controller can own the ScaledObject directly. OTel
-// sidecar and Prometheus annotations are also injected for warm-state
-// metrics. Always overwrites so transitions to/from fixed-replica
-// mode update the values rather than leaving stale state.
+// out of the way so the controller can own the ScaledObject directly. The
+// OTel sidecar annotation names the collector that planOTelCollector creates
+// for warm-state metrics; without that collector the OpenTelemetry Operator
+// admits the pod without a sidecar. Always overwrites so transitions to/from
+// fixed-replica mode update the values rather than leaving stale state.
 func injectAutoscalingAnnotations(isvc *servingv1beta1.InferenceService) {
 	if isvc.Annotations == nil {
 		isvc.Annotations = make(map[string]string)
@@ -147,58 +141,4 @@ func injectAutoscalingAnnotations(isvc *servingv1beta1.InferenceService) {
 	if _, exists := isvc.Annotations[constants.AnnotationPrometheusPort]; !exists {
 		isvc.Annotations[constants.AnnotationPrometheusPort] = constants.DefaultPrometheusPort
 	}
-}
-
-// convertToKServeAutoScaling converts AIM autoscaling config to a KServe
-// AutoScalingSpec. Consumed by KServe only to configure the
-// OpenTelemetryCollector for in-pod sidecar injection.
-func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScaling) *servingv1beta1.AutoScalingSpec {
-	if aimAutoScaling == nil {
-		return nil
-	}
-
-	kserveAutoScaling := &servingv1beta1.AutoScalingSpec{}
-
-	if len(aimAutoScaling.Metrics) > 0 {
-		kserveAutoScaling.Metrics = make([]servingv1beta1.MetricsSpec, len(aimAutoScaling.Metrics))
-		for i, metric := range aimAutoScaling.Metrics {
-			kserveMetric := servingv1beta1.MetricsSpec{
-				Type: servingv1beta1.MetricSourceType(metric.Type),
-			}
-
-			if metric.Type == "PodMetric" && metric.PodMetric != nil {
-				kserveMetric.PodMetric = &servingv1beta1.PodMetricSource{}
-
-				if metric.PodMetric.Metric != nil {
-					kserveMetric.PodMetric.Metric = servingv1beta1.PodMetrics{
-						Backend:           servingv1beta1.PodsMetricsBackend(metric.PodMetric.Metric.Backend),
-						ServerAddress:     metric.PodMetric.Metric.ServerAddress,
-						MetricNames:       metric.PodMetric.Metric.MetricNames,
-						Query:             metric.PodMetric.Metric.Query,
-						OperationOverTime: metric.PodMetric.Metric.OperationOverTime,
-					}
-				}
-
-				if metric.PodMetric.Target != nil {
-					kserveMetric.PodMetric.Target = servingv1beta1.MetricTarget{
-						Type: servingv1beta1.MetricTargetType(metric.PodMetric.Target.Type),
-					}
-
-					if metric.PodMetric.Target.Value != "" {
-						kserveMetric.PodMetric.Target.Value = servingv1beta1.NewMetricQuantity(metric.PodMetric.Target.Value)
-					}
-					if metric.PodMetric.Target.AverageValue != "" {
-						kserveMetric.PodMetric.Target.AverageValue = servingv1beta1.NewMetricQuantity(metric.PodMetric.Target.AverageValue)
-					}
-					if metric.PodMetric.Target.AverageUtilization != nil {
-						kserveMetric.PodMetric.Target.AverageUtilization = metric.PodMetric.Target.AverageUtilization
-					}
-				}
-			}
-
-			kserveAutoScaling.Metrics[i] = kserveMetric
-		}
-	}
-
-	return kserveAutoScaling
 }

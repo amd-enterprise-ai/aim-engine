@@ -156,7 +156,7 @@ Set only when `spec.routing.enabled: true`.
 
 ### HPAReady
 
-Set only when `spec.minReplicas` / `spec.maxReplicas` are configured.
+Set only while `spec.minReplicas`, `spec.maxReplicas` or `spec.autoScaling` is configured. AIM Engine removes it when you remove all three.
 
 | Status | Reason | Description |
 |---|---|---|
@@ -202,6 +202,17 @@ Validates that whenever autoscaling is configured (`spec.minReplicas`/`spec.maxR
 | `False` | `AutoscalingRequiresMetrics` | Autoscaling configured but no trigger resolves. Drives `ConfigValid=False` (`InvalidSpec` category) and emits an `InvalidSpec` event. Fix by adding a metric (`spec.autoScaling.metrics`), setting `minReplicas: 0` for scale-from-zero, or using `spec.replicas` for a fixed replica count. |
 
 When valid, this check is silent — no condition or component-health entry is emitted.
+
+### OpenTelemetryCollectorReady
+
+Reports a problem with the `OpenTelemetryCollector` that feeds the pod metrics of `spec.autoScaling.metrics` to KEDA. AIM Engine creates the collector, and the OpenTelemetry Operator injects it as a sidecar into the predictor pods. AIM Engine checks at startup whether the cluster serves the `opentelemetry.io/v1beta1` `OpenTelemetryCollector` API.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `OpenTelemetryCollectorUnavailable` | The service declares `spec.autoScaling.metrics`, but the cluster did not serve the `OpenTelemetryCollector` API when AIM Engine started. Drives `ConfigValid=False` (`InvalidSpec` category), so AIM Engine neither creates nor updates the InferenceService of the service. Fix by installing the OpenTelemetry Operator and restarting AIM Engine. |
+| `False` | `OpenTelemetryCollectorHandoverStuck` | The collector `<isvc-name>-predictor` that AIM Engine needs to create, for example after deleting the one KServe created, has been terminating for more than two minutes, because the OpenTelemetry Operator has not removed its finalizer. Running pods keep their sidecar. New predictor pods get the sidecar of the terminating collector; in a namespace that enforces `restricted`, Pod Security admission refuses them if KServe created that collector. The service is `Degraded`. Check that the OpenTelemetry Operator is running. After AIM Engine has created its collector, restart the predictor pods that were created in the meantime. |
+
+When the collector is in order, the condition is removed.
 
 ## AIMModel / AIMClusterModel conditions (v1alpha2)
 

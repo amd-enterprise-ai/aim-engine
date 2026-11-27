@@ -24,20 +24,28 @@ package aimservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	fakediscovery "k8s.io/client-go/discovery/fake"
+	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 // TestPlanScaledObject_GatedByAutoscalingFields verifies the controller
@@ -324,6 +332,97 @@ func TestPlanScaledObject_InvalidActivationDoesNotPromoteUserMetricToS0(t *testi
 	// zero-to-one identity invariant, so planning must stop entirely.
 	if obj := planScaledObject(context.Background(), service, nil, nil); obj != nil {
 		t.Fatalf("invalid activation query must not produce a user-only ScaledObject, got %T", obj)
+	}
+}
+
+func TestPlanScaledObjectRemoval(t *testing.T) {
+	t.Setenv(constants.EnvAIMGatewayActivationScope, constants.GatewayActivationScopeHTTPRoute)
+
+	service := func(mutate func(*aimv1alpha2.AIMService)) *aimv1alpha2.AIMService {
+		s := NewService("svc").Build()
+		s.UID = otelTestServiceUID
+		mutate(s)
+		return s
+	}
+	fixed := service(func(*aimv1alpha2.AIMService) {})
+	warm := service(func(s *aimv1alpha2.AIMService) {
+		s.Spec.MinReplicas = ptr.To(int32(1))
+		s.Spec.MaxReplicas = ptr.To(int32(3))
+		s.Spec.AutoScaling = &aimv1alpha1.AIMServiceAutoScaling{Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()}}
+	})
+	boundsOnly := service(func(s *aimv1alpha2.AIMService) {
+		s.Spec.MinReplicas = ptr.To(int32(1))
+		s.Spec.MaxReplicas = ptr.To(int32(3))
+	})
+	// The none activation scope cannot build the activation query, so
+	// planScaledObject returns nil although the service asks for scaling.
+	unbuildableScaleToZero := service(func(s *aimv1alpha2.AIMService) {
+		s.Spec.MinReplicas = ptr.To(int32(0))
+		s.Spec.MaxReplicas = ptr.To(int32(3))
+		s.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Enabled: ptr.To(true)}
+	})
+	scaledObject := func(controllerUID types.UID, deleting bool) controllerutils.FetchResult[*metav1.PartialObjectMetadata] {
+		obj := &metav1.PartialObjectMetadata{}
+		obj.SetGroupVersionKind(kedaScaledObjectGVK)
+		obj.Name = "svc-predictor"
+		obj.OwnerReferences = []metav1.OwnerReference{{UID: controllerUID, Controller: ptr.To(true)}}
+		if deleting {
+			obj.DeletionTimestamp = ptr.To(metav1.Now())
+		}
+		return controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Value: obj}
+	}
+	notFound := apierrors.NewNotFound(schema.GroupResource{Group: "keda.sh", Resource: "scaledobjects"}, "svc-predictor")
+
+	tests := []struct {
+		name       string
+		service    *aimv1alpha2.AIMService
+		observed   controllerutils.FetchResult[*metav1.PartialObjectMetadata]
+		wantDelete bool
+	}{
+		{name: "autoscaling removed", service: fixed, observed: scaledObject(otelTestServiceUID, false), wantDelete: true},
+		{name: "bounds without a trigger", service: boundsOnly, observed: scaledObject(otelTestServiceUID, false), wantDelete: true},
+		{name: "still autoscaled", service: warm, observed: scaledObject(otelTestServiceUID, false)},
+		{name: "requested but not buildable keeps the last version", service: unbuildableScaleToZero, observed: scaledObject(otelTestServiceUID, false)},
+		{name: "controlled by another owner", service: fixed, observed: scaledObject("other-uid", false)},
+		{name: "already terminating", service: fixed, observed: scaledObject(otelTestServiceUID, true)},
+		{name: "not found", service: fixed, observed: controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Error: notFound}},
+		{name: "fetch error", service: fixed, observed: controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Error: errors.New("boom")}},
+		{name: "API not served", service: fixed, observed: controllerutils.FetchResult[*metav1.PartialObjectMetadata]{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.service == unbuildableScaleToZero {
+				t.Setenv(constants.EnvAIMGatewayActivationScope, constants.GatewayActivationScopeNone)
+				if obj := planScaledObject(context.Background(), tt.service, nil, nil); obj != nil {
+					t.Fatalf("precondition: planScaledObject built %v", obj)
+				}
+			}
+			var plan controllerutils.PlanResult
+			planScaledObjectRemoval(&plan, tt.service, tt.observed)
+			deleted := plan.GetToDelete()
+			if got := len(deleted) == 1; got != tt.wantDelete {
+				t.Fatalf("deleted = %v, want delete %v", deleted, tt.wantDelete)
+			}
+			if tt.wantDelete && deleted[0].GetObjectKind().GroupVersionKind() != kedaScaledObjectGVK {
+				t.Errorf("deleted kind = %v", deleted[0].GetObjectKind().GroupVersionKind())
+			}
+		})
+	}
+}
+
+func TestDetectScaledObjectAPI(t *testing.T) {
+	served := &fakediscovery.FakeDiscovery{Fake: &clienttesting.Fake{}}
+	served.Resources = []*metav1.APIResourceList{{
+		GroupVersion: "keda.sh/v1alpha1",
+		APIResources: []metav1.APIResource{{Name: "scaledobjects", Kind: "ScaledObject"}},
+	}}
+	if ok, err := detectScaledObjectAPI(served); err != nil || !ok {
+		t.Errorf("served API: got (%v, %v)", ok, err)
+	}
+
+	missing := &fakediscovery.FakeDiscovery{Fake: &clienttesting.Fake{}}
+	if ok, err := detectScaledObjectAPI(missing); err != nil || ok {
+		t.Errorf("KEDA not installed: got (%v, %v)", ok, err)
 	}
 }
 

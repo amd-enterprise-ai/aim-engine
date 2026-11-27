@@ -93,6 +93,8 @@ env_block = (
     f"{indent}env:\n"
     f"{child_indent}- name: AIM_KEDA_OTEL_SCALER_ADDRESS\n"
     f"{child_indent}  value: {{{{ .Values.scaleFromZero.scalerAddress | quote }}}}\n"
+    f"{child_indent}- name: AIM_KEDA_OTEL_RECEIVER_ENDPOINT\n"
+    f"{child_indent}  value: {{{{ .Values.scaleFromZero.receiverEndpoint | quote }}}}\n"
     f"{child_indent}- name: AIM_COOLDOWN_SECONDS_PER_GI_MEMORY\n"
     f"{child_indent}  value: {{{{ .Values.scaleFromZero.cooldownSecondsPerGiMemory | quote }}}}\n"
     f"{child_indent}- name: AIM_GATEWAY_ACTIVATION_SCOPE\n"

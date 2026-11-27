@@ -159,6 +159,64 @@ spec:
       - name: AIM_DEBUG_SIMULATE_HF_DURATION
         value: "1"
 ---
+# An autoscaled service on v0.2.7's profile pipeline, for which KServe creates
+# the OpenTelemetryCollector. The upgrade hands the collector to AIM Engine and
+# the rollback hands it back to KServe, both without restarting the predictor
+# pod. Its own model source keeps its profile cache apart from the artifacts
+# that the moved services adopt. aim-dummy serves the vLLM metrics from 0.2.1;
+# without them the HPA cannot read the trigger and v0.2.7 marks the service
+# Failed.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: upgrade-autoscaled-profile
+spec:
+  aimId: example/upgrade-autoscaled-model
+  modelId: example/upgrade-autoscaled-model
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  primary: false
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+  modelSources:
+    - modelId: example/upgrade-autoscaled-model
+      sourceUri: hf://example/upgrade-autoscaled-model
+      size: 1Mi
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: upgrade-autoscaled-service
+spec:
+  profile:
+    name: upgrade-autoscaled-profile
+  minReplicas: 1
+  maxReplicas: 2
+  autoScaling:
+    metrics:
+      - type: PodMetric
+        podmetric:
+          metric:
+            backend: opentelemetry
+            metricNames:
+              - vllm:num_requests_running
+            query: vllm:num_requests_running
+          target:
+            type: Value
+            value: "1"
+  caching:
+    mode: Shared
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"
+---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:

@@ -34,7 +34,9 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -53,6 +55,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	profileservice "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimservice"
 )
 
@@ -79,6 +82,17 @@ type AIMServiceReconciler struct {
 	Scheme    *runtime.Scheme
 	Clientset kubernetes.Interface
 
+	// OpenTelemetryCollectorServed reports whether the cluster serves the
+	// OpenTelemetryCollector API. When true the controller creates and watches
+	// the metrics collector sidecar config of autoscaled predictors; the watch
+	// cannot start against a missing API.
+	OpenTelemetryCollectorServed bool
+
+	// ScaledObjectServed reports whether the cluster serves the KEDA
+	// ScaledObject API. When true the controller reads a predictor's
+	// ScaledObject so it can remove it once the service stops autoscaling.
+	ScaledObjectServed bool
+
 	profileReconciler controllerutils.DomainReconciler[*aimv1alpha2.AIMService, *aimv1alpha1.AIMServiceStatus, profileservice.ServiceFetchResult, profileservice.ServiceObservation]
 	profilePipeline   *controllerutils.Pipeline[*aimv1alpha2.AIMService, *aimv1alpha1.AIMServiceStatus, profileservice.ServiceFetchResult, profileservice.ServiceObservation]
 }
@@ -99,6 +113,7 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=keda.sh,resources=scaledobjects,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=opentelemetry.io,resources=opentelemetrycollectors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
@@ -209,9 +224,11 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	recorder := mgr.GetEventRecorderFor("aim-" + serviceName + "-controller")
 
 	r.profileReconciler = &profileservice.ProfileServiceReconciler{
-		Scheme:    r.Scheme,
-		Recorder:  recorder,
-		APIReader: mgr.GetAPIReader(),
+		Scheme:                       r.Scheme,
+		Recorder:                     recorder,
+		APIReader:                    mgr.GetAPIReader(),
+		OpenTelemetryCollectorServed: r.OpenTelemetryCollectorServed,
+		ScaledObjectServed:           r.ScaledObjectServed,
 	}
 	r.profilePipeline = &controllerutils.Pipeline[
 		*aimv1alpha2.AIMService,
@@ -245,6 +262,16 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&batchv1.Job{})
+	if r.OpenTelemetryCollectorServed {
+		// A KServe-created collector is controlled by the InferenceService, so
+		// Owns does not see it; the handover waits on its deletion.
+		b = b.Owns(aimservice.NewOTelCollectorMetadata(), builder.OnlyMetadata).
+			Watches(
+				aimservice.NewOTelCollectorMetadata(),
+				handler.EnqueueRequestsFromMapFunc(r.findServicesForInferenceServiceChild),
+				builder.OnlyMetadata,
+			)
+	}
 
 	b, err := profileservice.RegisterWatches(ctx, mgr, b, c)
 	if err != nil {
@@ -308,16 +335,33 @@ func (r *AIMServiceReconciler) findServicesForPredictorObject(ctx context.Contex
 	if !hasLabel {
 		return nil
 	}
+	return r.findServicesForInferenceService(ctx, obj.GetNamespace(), isvcName)
+}
 
+// findServicesForInferenceServiceChild maps an object that a KServe
+// InferenceService controls, such as the collector KServe creates, to the
+// AIMService that owns the InferenceService.
+func (r *AIMServiceReconciler) findServicesForInferenceServiceChild(ctx context.Context, obj client.Object) []reconcile.Request {
+	ref := metav1.GetControllerOfNoCopy(obj)
+	if ref == nil || ref.Kind != "InferenceService" ||
+		schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind).Group != servingv1beta1.SchemeGroupVersion.Group {
+		return nil
+	}
+	return r.findServicesForInferenceService(ctx, obj.GetNamespace(), ref.Name)
+}
+
+// findServicesForInferenceService maps an InferenceService to the AIMService
+// that owns it.
+func (r *AIMServiceReconciler) findServicesForInferenceService(ctx context.Context, namespace, isvcName string) []reconcile.Request {
 	isvc := &servingv1beta1.InferenceService{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: isvcName}, isvc); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: isvcName}, isvc); err != nil {
 		return nil
 	}
 
 	for _, ownerRef := range isvc.OwnerReferences {
 		if ownerRef.Kind == "AIMService" {
 			return []reconcile.Request{{
-				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: obj.GetNamespace()},
+				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: namespace},
 			}}
 		}
 	}

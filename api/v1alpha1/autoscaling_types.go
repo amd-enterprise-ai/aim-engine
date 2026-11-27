@@ -88,12 +88,20 @@ type AIMServicePodMetric struct {
 	// +optional
 	Backend string `json:"backend,omitempty"`
 
-	// ServerAddress specifies the address of the metrics backend server.
-	// If not specified, defaults to "keda-otel-scaler.keda.svc:4317" for OpenTelemetry backend.
+	// ServerAddress overrides the gRPC address (host:port) of the KEDA OpenTelemetry
+	// scaler that the ScaledObject trigger for this metric queries.
+	// If not specified, AIM Engine uses its configured scaler address, by default
+	// "keda-otel-scaler.keda.svc:4318". The collector sidecar sends the pod metrics
+	// to the scaler's receiver endpoint, which this field does not change.
 	// +optional
 	ServerAddress string `json:"serverAddress,omitempty"`
 
-	// MetricNames specifies which metrics to collect from pods and send to ServerAddress.
+	// MetricNames lists scraped pod metrics that the collector sidecar forwards
+	// to the KEDA OpenTelemetry scaler, in addition to the metric that the query
+	// reads. If query is not set, the first name is the query. The collector
+	// forwards all scraped metrics only when a metric omits metricNames and its
+	// query is not a metric name, optionally with a {label="value"} selector and
+	// wrapped in sum, avg, min, max or count.
 	// Example: ["vllm:num_requests_running"]
 	// +optional
 	MetricNames []string `json:"metricNames,omitempty"`
