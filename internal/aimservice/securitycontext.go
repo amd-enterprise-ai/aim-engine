@@ -24,6 +24,7 @@ package aimservice
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -31,7 +32,9 @@ import (
 
 // InferenceSecurityContexts returns the Pod and container security contexts
 // of a service's inference pods. Each one is the service's own value when it
-// sets one, even an empty one, and otherwise the merged runtime config's.
+// sets one, even an empty one, and otherwise the merged runtime config's. An
+// empty result is returned as nil: server-side apply turns an empty object
+// into null, which KServe's CRD schemas reject.
 func InferenceSecurityContexts(
 	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
@@ -44,6 +47,12 @@ func InferenceSecurityContexts(
 		if container == nil {
 			container = runtimeConfig.SecurityContext
 		}
+	}
+	if pod != nil && equality.Semantic.DeepEqual(*pod, corev1.PodSecurityContext{}) {
+		pod = nil
+	}
+	if container != nil && equality.Semantic.DeepEqual(*container, corev1.SecurityContext{}) {
+		container = nil
 	}
 	return pod.DeepCopy(), container.DeepCopy()
 }

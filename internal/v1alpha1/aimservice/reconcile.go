@@ -74,7 +74,11 @@ func inferenceServiceComponentHealth(
 		return health
 	}
 
-	if inferenceServiceReady(inferenceService) {
+	// KServe v0.20 reports the InferenceService Ready while old pods keep the
+	// predictor Deployment available, so a rollout is checked first.
+	rollingOut := predictorDeployment.Value != nil &&
+		predictorDeployment.Value.Status.UpdatedReplicas < predictorDeployment.Value.Status.Replicas
+	if inferenceServiceReady(inferenceService) && !rollingOut {
 		health.State = constants.AIMStatusReady
 		health.Reason = aimv1alpha1.AIMServiceReasonRuntimeReady
 		health.Message = "InferenceService is ready"

@@ -1747,8 +1747,9 @@ func TestBuildInferenceServiceFromProfile_SecurityContexts(t *testing.T) {
 
 	service.Spec.SecurityContext = serviceContainer
 	predictor = buildInferenceServiceFromProfile(service, obs).Spec.Predictor
-	if !reflect.DeepEqual(predictor.Model.SecurityContext, serviceContainer) {
-		t.Fatalf("service container security context = %v, want %v", predictor.Model.SecurityContext, serviceContainer)
+	if predictor.Model.SecurityContext != nil {
+		t.Fatalf("empty service container security context = %v, want it omitted instead of inheriting the runtime config's",
+			predictor.Model.SecurityContext)
 	}
 }
 
@@ -2559,6 +2560,7 @@ func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
 		pods            []corev1.Pod
 		deployment      controllerutils.FetchResult[*appsv1.Deployment]
 		refusal         string
+		isvcReady       bool
 		wantState       constants.AIMStatus
 		wantReason      string
 		wantServing     bool
@@ -2586,6 +2588,23 @@ func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
 			wantServing: true,
 			wantMessage: "Predictor rollout of Deployment svc-predictor is stalled: pod svc-predictor-new is CrashLoopBackOff: " +
 				"back-off 40s restarting failed container=kserve-container; 1 pod(s) are ready and serving",
+		},
+		{
+			name:        "new pod crash-loops while KServe reports the InferenceService ready",
+			pods:        []corev1.Pod{readyPod, crashLoopingPod},
+			deployment:  deployment(2, 1),
+			isvcReady:   true,
+			wantState:   constants.AIMStatusDegraded,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutStalled,
+			wantServing: true,
+		},
+		{
+			name:       "KServe ready with the rollout finished",
+			pods:       []corev1.Pod{readyPod},
+			deployment: deployment(1, 1),
+			isvcReady:  true,
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonRuntimeReady,
 		},
 		{
 			name:        "old revision serves while new pod is unschedulable",
@@ -2657,6 +2676,10 @@ func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			isvc := inferenceService
+			if tt.isvcReady {
+				isvc = inferenceService.DeepCopy()
+				isvc.Status.Conditions = duckv1.Conditions{{Type: "Ready", Status: corev1.ConditionTrue}}
+			}
 			if tt.refusal != "" {
 				isvc = inferenceService.DeepCopy()
 				isvc.Status.Conditions = append(isvc.Status.Conditions, duckv1.Conditions{{

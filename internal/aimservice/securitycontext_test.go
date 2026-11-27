@@ -88,11 +88,9 @@ func TestInferenceSecurityContexts(t *testing.T) {
 			wantContainer: configContainer,
 		},
 		{
-			name:          "empty service objects replace runtime config's",
+			name:          "empty service objects replace runtime config's and are omitted",
 			service:       withSecurityContexts(&corev1.PodSecurityContext{}, &corev1.SecurityContext{}),
 			runtimeConfig: runtimeConfig,
-			wantPod:       &corev1.PodSecurityContext{},
-			wantContainer: &corev1.SecurityContext{},
 		},
 	}
 	for _, tt := range tests {
