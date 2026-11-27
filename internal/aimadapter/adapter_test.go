@@ -31,7 +31,9 @@ import (
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -156,6 +158,14 @@ func serviceWithAdapters(names ...string) *aimv1alpha2.AIMService {
 	}
 }
 
+// dynamicService builds a dynamic-mode service with no adapters declared, which
+// still mounts the adapter disk.
+func dynamicService() *aimv1alpha2.AIMService {
+	svc := serviceWithAdapters()
+	svc.Spec.AdapterMode = aimv1alpha1.AdapterModeDynamic
+	return svc
+}
+
 // statusAdapter builds a prior Downloaded per-adapter status entry (as it would
 // appear on service.Status.Adapters from a previous reconcile).
 func statusAdapter(name string) aimv1alpha1.AIMServiceAdapterStatus {
@@ -178,6 +188,7 @@ func depsWith(parent *aimv1alpha1.AIMArtifact, artifacts map[string]*aimv1alpha1
 	if parent != nil {
 		pf := controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]{Value: parent}
 		deps.ParentArtifact = &pf
+		deps.PublishedParentUID = parent.UID
 		deps.AdapterDiskPVC = parent.Status.AdapterPersistentVolumeClaim
 		if deps.AdapterDiskPVC != "" {
 			deps.AdapterDiskPVCUID = testAdapterPVCUID
@@ -584,6 +595,131 @@ func TestComposeNoParentDisk(t *testing.T) {
 	}
 }
 
+// TestPlanParentAdapterDisk verifies that an adapter-enabled service adds only
+// spec.adapterDisk to a valid diskless parent, pinned to the UID the cache
+// published, and leaves every other parent alone.
+func TestPlanParentAdapterDisk(t *testing.T) {
+	diskless := func() *aimv1alpha1.AIMArtifact {
+		parent := modelParent("")
+		parent.UID = "base-uid"
+		return parent
+	}
+	tests := []struct {
+		name    string
+		service *aimv1alpha2.AIMService
+		parent  *aimv1alpha1.AIMArtifact
+		mutate  func(*Dependencies)
+		want    bool
+	}{
+		{name: "diskless parent of a dynamic service", service: dynamicService(), parent: diskless(), want: true},
+		{name: "diskless parent of a service with adapters", service: serviceWithAdapters("lora-a"), parent: diskless(), want: true},
+		{name: "service without adapters", service: serviceWithAdapters(), parent: diskless()},
+		{name: "parent not resolved", service: dynamicService()},
+		{
+			name:    "parent fetch failed",
+			service: dynamicService(),
+			parent:  diskless(),
+			mutate: func(deps *Dependencies) {
+				deps.ParentArtifact = &controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]{Error: fmt.Errorf("boom")}
+			},
+		},
+		{
+			name:    "parent recreated under the published name",
+			service: dynamicService(),
+			parent:  diskless(),
+			mutate:  func(deps *Dependencies) { deps.PublishedParentUID = "previous-base-uid" },
+		},
+		{
+			name:    "parent already has a disk",
+			service: dynamicService(),
+			parent: func() *aimv1alpha1.AIMArtifact {
+				parent := diskless()
+				parent.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+				return parent
+			}(),
+		},
+		{
+			name:    "parent terminating",
+			service: dynamicService(),
+			parent: func() *aimv1alpha1.AIMArtifact {
+				parent := diskless()
+				parent.DeletionTimestamp = &metav1.Time{}
+				return parent
+			}(),
+		},
+		{
+			name:    "parent is an adapter artifact",
+			service: dynamicService(),
+			parent: func() *aimv1alpha1.AIMArtifact {
+				parent := diskless()
+				parent.Spec.Type = aimv1alpha1.ArtifactTypeAdapter
+				return parent
+			}(),
+		},
+		{
+			name:    "multi-source profile",
+			service: dynamicService(),
+			parent:  diskless(),
+			mutate: func(deps *Dependencies) {
+				deps.ParentResolutionErr = fmt.Errorf("adapters require a single base model")
+			},
+		},
+		{
+			name:    "profile without the adapters feature",
+			service: dynamicService(),
+			parent:  diskless(),
+			mutate:  func(deps *Dependencies) { deps.ProfileSupportsAdapters = ptr.To(false) },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := depsWith(tt.parent, nil)
+			if tt.mutate != nil {
+				tt.mutate(&deps)
+			}
+			var plan controllerutils.PlanResult
+			PlanParentAdapterDisk(&plan, tt.service, deps, Compose(tt.service, deps))
+
+			applies := plan.GetToApplyFields()
+			if !tt.want {
+				if len(applies) != 0 {
+					t.Fatalf("planned %d field applies, want none", len(applies))
+				}
+				return
+			}
+			if len(applies) != 1 {
+				t.Fatalf("planned %d field applies, want 1", len(applies))
+			}
+			apply := applies[0]
+			if apply.FieldManagerSuffix != constants.FieldManagerSuffixAdapterDisk {
+				t.Errorf("field manager suffix = %q, want %q", apply.FieldManagerSuffix, constants.FieldManagerSuffixAdapterDisk)
+			}
+			patch, ok := apply.Object.(*unstructured.Unstructured)
+			if !ok {
+				t.Fatalf("patch is %T, want *unstructured.Unstructured", apply.Object)
+			}
+			if patch.GetName() != "base" || patch.GetNamespace() != "default" || patch.GetUID() != "base-uid" {
+				t.Errorf("patch identity = %s/%s uid %q, want default/base uid base-uid",
+					patch.GetNamespace(), patch.GetName(), patch.GetUID())
+			}
+			wantContent := map[string]any{
+				"apiVersion": aimv1alpha1.GroupVersion.String(),
+				"kind":       "AIMArtifact",
+				"metadata":   map[string]any{"name": "base", "namespace": "default", "uid": "base-uid"},
+				"spec":       map[string]any{"adapterDisk": map[string]any{}},
+			}
+			if !equality.Semantic.DeepEqual(patch.Object, wantContent) {
+				t.Errorf("patch = %#v, want only the identity and spec.adapterDisk {}", patch.Object)
+			}
+			if apply.Event == nil || apply.Event.Target != tt.parent ||
+				apply.Event.Reason != constants.ReasonAdapterDiskRequested ||
+				!strings.Contains(apply.Event.Message, tt.service.Name) {
+				t.Errorf("event = %#v, want %s on the parent naming the service", apply.Event, constants.ReasonAdapterDiskRequested)
+			}
+		})
+	}
+}
+
 // Mountable (Ready) is gated on the subtree, NOT on downloads: a fully staged
 // adapter with no subtree-sync Job is still not mountable.
 func TestNotMountableWithoutSubtree(t *testing.T) {
@@ -799,15 +935,40 @@ func TestHealthStates(t *testing.T) {
 		}
 	})
 	t.Run("no disk is progressing", func(t *testing.T) {
-		h := Health(State{}, 1)
-		if h.State != constants.AIMStatusProgressing || h.Reason != ReasonParentLacksDisk {
-			t.Errorf("got state=%q reason=%q, want Progressing/%s", h.State, h.Reason, ReasonParentLacksDisk)
+		for _, tc := range []struct {
+			st          State
+			wantMessage string
+		}{
+			{st: State{}, wantMessage: "Waiting for the base model AIMArtifact to resolve"},
+			{st: State{ParentName: "base"}, wantMessage: "Waiting for base model AIMArtifact base to get spec.adapterDisk"},
+			{
+				st:          State{ParentName: "base", ParentRequestsAdapterDisk: true},
+				wantMessage: "Waiting for base model AIMArtifact base to create its adapter disk PVC",
+			},
+			{
+				st: State{ParentName: "base", ParentRequestsAdapterDisk: true, ParentBlocker: "exceeded quota: storage"},
+				wantMessage: "Waiting for base model AIMArtifact base to create its adapter disk PVC; " +
+					"AIMArtifact base: exceeded quota: storage",
+			},
+		} {
+			h := Health(tc.st, 1)
+			if h.State != constants.AIMStatusProgressing || h.Reason != ReasonParentLacksDisk || h.Message != tc.wantMessage {
+				t.Errorf("got state=%q reason=%q message=%q, want Progressing/%s %q",
+					h.State, h.Reason, h.Message, ReasonParentLacksDisk, tc.wantMessage)
+			}
 		}
 	})
 	t.Run("subtree not ready is progressing", func(t *testing.T) {
 		h := Health(State{AdapterDiskPVC: "pvc", AdapterDiskPVCUID: "uid"}, 1)
 		if h.State != constants.AIMStatusProgressing || h.Reason != ReasonSubtreeProvisioning {
 			t.Errorf("got state=%q reason=%q, want Progressing/%s", h.State, h.Reason, ReasonSubtreeProvisioning)
+		}
+	})
+	t.Run("pending adapter disk PVC is named", func(t *testing.T) {
+		h := Health(State{AdapterDiskPVC: "pvc", AdapterDiskPVCUID: "uid", AdapterDiskPVCPending: true}, 1)
+		if h.Reason != ReasonSubtreeProvisioning || !strings.Contains(h.Message, "adapter disk PVC pvc to bind") ||
+			!strings.Contains(h.Message, "ReadWriteMany") {
+			t.Errorf("got reason=%q message=%q, want %s naming the pending PVC", h.Reason, h.Message, ReasonSubtreeProvisioning)
 		}
 	})
 	t.Run("ready while staging once subtree exists", func(t *testing.T) {
@@ -1075,7 +1236,10 @@ func TestFetchSelectsJobsForFreshStorageBinding(t *testing.T) {
 		WithObjects(parent, adapter, newPVC, oldStage, newStage, oldSync, newSync).
 		Build()
 
-	deps := Fetch(context.Background(), c, svc, parent.Name)
+	deps := Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name, UID: "published-uid"})
+	if deps.PublishedParentUID != "published-uid" {
+		t.Errorf("PublishedParentUID = %q, want published-uid", deps.PublishedParentUID)
+	}
 	stage := deps.StagingJobs[adapter.Name]
 	if !stage.OK() || stage.Value == nil || stage.Value.Name != newStage.Name {
 		t.Fatalf("Fetch selected staging Job %+v, want %s", stage.Value, newStage.Name)
@@ -1083,6 +1247,60 @@ func TestFetchSelectsJobsForFreshStorageBinding(t *testing.T) {
 	if !deps.SubtreeSyncJob.OK() || deps.SubtreeSyncJob.Value == nil ||
 		deps.SubtreeSyncJob.Value.Name != newSync.Name {
 		t.Fatalf("Fetch selected subtree-sync Job %+v, want %s", deps.SubtreeSyncJob.Value, newSync.Name)
+	}
+}
+
+// TestFetchAndComposeReportAdapterDiskBlockers verifies that the state carries what
+// keeps the adapter disk from becoming usable: the parent's DependenciesReachable
+// failure and an unbound adapter disk PVC.
+func TestFetchAndComposeReportAdapterDiskBlockers(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register core API: %v", err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register batch API: %v", err)
+	}
+	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register AIM API: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name        string
+		reachable   metav1.ConditionStatus
+		phase       corev1.PersistentVolumeClaimPhase
+		wantBlocker string
+		wantPending bool
+	}{
+		{name: "healthy parent with bound disk", reachable: metav1.ConditionTrue, phase: corev1.ClaimBound},
+		{
+			name: "parent cannot create its PVC", reachable: metav1.ConditionFalse, phase: corev1.ClaimBound,
+			wantBlocker: "exceeded quota",
+		},
+		{name: "unbound adapter disk", reachable: metav1.ConditionTrue, phase: corev1.ClaimPending, wantPending: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := dynamicService()
+			parent := modelParent("adapters-pvc")
+			parent.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+			parent.Status.Conditions = []metav1.Condition{{
+				Type:    controllerutils.ConditionTypeDependenciesReachable,
+				Status:  tt.reachable,
+				Reason:  "Test",
+				Message: tt.wantBlocker,
+			}}
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "adapters-pvc", Namespace: "default", UID: types.UID(testAdapterPVCUID)},
+				Status:     corev1.PersistentVolumeClaimStatus{Phase: tt.phase},
+			}
+			c := fakeclient.NewClientBuilder().WithScheme(scheme).WithObjects(parent, pvc).Build()
+
+			st := Compose(svc, Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name}))
+			if st.ParentBlocker != tt.wantBlocker || st.AdapterDiskPVCPending != tt.wantPending {
+				t.Errorf("ParentBlocker=%q AdapterDiskPVCPending=%v, want %q and %v",
+					st.ParentBlocker, st.AdapterDiskPVCPending, tt.wantBlocker, tt.wantPending)
+			}
+		})
 	}
 }
 

@@ -140,7 +140,8 @@ type AIMAdapterDisk struct {
 	Size resource.Quantity `json:"size,omitempty"`
 
 	// StorageClassName specifies the storage class for the adapter disk.
-	// When empty, the cluster default storage class is used.
+	// When empty, the runtime config's storage.adapterDiskStorageClassName is
+	// used, then storage.defaultStorageClassName, then the cluster default.
 	// The access mode is fixed at ReadWriteMany by the controller.
 	// +optional
 	StorageClassName string `json:"storageClassName,omitempty"`

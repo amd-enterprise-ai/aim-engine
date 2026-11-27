@@ -919,10 +919,7 @@ func (r *ArtifactReconciler) DecorateStatus(
 		status.PersistentVolumeClaim = obs.cachePvc.Value.Name
 	}
 
-	// Record the adapter disk PVC name for model artifacts that declare an adapterDisk.
-	if mc.Spec.AdapterDisk != nil && obs.adapterPvc != nil && obs.adapterPvc.OK() && obs.adapterPvc.Value != nil {
-		status.AdapterPersistentVolumeClaim = obs.adapterPvc.Value.Name
-	}
+	status.AdapterPersistentVolumeClaim = observedAdapterPvcName(mc, obs.adapterPvc, status.AdapterPersistentVolumeClaim)
 
 	// Check if the pod has failed (before the job is marked as failed by k8s)
 	// This handles the window between pod failure and job failure status

@@ -44,7 +44,10 @@ import (
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -97,9 +100,14 @@ type Dependencies struct {
 	AdapterRuntimeConfigs map[string]controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	StagingJobs           map[string]controllerutils.FetchResult[*batchv1.Job]
 	ParentArtifact        *controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]
+	// PublishedParentUID is the UID the cache published for ParentArtifact. A
+	// fetched parent with another UID was recreated under the same name and is
+	// not the artifact the cache resolved.
+	PublishedParentUID    types.UID
 	SubtreeSyncJob        controllerutils.FetchResult[*batchv1.Job]
 	AdapterDiskPVC        string
 	AdapterDiskPVCUID     string
+	AdapterDiskPVCPending bool
 
 	// ProfileSupportsAdapters reports whether the resolved profile advertises the
 	// LoRA feature. nil means unknown / not gated; Compose only rejects when
@@ -127,6 +135,15 @@ type State struct {
 	AdapterDiskPVC        string
 	AdapterDiskPVCUID     string
 	StorageBindingChanged bool
+	// ParentName is the resolved base model artifact, empty until it resolves.
+	ParentName string
+	// ParentRequestsAdapterDisk reports whether the parent sets spec.adapterDisk.
+	ParentRequestsAdapterDisk bool
+	// ParentBlocker is the parent's DependenciesReachable=False message, such as a
+	// quota rejecting its adapter disk PVC; empty otherwise.
+	ParentBlocker string
+	// AdapterDiskPVCPending reports whether the adapter disk PVC is unbound.
+	AdapterDiskPVCPending bool
 	// MaxRank is the AIM_ADAPTER_MAX_RANK value resolved for the serving
 	// workload. Dynamic mode uses service/runtime configuration; static mode
 	// infers the value from the declared adapter artifacts.
@@ -211,17 +228,24 @@ func IsActive(service *aimv1alpha2.AIMService) bool {
 	return service.Spec.AdaptersEnabled() || len(service.Status.Adapters) > 0
 }
 
+// ParentRef identifies the base model artifact a cache published in its
+// status.artifacts.
+type ParentRef struct {
+	Name string
+	UID  types.UID
+}
+
 // Fetch loads the resolved parent model artifact, then each declared adapter and
-// the Jobs belonging to the current storage binding. parentName is resolved by
-// the caller from the service's profile cache and may be empty when the base
-// model is not yet resolvable. A transient resolution gap uses the PVC persisted on service
-// status so the controller continues observing the previous binding; a newly
-// resolved PVC selects a fresh generation of staging and subtree-sync Jobs.
+// the Jobs belonging to the current storage binding. parent is resolved by the
+// caller from the service's profile cache and is empty when the base model is
+// not yet resolvable. A transient resolution gap uses the PVC persisted on
+// service status so the controller continues observing the previous binding; a
+// newly resolved PVC selects a fresh generation of staging and subtree-sync Jobs.
 func Fetch(
 	ctx context.Context,
 	c client.Client,
 	service *aimv1alpha2.AIMService,
-	parentName string,
+	parent ParentRef,
 ) Dependencies {
 	deps := Dependencies{
 		AdapterArtifacts:      make(map[string]controllerutils.FetchResult[*aimv1alpha1.AIMArtifact], len(service.Spec.Adapters)),
@@ -231,11 +255,12 @@ func Fetch(
 
 	adapterDiskPVC := service.Status.AdapterDiskPersistentVolumeClaim
 	adapterDiskPVCUID := service.Status.AdapterDiskPersistentVolumeClaimUID
-	if parentName != "" {
+	if parent.Name != "" {
 		pf := controllerutils.Fetch(ctx, c,
-			client.ObjectKey{Namespace: service.Namespace, Name: parentName},
+			client.ObjectKey{Namespace: service.Namespace, Name: parent.Name},
 			&aimv1alpha1.AIMArtifact{})
 		deps.ParentArtifact = &pf
+		deps.PublishedParentUID = parent.UID
 		if pf.OK() && pf.Value != nil && pf.Value.Status.AdapterPersistentVolumeClaim != "" {
 			adapterDiskPVC = pf.Value.Status.AdapterPersistentVolumeClaim
 			if adapterDiskPVC != service.Status.AdapterDiskPersistentVolumeClaim {
@@ -250,6 +275,7 @@ func Fetch(
 			&corev1.PersistentVolumeClaim{})
 		if pvcFetch.OK() && pvcFetch.Value != nil {
 			adapterDiskPVCUID = string(pvcFetch.Value.UID)
+			deps.AdapterDiskPVCPending = pvcFetch.Value.Status.Phase == corev1.ClaimPending
 		}
 	}
 	deps.AdapterDiskPVC = adapterDiskPVC
@@ -309,6 +335,12 @@ func ComposeWithRuntimeConfig(
 	var parent *aimv1alpha1.AIMArtifact
 	if deps.ParentArtifact != nil && deps.ParentArtifact.OK() && deps.ParentArtifact.Value != nil {
 		parent = deps.ParentArtifact.Value
+		st.ParentName = parent.Name
+		st.ParentRequestsAdapterDisk = parent.Spec.AdapterDisk != nil
+		if cond := meta.FindStatusCondition(parent.Status.Conditions, controllerutils.ConditionTypeDependenciesReachable); cond != nil &&
+			cond.Status == metav1.ConditionFalse {
+			st.ParentBlocker = cond.Message
+		}
 		if parent.Spec.Type == aimv1alpha1.ArtifactTypeAdapter {
 			st.ConfigErr = fmt.Errorf("resolved parent artifact %s is not a model artifact", parent.Name)
 		}
@@ -325,6 +357,7 @@ func ComposeWithRuntimeConfig(
 		st.AdapterDiskPVCUID == "" {
 		st.AdapterDiskPVCUID = service.Status.AdapterDiskPersistentVolumeClaimUID
 	}
+	st.AdapterDiskPVCPending = deps.AdapterDiskPVCPending
 	st.StorageBindingChanged = st.AdapterDiskPVC != service.Status.AdapterDiskPersistentVolumeClaim ||
 		st.AdapterDiskPVCUID != service.Status.AdapterDiskPersistentVolumeClaimUID
 
@@ -711,7 +744,7 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 	if st.AdapterDiskPVC == "" || st.AdapterDiskPVCUID == "" {
 		health.State = constants.AIMStatusProgressing
 		health.Reason = ReasonParentLacksDisk
-		health.Message = "Base model artifact has no resolvable adapter disk yet"
+		health.Message = parentLacksDiskMessage(st)
 		return health
 	}
 
@@ -719,6 +752,10 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 		health.State = constants.AIMStatusProgressing
 		health.Reason = ReasonSubtreeProvisioning
 		health.Message = "Provisioning the service adapter subtree"
+		if st.AdapterDiskPVCPending {
+			health.Message = fmt.Sprintf("Waiting for adapter disk PVC %s to bind; if it stays Pending, "+
+				"check that its storage class supports ReadWriteMany (see the PVC's events)", st.AdapterDiskPVC)
+		}
 		return health
 	}
 
@@ -737,6 +774,22 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 			countDownloaded(st.Adapters), numAdapters)
 	}
 	return health
+}
+
+func parentLacksDiskMessage(st State) string {
+	var msg string
+	switch {
+	case st.ParentName == "":
+		return "Waiting for the base model AIMArtifact to resolve"
+	case !st.ParentRequestsAdapterDisk:
+		msg = fmt.Sprintf("Waiting for base model AIMArtifact %s to get spec.adapterDisk", st.ParentName)
+	default:
+		msg = fmt.Sprintf("Waiting for base model AIMArtifact %s to create its adapter disk PVC", st.ParentName)
+	}
+	if st.ParentBlocker != "" {
+		msg += fmt.Sprintf("; AIMArtifact %s: %s", st.ParentName, st.ParentBlocker)
+	}
+	return msg
 }
 
 func countDownloaded(adapters []Observation) int {
@@ -828,6 +881,44 @@ func Plan(
 			includeAdditionalCABundle,
 		))
 	}
+}
+
+// PlanParentAdapterDisk adds spec.adapterDisk to the resolved base model artifact
+// when the service needs the adapter disk and the artifact has none, typically
+// one first cached for services without adapters. Only that field is applied,
+// under its own field manager, so the cache controller applying the rest of the
+// artifact never removes it, and services mounting the artifact's model PVC are
+// not affected. Size and class stay empty for the AIMArtifact reconciler to
+// resolve from AIMRuntimeConfig.Storage. The artifact is patched only when its
+// UID is the one the cache published, and the apply carries that UID, so it
+// never creates the artifact or lands on one recreated under the same name.
+func PlanParentAdapterDisk(
+	planResult *controllerutils.PlanResult,
+	service *aimv1alpha2.AIMService,
+	deps Dependencies,
+	st State,
+) {
+	if !service.Spec.AdaptersEnabled() || st.ConfigErr != nil ||
+		deps.ParentArtifact == nil || !deps.ParentArtifact.OK() || deps.ParentArtifact.Value == nil {
+		return
+	}
+	parent := deps.ParentArtifact.Value
+	if parent.Spec.AdapterDisk != nil || parent.DeletionTimestamp != nil || parent.UID != deps.PublishedParentUID {
+		return
+	}
+
+	patch := &unstructured.Unstructured{Object: map[string]any{
+		"spec": map[string]any{"adapterDisk": map[string]any{}},
+	}}
+	patch.SetGroupVersionKind(aimv1alpha1.GroupVersion.WithKind("AIMArtifact"))
+	patch.SetNamespace(parent.Namespace)
+	patch.SetName(parent.Name)
+	patch.SetUID(parent.UID)
+	planResult.ApplyFields(patch, constants.FieldManagerSuffixAdapterDisk, &controllerutils.FieldApplyEvent{
+		Target:  parent,
+		Reason:  constants.ReasonAdapterDiskRequested,
+		Message: fmt.Sprintf("AIMService %s serves LoRA adapters; added spec.adapterDisk", service.Name),
+	})
 }
 
 func runtimeConfigForAdapterStaging(

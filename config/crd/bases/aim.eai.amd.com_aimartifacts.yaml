@@ -92,8 +92,8 @@ spec:
                   storageClassName:
                     description: |-
                       StorageClassName specifies the storage class for the adapter disk.
-                      When empty, the cluster default storage class is used.
-                      The access mode is fixed at ReadWriteMany by the controller.
+                      When empty, the runtime config's storage.adapterDiskStorageClassName is
+                      used, then storage.defaultStorageClassName, then the cluster default.
                     type: string
                 type: object
               compatibleWith:
@@ -712,8 +712,8 @@ spec:
                   storageClassName:
                     description: |-
                       StorageClassName specifies the storage class for the adapter disk.
-                      When empty, the cluster default storage class is used.
-                      The access mode is fixed at ReadWriteMany by the controller.
+                      When empty, the runtime config's storage.adapterDiskStorageClassName is
+                      used, then storage.defaultStorageClassName, then the cluster default.
                     type: string
                 type: object
               compatibleWith:

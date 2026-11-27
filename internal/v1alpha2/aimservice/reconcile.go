@@ -740,8 +740,8 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// the profile's modelId), so it is only available once the cache exists. The
 	// remaining staging mechanics are shared via internal/aimadapter.
 	if aimadapter.IsActive(service) {
-		parentName, parentErr := resolveAdapterParentName(&seedObs, &result)
-		result.adapterDeps = aimadapter.Fetch(ctx, c, service, parentName)
+		parent, parentErr := resolveAdapterParent(&seedObs, &result)
+		result.adapterDeps = aimadapter.Fetch(ctx, c, service, parent)
 		result.adapterDeps.ParentResolutionErr = parentErr
 	}
 
@@ -1227,6 +1227,10 @@ func (r *ProfileServiceReconciler) PlanResources(
 				planResult.Apply(pc)
 			}
 		}
+
+		// The base model artifact may have been cached for services without
+		// adapters, so it can lack the adapter disk this service mounts.
+		aimadapter.PlanParentAdapterDisk(&planResult, service, obs.adapterDeps, obs.adapterState)
 
 		if !obs.profileCacheReady {
 			logger.V(1).Info("Profile cache not ready, deferring ISVC creation", "profile", obs.profileName)
@@ -1726,8 +1730,6 @@ func planProfileCache(
 			Mode:             profileCacheModeFor(cachingMode),
 			Env:              cacheEnv,
 			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
-			// Adapters need the base artifact to carry a shared RWX adapter disk.
-			RequiresAdapterDisk: service.Spec.AdaptersEnabled(),
 		},
 	}
 }
