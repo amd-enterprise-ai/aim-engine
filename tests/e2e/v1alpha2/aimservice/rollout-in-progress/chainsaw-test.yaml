@@ -3,7 +3,8 @@
 # A running service whose new predictor revision cannot start keeps serving from
 # the previous revision. It stays Running but reports Ready=False with reason
 # RolloutInProgress until the rollout completes, or RolloutStalled with a
-# Warning event once the new revision crash-loops.
+# Warning event once the new revision crash-loops. A pod that a rollout replaces
+# is not reported as an invalid spec, even when it exits non-zero.
 #
 # One new revision requests more memory than any node has; another sets a PATH
 # that hides the image's server binary. No accelerator is involved and the
@@ -123,6 +124,28 @@ spec:
                 (conditions[?type == 'Ready']):
                   - status: "False"
                     reason: RolloutStalled
+        # A replaced pod exits non-zero on SIGTERM and stays Failed until it is
+        # gone. Reporting it as an invalid spec records Warnings on every
+        # reconcile, which can use up the event budget of the service before
+        # the RolloutStalled Warning below is recorded.
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: PodFailed
+              involvedObject:
+                kind: AIMService
+                name: rollout-in-progress
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: InvalidSpec
+              involvedObject:
+                kind: AIMService
+                name: rollout-in-progress
         - assert:
             resource:
               apiVersion: v1
