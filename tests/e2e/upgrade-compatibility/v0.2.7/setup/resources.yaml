@@ -163,7 +163,9 @@ spec:
 # the OpenTelemetryCollector. The upgrade hands the collector to AIM Engine and
 # the rollback hands it back to KServe, both without restarting the predictor
 # pod. Its own model source keeps its profile cache apart from the artifacts
-# that the moved services adopt.
+# that the moved services adopt. aim-dummy serves the vLLM metrics from 0.2.1;
+# without them the HPA cannot read the trigger and v0.2.7 marks the service
+# Failed.
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMProfile
 metadata:
@@ -176,7 +178,7 @@ spec:
   precision: bf16
   type: general
   primary: false
-  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2
   resources:
     requests:
       cpu: 25m
