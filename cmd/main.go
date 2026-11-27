@@ -354,11 +354,22 @@ func setupControllers(mgr ctrl.Manager, runtimeProjectionMode aimv1alpha2.Runtim
 		"groupVersionKind", aimservice.OpenTelemetryCollectorGVK().String(),
 		"served", otelCollectorServed)
 
+	// KEDA is needed only by autoscaled AIMServices, so the controller reads
+	// ScaledObjects only where the API is served.
+	scaledObjectServed, err := aimservice.DetectScaledObjectAPI(clientset.Discovery())
+	if err != nil {
+		return fmt.Errorf("discover the ScaledObject API: %w", err)
+	}
+	setupLog.Info("Resolved ScaledObject API support",
+		"groupVersionKind", aimservice.ScaledObjectGVK().String(),
+		"served", scaledObjectServed)
+
 	if err := (&sharedcontroller.AIMServiceReconciler{
 		Client:                       mgr.GetClient(),
 		Scheme:                       mgr.GetScheme(),
 		Clientset:                    clientset,
 		OpenTelemetryCollectorServed: otelCollectorServed,
+		ScaledObjectServed:           scaledObjectServed,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("AIMService: %w", err)
 	}

@@ -81,8 +81,10 @@ spec:
 AIM Engine automatically:
 
 1. Stamps the InferenceService with `autoscalerClass=external` so KServe writes no autoscaler of its own
-2. Creates a controller-owned `OpenTelemetryCollector` (`{isvc-name}-predictor`) that the OpenTelemetry Operator injects as a sidecar, `otc-container`, into the predictor pods. The sidecar scrapes the vLLM metrics of its pod every `5s` and sends the metrics named in `metricNames` to keda-otel-add-on. It requests `200m` CPU and `512Mi` memory and is limited to `1` CPU and `2Gi` memory. The sidecar runs without privilege escalation and drops all capabilities; for namespaces that enforce the Pod Security Standard `restricted`, see [Restricted Pod Security](restricted-pod-security.md#autoscaling-sidecar)
+2. Creates a controller-owned `OpenTelemetryCollector` (`{isvc-name}-predictor`) that the OpenTelemetry Operator injects as a sidecar, `otc-container`, into the predictor pods. The sidecar scrapes the vLLM metrics of its pod every `5s` and sends the metrics named in `metricNames`, and the metric that each `query` reads, to keda-otel-add-on. It requests `200m` CPU and `512Mi` memory and is limited to `1` CPU and `2Gi` memory. The sidecar runs without privilege escalation and drops all capabilities; for namespaces that enforce the Pod Security Standard `restricted`, see [Restricted Pod Security](restricted-pod-security.md#autoscaling-sidecar)
 3. Creates a controller-owned KEDA `ScaledObject` targeting the predictor `Deployment`; KEDA in turn manages the HPA (`keda-hpa-{isvc-name}-predictor`, based on the derived InferenceService name)
+
+When you remove `minReplicas`, `maxReplicas` and `autoScaling` from the service, AIM Engine deletes the collector and the `ScaledObject`, and the predictor runs `replicas` pods (default 1).
 
 ### Scale to Zero
 
@@ -232,8 +234,8 @@ Common vLLM metrics for scaling decisions:
 |-------|-------------|
 | `backend` | Metrics backend (`opentelemetry`) |
 | `serverAddress` | gRPC address of the KEDA OTel scaler that the `ScaledObject` trigger queries (default: Helm value `scaleFromZero.scalerAddress`, `keda-otel-scaler.keda.svc:4318`). The sidecar sends the metrics to `scaleFromZero.receiverEndpoint` (`keda-otel-scaler.keda.svc:4317`) instead |
-| `metricNames` | Metric names that the sidecar forwards. If a metric of the service has no `metricNames`, the sidecar forwards all scraped metrics |
-| `query` | Query expression |
+| `metricNames` | Metric names that the sidecar forwards, in addition to the metric that `query` reads. The first name is the query when `query` is not set |
+| `query` | Query that the KEDA OTel scaler runs: a metric name, which AIM Engine scopes to the predictor pods of the service, or a metric name with a `{label="value",...}` selector, optionally wrapped in `sum`, `avg`, `min`, `max` or `count`. If a metric has no `metricNames` and its query has another form, the sidecar forwards all scraped metrics |
 | `operationOverTime` | Aggregation: `last_one`, `avg`, `max`, `min`, `rate`, `count` |
 
 ### Target Types

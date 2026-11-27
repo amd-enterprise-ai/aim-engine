@@ -77,9 +77,11 @@ type ProfileServiceReconciler struct {
 	Recorder  record.EventRecorder
 	APIReader client.Reader
 
-	// OpenTelemetryCollectorServed reports whether the cluster serves the
-	// OpenTelemetryCollector API, detected once at startup.
+	// OpenTelemetryCollectorServed and ScaledObjectServed report whether the
+	// cluster serves the OpenTelemetryCollector and KEDA ScaledObject APIs,
+	// detected once at startup.
 	OpenTelemetryCollectorServed bool
+	ScaledObjectServed           bool
 }
 
 // GetApplyOptions returns apply options derived from the merged
@@ -122,6 +124,11 @@ type ServiceFetchResult struct {
 	// fetched only when the cluster serves the OpenTelemetryCollector API.
 	otelCollectorServed bool
 	otelCollector       controllerutils.FetchResult[*metav1.PartialObjectMetadata]
+
+	// scaledObject is the predictor's KEDA ScaledObject, fetched only when the
+	// cluster serves the ScaledObject API, so the planner can remove it once the
+	// service no longer autoscales.
+	scaledObject controllerutils.FetchResult[*metav1.PartialObjectMetadata]
 
 	// legacyProfileConfigMap is the legacy inline-predictor service-owned profile
 	// ConfigMap (<service>-profile-<hash>), fetched so PlanResources can
@@ -684,6 +691,7 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// KServe or remove it when autoscaling no longer needs it.
 	result.otelCollectorServed = r.OpenTelemetryCollectorServed
 	result.otelCollector = v1alpha1service.FetchOTelCollector(ctx, c, service, r.OpenTelemetryCollectorServed)
+	result.scaledObject = v1alpha1service.FetchScaledObject(ctx, c, service, r.ScaledObjectServed)
 
 	// Resolve the profile using whichever of the four supported shapes the
 	// AIMService spec authored (name, model, model+selector, selector). The
@@ -1384,6 +1392,8 @@ func (r *ProfileServiceReconciler) PlanResources(
 	effectiveResources := resolveEffectiveResourcesFromProfile(service, obs.resolvedProfileSpec, obs.resolvedProfileStatus)
 	if so := v1alpha1service.PlanScaledObject(ctx, service, effectiveResources, obs.mergedRuntimeConfig.Value); so != nil {
 		planResult.Apply(so)
+	} else {
+		v1alpha1service.PlanScaledObjectRemoval(&planResult, service, obs.scaledObject)
 	}
 
 	// 5. Plan the collector sidecar that feeds the ScaledObject's pod metric

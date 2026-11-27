@@ -108,6 +108,24 @@ func TestOTelCollectorMetricNames(t *testing.T) {
 			wantNames:  []string{"vllm:num_requests_running"},
 		},
 		{
+			name:       "the metric of a bare query is forwarded",
+			service:    autoscaledService(podMetric("vllm:num_requests_running")),
+			wantNeeded: true,
+			wantNames:  []string{"vllm:num_requests_running"},
+		},
+		{
+			name:       "the metric of an aggregated query with labels is forwarded",
+			service:    autoscaledService(podMetric(`avg(vllm:kv_cache_usage_perc{model_name="m"})`)),
+			wantNeeded: true,
+			wantNames:  []string{"vllm:kv_cache_usage_perc"},
+		},
+		{
+			name:       "declared names and the queried metric are combined",
+			service:    autoscaledService(podMetric("a", "b")),
+			wantNeeded: true,
+			wantNames:  []string{"b", "a"},
+		},
+		{
 			name: "names across metrics are deduplicated",
 			service: autoscaledService(
 				podMetric("a", "a", "b"),
@@ -117,7 +135,13 @@ func TestOTelCollectorMetricNames(t *testing.T) {
 			wantNames:  []string{"a", "b", "c"},
 		},
 		{
-			name: "query-only metric forwards every scraped metric",
+			name:       "an unreadable query with declared names forwards those names",
+			service:    autoscaledService(podMetric(`sum(rate(vllm:request_success_total[1m]))`, "vllm:request_success_total")),
+			wantNeeded: true,
+			wantNames:  []string{"vllm:request_success_total"},
+		},
+		{
+			name: "an unreadable query-only metric forwards every scraped metric",
 			service: autoscaledService(
 				podMetric("a", "a"),
 				podMetric(`sum(rate(vllm:request_success_total[1m]))`),
@@ -134,6 +158,38 @@ func TestOTelCollectorMetricNames(t *testing.T) {
 			}
 			if !reflect.DeepEqual(names, tt.wantNames) {
 				t.Errorf("names = %v, want %v", names, tt.wantNames)
+			}
+		})
+	}
+}
+
+func TestQueryMetricName(t *testing.T) {
+	tests := []struct {
+		query  string
+		want   string
+		wantOK bool
+	}{
+		{query: "vllm:num_requests_running", want: "vllm:num_requests_running", wantOK: true},
+		{query: ` sum(vllm:num_requests_running{namespace="ns",deployment="d"}) `, want: "vllm:num_requests_running", wantOK: true},
+		{query: `x{a="b"}`, want: "x", wantOK: true},
+		{query: "count(x)", want: "x", wantOK: true},
+		// The add-on strips each aggregation in the order sum, avg, min, max,
+		// count, so it reads sum(avg(x)) but not avg(sum(x)).
+		{query: "sum(avg(x))", want: "x", wantOK: true},
+		{query: "avg(sum(x))"},
+		{query: "rate(x[1m])"},
+		{query: "x {a=b}"},
+		{query: "{a=b}"},
+		{query: "x{a=b"},
+		{query: "x}"},
+		{query: "x}{"},
+		{query: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			got, ok := queryMetricName(tt.query)
+			if got != tt.want || ok != tt.wantOK {
+				t.Errorf("queryMetricName(%q) = (%q, %v), want (%q, %v)", tt.query, got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}
@@ -202,11 +258,11 @@ func TestBuildOTelCollector(t *testing.T) {
 	}
 }
 
-func TestBuildOTelCollector_ForwardsEverythingForQueryOnlyMetrics(t *testing.T) {
-	service := autoscaledService(podMetric(`sum(vllm:num_requests_running)`))
+func TestBuildOTelCollector_ForwardsEverythingForUnreadableQueryOnlyMetrics(t *testing.T) {
+	service := autoscaledService(podMetric(`sum(rate(vllm:num_requests_running[1m]))`))
 	config := mustNestedMap(t, buildOTelCollector(service, "isvc-predictor").Object, "spec", "config")
 	if _, found, _ := unstructured.NestedMap(config, "processors", "filter/metrics"); found {
-		t.Error("query-only metrics must not configure a metric filter")
+		t.Error("an unreadable query-only metric must not configure a metric filter")
 	}
 	processors, _, _ := unstructured.NestedStringSlice(config, "service", "pipelines", "metrics", "processors")
 	if !reflect.DeepEqual(processors, []string{"resourcedetection/env", "transform"}) {
@@ -232,16 +288,20 @@ func TestPlanOTelCollector(t *testing.T) {
 	fixed.UID = otelTestServiceUID
 	collectorName, isvcName := otelCollectorNames(t, service)
 
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
 	notFound := apierrors.NewNotFound(schema.GroupResource{Group: "opentelemetry.io", Resource: "opentelemetrycollectors"}, collectorName)
-	collector := func(owner metav1.OwnerReference, deleting bool) controllerutils.FetchResult[*metav1.PartialObjectMetadata] {
+	terminating := func(owner metav1.OwnerReference, deletedAgo time.Duration) controllerutils.FetchResult[*metav1.PartialObjectMetadata] {
 		obj := newOTelCollectorMetadata()
 		obj.Name = collectorName
 		obj.Namespace = service.Namespace
 		obj.OwnerReferences = []metav1.OwnerReference{owner}
-		if deleting {
-			obj.DeletionTimestamp = ptr.To(metav1.Now())
+		if deletedAgo >= 0 {
+			obj.DeletionTimestamp = ptr.To(metav1.NewTime(now.Add(-deletedAgo)))
 		}
 		return controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Value: obj}
+	}
+	collector := func(owner metav1.OwnerReference) controllerutils.FetchResult[*metav1.PartialObjectMetadata] {
+		return terminating(owner, -1)
 	}
 	kserveOwner := metav1.OwnerReference{
 		APIVersion: servingv1beta1.SchemeGroupVersion.String(),
@@ -295,7 +355,7 @@ func TestPlanOTelCollector(t *testing.T) {
 		observed    controllerutils.FetchResult[*metav1.PartialObjectMetadata]
 		wantApply   bool
 		wantDelete  bool
-		wantRequeue bool
+		wantRequeue time.Duration
 	}{
 		{
 			name:     "API not served",
@@ -330,30 +390,30 @@ func TestPlanOTelCollector(t *testing.T) {
 			service:  service,
 			served:   true,
 			isvc:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Error: transient},
-			observed: collector(kserveOwner, false),
+			observed: collector(kserveOwner),
 		},
 		{
 			name:     "KServe still manages its collector",
 			service:  service,
 			served:   true,
 			isvc:     isvc(true),
-			observed: collector(kserveOwner, false),
+			observed: collector(kserveOwner),
 		},
 		{
 			name:        "handover deletes the KServe collector and waits",
 			service:     service,
 			served:      true,
 			isvc:        isvc(false),
-			observed:    collector(kserveOwner, false),
+			observed:    collector(kserveOwner),
 			wantDelete:  true,
-			wantRequeue: true,
+			wantRequeue: otelCollectorHandoverTimeout,
 		},
 		{
 			name:       "KServe collector is removed when no longer needed",
 			service:    fixed,
 			served:     true,
 			isvc:       isvc(false),
-			observed:   collector(kserveOwner, false),
+			observed:   collector(kserveOwner),
 			wantDelete: true,
 		},
 		{
@@ -361,15 +421,30 @@ func TestPlanOTelCollector(t *testing.T) {
 			service:     service,
 			served:      true,
 			isvc:        isvc(false),
-			observed:    collector(kserveOwner, true),
-			wantRequeue: true,
+			observed:    terminating(kserveOwner, 30*time.Second),
+			wantRequeue: otelCollectorHandoverTimeout - 30*time.Second,
+		},
+		{
+			name:        "stuck handover is re-observed every recheck interval",
+			service:     service,
+			served:      true,
+			isvc:        isvc(false),
+			observed:    terminating(kserveOwner, 10*time.Minute),
+			wantRequeue: otelCollectorStuckRecheck,
+		},
+		{
+			name:     "terminating collector that is no longer needed",
+			service:  fixed,
+			served:   true,
+			isvc:     isvc(false),
+			observed: terminating(aimOwner, 30*time.Second),
 		},
 		{
 			name:      "owned collector is kept up to date",
 			service:   service,
 			served:    true,
 			isvc:      isvc(false),
-			observed:  collector(aimOwner, false),
+			observed:  collector(aimOwner),
 			wantApply: true,
 		},
 		{
@@ -377,7 +452,7 @@ func TestPlanOTelCollector(t *testing.T) {
 			service:    fixed,
 			served:     true,
 			isvc:       isvc(false),
-			observed:   collector(aimOwner, false),
+			observed:   collector(aimOwner),
 			wantDelete: true,
 		},
 		{
@@ -385,7 +460,7 @@ func TestPlanOTelCollector(t *testing.T) {
 			service:   service,
 			served:    true,
 			isvc:      isvc(false),
-			observed:  collector(foreignOwner, false),
+			observed:  collector(foreignOwner),
 			wantApply: true,
 		},
 		{
@@ -393,14 +468,14 @@ func TestPlanOTelCollector(t *testing.T) {
 			service:  fixed,
 			served:   true,
 			isvc:     isvc(false),
-			observed: collector(foreignOwner, false),
+			observed: collector(foreignOwner),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var plan controllerutils.PlanResult
-			planOTelCollector(&plan, tt.service, tt.isvc, tt.observed, tt.served)
+			planOTelCollector(&plan, tt.service, tt.isvc, tt.observed, tt.served, now)
 
 			if got := countOTelCollectors(plan.GetToApply()); got != boolToInt(tt.wantApply) {
 				t.Errorf("applied collectors = %d, want apply %v", got, tt.wantApply)
@@ -408,11 +483,8 @@ func TestPlanOTelCollector(t *testing.T) {
 			if got := countOTelCollectors(plan.GetToDelete()); got != boolToInt(tt.wantDelete) {
 				t.Errorf("deleted collectors = %d, want delete %v", got, tt.wantDelete)
 			}
-			if got := plan.RequeueAfter; (got > 0) != tt.wantRequeue {
-				t.Errorf("requeueAfter = %v, want requeue %v", got, tt.wantRequeue)
-			}
-			if tt.wantRequeue && plan.RequeueAfter > 10*time.Second {
-				t.Errorf("handover requeue %v is too slow", plan.RequeueAfter)
+			if got := plan.RequeueAfter; got != tt.wantRequeue {
+				t.Errorf("requeueAfter = %v, want %v", got, tt.wantRequeue)
 			}
 		})
 	}
@@ -437,12 +509,13 @@ func boolToInt(b bool) int {
 
 func TestOTelCollectorComponentHealth(t *testing.T) {
 	service := autoscaledService(validVLLMMetric())
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
 
-	if got := otelCollectorComponentHealth(NewService("svc").Build(), false, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{}); got.Component != "" {
+	if got := otelCollectorComponentHealth(NewService("svc").Build(), false, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{}, now); got.Component != "" {
 		t.Errorf("fixed-replica service must not report collector health, got %+v", got)
 	}
 
-	unavailable := otelCollectorComponentHealth(service, false, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{})
+	unavailable := otelCollectorComponentHealth(service, false, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{}, now)
 	if unavailable.Component != ComponentOpenTelemetryCollector {
 		t.Fatalf("component = %q", unavailable.Component)
 	}
@@ -457,31 +530,54 @@ func TestOTelCollectorComponentHealth(t *testing.T) {
 		t.Errorf("missing API must be an invalid-spec error, got %v", unavailable.Errors[0])
 	}
 
-	fetchErr := otelCollectorComponentHealth(service, true, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Error: errors.New("boom")})
+	fetchErr := otelCollectorComponentHealth(service, true, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Error: errors.New("boom")}, now)
 	if fetchErr.Component != ComponentOpenTelemetryCollector || len(fetchErr.Errors) != 1 {
 		t.Errorf("fetch error must be reported, got %+v", fetchErr)
 	}
 
 	notFound := apierrors.NewNotFound(schema.GroupResource{Resource: "opentelemetrycollectors"}, "x")
-	if got := otelCollectorComponentHealth(service, true, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Error: notFound}); got.Component != "" {
+	if got := otelCollectorComponentHealth(service, true, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Error: notFound}, now); got.Component != "" {
 		t.Errorf("a not-yet-created collector is not a problem, got %+v", got)
+	}
+
+	terminating := func(deletedAgo time.Duration) controllerutils.FetchResult[*metav1.PartialObjectMetadata] {
+		obj := newOTelCollectorMetadata()
+		obj.Name = "isvc-predictor"
+		obj.DeletionTimestamp = ptr.To(metav1.NewTime(now.Add(-deletedAgo)))
+		return controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Value: obj}
+	}
+	if got := otelCollectorComponentHealth(service, true, terminating(30*time.Second), now); got.Component != "" {
+		t.Errorf("a handover within the timeout is not a problem, got %+v", got)
+	}
+	stuck := otelCollectorComponentHealth(service, true, terminating(otelCollectorHandoverTimeout), now)
+	if stuck.Component != ComponentOpenTelemetryCollector ||
+		stuck.State != constants.AIMStatusDegraded ||
+		stuck.Reason != aimv1alpha1.AIMServiceReasonOpenTelemetryCollectorHandoverStuck {
+		t.Errorf("a collector terminating past the timeout must be reported as stuck, got %+v", stuck)
+	}
+	if len(stuck.Errors) != 0 {
+		t.Errorf("a stuck handover must not block apply, got errors %v", stuck.Errors)
+	}
+	if got := otelCollectorComponentHealth(NewService("svc").Build(), true, terminating(time.Hour), now); got.Component != "" {
+		t.Errorf("a service that needs no collector must not report a stuck one, got %+v", got)
 	}
 }
 
 func TestClearRecoveredOTelCollectorCondition(t *testing.T) {
 	condType := ComponentOpenTelemetryCollector + controllerutils.ComponentConditionSuffix
 	service := autoscaledService(validVLLMMetric())
+	now := time.Now()
 
-	clearRecoveredOTelCollectorCondition(nil, service, true, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{})
+	clearRecoveredOTelCollectorCondition(nil, service, true, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{}, now)
 
 	cm := controllerutils.NewConditionManager(nil)
 	cm.MarkFalse(condType, aimv1alpha1.AIMServiceReasonOpenTelemetryCollectorUnavailable, "missing")
-	clearRecoveredOTelCollectorCondition(cm, service, false, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{})
+	clearRecoveredOTelCollectorCondition(cm, service, false, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{}, now)
 	if cm.Get(condType) == nil {
 		t.Fatal("condition must stay while the API is missing")
 	}
 
-	clearRecoveredOTelCollectorCondition(cm, service, true, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{})
+	clearRecoveredOTelCollectorCondition(cm, service, true, controllerutils.FetchResult[*metav1.PartialObjectMetadata]{}, now)
 	if cm.Get(condType) != nil {
 		t.Error("condition must be removed once the problem is resolved")
 	}

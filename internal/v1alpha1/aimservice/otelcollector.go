@@ -26,6 +26,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
@@ -59,11 +61,17 @@ const openTelemetryCollectorResource = "opentelemetrycollectors"
 // collector sidecar that feeds the ScaledObject's user metric triggers.
 const ComponentOpenTelemetryCollector = "OpenTelemetryCollector"
 
-// otelCollectorHandoverRequeue is how often the controller re-observes a
-// KServe-created collector it has asked to be deleted. The collector carries
-// the OpenTelemetry Operator finalizer, so the name stays taken until the
-// operator has removed it.
-const otelCollectorHandoverRequeue = 2 * time.Second
+// A collector that AIM Engine needs to create may be terminating, for example
+// the KServe-created collector it has asked to be deleted. The collector
+// carries the OpenTelemetry Operator finalizer, so the name stays taken until
+// the operator has removed it, which normally takes seconds. Its update and
+// delete events reconcile the service; the requeues below only catch a missed
+// event. After otelCollectorHandoverTimeout the service reports the handover as
+// stuck and re-observes the collector every otelCollectorStuckRecheck.
+const (
+	otelCollectorHandoverTimeout = 2 * time.Minute
+	otelCollectorStuckRecheck    = time.Minute
+)
 
 // The collector values match the KServe inferenceservice-config
 // opentelemetryCollector defaults, which configured the sidecar before AIM
@@ -99,32 +107,73 @@ func kedaOTelReceiverEndpoint() string {
 // otelCollectorMetricNames reports whether the service needs a collector
 // sidecar and which scraped metrics it forwards. A collector is needed when at
 // least one user metric resolves to a ScaledObject trigger, since only those
-// read pod metrics from the scaler. The collector forwards the union of the
-// declared metricNames, or every scraped metric (nil names) when a trigger
-// declares only a query, because its metric names are not known.
+// read pod metrics from the scaler. The collector forwards the declared
+// metricNames and the metric that each trigger query reads. It forwards every
+// scraped metric (nil names) only when a trigger declares no metricNames and
+// its query names no metric, because the metric the scaler reads is not known.
 func otelCollectorMetricNames(service *aimv1alpha2.AIMService) (names []string, needed bool) {
 	forwardAll := false
 	seen := map[string]bool{}
+	add := func(name string) {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
 	for _, metric := range collectUserMetrics(service) {
 		if buildUserMetricTrigger(metric, service.Namespace, "") == nil {
 			continue
 		}
 		needed = true
 		declared := metric.PodMetric.Metric.MetricNames
-		if len(declared) == 0 {
-			forwardAll = true
-		}
 		for _, name := range declared {
-			if !seen[name] {
-				seen[name] = true
-				names = append(names, name)
-			}
+			add(name)
+		}
+		if name, ok := queryMetricName(userMetricQuery(metric.PodMetric.Metric, service.Namespace, "")); ok {
+			add(name)
+		} else if len(declared) == 0 {
+			forwardAll = true
 		}
 	}
 	if forwardAll {
 		return nil, needed
 	}
 	return names, needed
+}
+
+// otelAddOnAggregations are the functions that may wrap a keda-otel-add-on
+// metric query, in the order the add-on strips them.
+var otelAddOnAggregations = []string{"sum", "avg", "min", "max", "count"}
+
+// prometheusMetricName matches a Prometheus metric name, the form in which the
+// collector's Prometheus receiver names scraped metrics.
+var prometheusMetricName = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
+
+// queryMetricName returns the metric that the keda-otel-add-on reads for a
+// query, following the add-on's parser: after trimming, it strips each
+// aggregation that wraps the whole query, and the metric name is the text
+// before the label selector, or the whole query without one. ok is false when
+// that text is not a metric name, or the braces do not form a selector.
+func queryMetricName(query string) (name string, ok bool) {
+	q := strings.TrimSpace(query)
+	for _, fn := range otelAddOnAggregations {
+		if strings.HasPrefix(q, fn+"(") && strings.HasSuffix(q, ")") {
+			q = strings.TrimSuffix(strings.TrimPrefix(q, fn+"("), ")")
+		}
+	}
+	first, last := strings.Index(q, "{"), strings.LastIndex(q, "}")
+	switch {
+	case first == -1 && last == -1:
+		name = q
+	case first == -1 || last < first:
+		return "", false
+	default:
+		name = q[:first]
+	}
+	if !prometheusMetricName.MatchString(name) {
+		return "", false
+	}
+	return name, true
 }
 
 // buildOTelCollector returns the sidecar-mode OpenTelemetryCollector that the
@@ -299,6 +348,7 @@ func planOTelCollector(
 	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
 	observed controllerutils.FetchResult[*metav1.PartialObjectMetadata],
 	served bool,
+	now time.Time,
 ) {
 	if !served ||
 		(observed.Error != nil && !observed.IsNotFound()) ||
@@ -322,7 +372,7 @@ func planOTelCollector(
 		}
 	case current.GetDeletionTimestamp() != nil:
 		if desired != nil {
-			planResult.RequestRequeueAfter(otelCollectorHandoverRequeue)
+			planResult.RequestRequeueAfter(otelCollectorTerminatingRequeue(current, now))
 		}
 	case isKServeOTelCollector(current, isvcName):
 		if kserveManagesOTelCollector(inferenceService.Value) {
@@ -330,13 +380,30 @@ func planOTelCollector(
 		}
 		planResult.Delete(current)
 		if desired != nil {
-			planResult.RequestRequeueAfter(otelCollectorHandoverRequeue)
+			planResult.RequestRequeueAfter(otelCollectorHandoverTimeout)
 		}
 	case desired != nil:
 		planResult.Apply(desired)
 	case isControlledBy(current, service.UID):
 		planResult.Delete(current)
 	}
+}
+
+// otelCollectorTerminatingRequeue returns when to re-observe a terminating
+// collector: at the end of otelCollectorHandoverTimeout, so a stuck handover is
+// reported on time, and every otelCollectorStuckRecheck after that.
+func otelCollectorTerminatingRequeue(collector metav1.Object, now time.Time) time.Duration {
+	if remaining := collector.GetDeletionTimestamp().Add(otelCollectorHandoverTimeout).Sub(now); remaining > 0 {
+		return remaining
+	}
+	return otelCollectorStuckRecheck
+}
+
+// otelCollectorHandoverStuck reports whether the collector has been
+// terminating for longer than otelCollectorHandoverTimeout.
+func otelCollectorHandoverStuck(collector metav1.Object, now time.Time) bool {
+	deleted := collector.GetDeletionTimestamp()
+	return deleted != nil && !now.Before(deleted.Add(otelCollectorHandoverTimeout))
 }
 
 // isKServeOTelCollector reports whether KServe created the collector for the
@@ -377,12 +444,14 @@ func kserveManagesOTelCollector(isvc *servingv1beta1.InferenceService) bool {
 
 // otelCollectorComponentHealth reports an autoscaled service whose pod metric
 // triggers cannot receive data: the cluster does not serve the
-// OpenTelemetryCollector API (ConfigValid=False), or the collector could not be
-// fetched. Returns a zero ComponentHealth otherwise.
+// OpenTelemetryCollector API (ConfigValid=False), the collector could not be
+// fetched, or it has stayed terminating past otelCollectorHandoverTimeout
+// (Degraded). Returns a zero ComponentHealth otherwise.
 func otelCollectorComponentHealth(
 	service *aimv1alpha2.AIMService,
 	served bool,
 	observed controllerutils.FetchResult[*metav1.PartialObjectMetadata],
+	now time.Time,
 ) controllerutils.ComponentHealth {
 	if _, needed := otelCollectorMetricNames(service); !needed {
 		return controllerutils.ComponentHealth{}
@@ -408,6 +477,18 @@ func otelCollectorComponentHealth(
 			Errors:         []error{observed.Error},
 		}
 	}
+	if collector := observed.Value; !observed.IsNotFound() && collector != nil && otelCollectorHandoverStuck(collector, now) {
+		return controllerutils.ComponentHealth{
+			Component: ComponentOpenTelemetryCollector,
+			State:     constants.AIMStatusDegraded,
+			Reason:    aimv1alpha1.AIMServiceReasonOpenTelemetryCollectorHandoverStuck,
+			Message: fmt.Sprintf("OpenTelemetryCollector %s has been terminating since %s, so AIM Engine cannot "+
+				"create the collector that injects the metrics sidecar into new predictor pods; "+
+				"check that the OpenTelemetry Operator is running and removes its finalizer",
+				collector.GetName(), collector.GetDeletionTimestamp().UTC().Format(time.RFC3339)),
+			DependencyType: controllerutils.DependencyTypeDownstream,
+		}
+	}
 	return controllerutils.ComponentHealth{}
 }
 
@@ -420,11 +501,12 @@ func clearRecoveredOTelCollectorCondition(
 	service *aimv1alpha2.AIMService,
 	served bool,
 	observed controllerutils.FetchResult[*metav1.PartialObjectMetadata],
+	now time.Time,
 ) {
 	if cm == nil {
 		return
 	}
-	if otelCollectorComponentHealth(service, served, observed).Component == "" {
+	if otelCollectorComponentHealth(service, served, observed, now).Component == "" {
 		cm.Delete(ComponentOpenTelemetryCollector + controllerutils.ComponentConditionSuffix)
 	}
 }

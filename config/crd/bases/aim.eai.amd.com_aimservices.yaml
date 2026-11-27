@@ -204,10 +204,9 @@ spec:
                                   type: string
                                 metricNames:
                                   description: |-
-                                    MetricNames specifies which scraped pod metrics the collector sidecar
-                                    forwards to the KEDA OpenTelemetry scaler. If any metric of the service
-                                    omits metricNames, the collector forwards all scraped metrics.
-                                    Example: ["vllm:num_requests_running"]
+                                    MetricNames lists scraped pod metrics that the collector sidecar forwards
+                                    to the KEDA OpenTelemetry scaler, in addition to the metric that the query
+                                    reads. If query is not set, the first name is the query.
                                   items:
                                     type: string
                                   type: array
@@ -3147,10 +3146,9 @@ spec:
                                   type: string
                                 metricNames:
                                   description: |-
-                                    MetricNames specifies which scraped pod metrics the collector sidecar
-                                    forwards to the KEDA OpenTelemetry scaler. If any metric of the service
-                                    omits metricNames, the collector forwards all scraped metrics.
-                                    Example: ["vllm:num_requests_running"]
+                                    MetricNames lists scraped pod metrics that the collector sidecar forwards
+                                    to the KEDA OpenTelemetry scaler, in addition to the metric that the query
+                                    reads. If query is not set, the first name is the query.
                                   items:
                                     type: string
                                   type: array

@@ -210,6 +210,7 @@ Reports a problem with the `OpenTelemetryCollector` that feeds the pod metrics o
 | Status | Reason | Description |
 |---|---|---|
 | `False` | `OpenTelemetryCollectorUnavailable` | The service declares `spec.autoScaling.metrics`, but the cluster did not serve the `OpenTelemetryCollector` API when AIM Engine started. Drives `ConfigValid=False` (`InvalidSpec` category), so AIM Engine neither creates nor updates the InferenceService of the service. Fix by installing the OpenTelemetry Operator and restarting AIM Engine. |
+| `False` | `OpenTelemetryCollectorHandoverStuck` | The collector `<isvc-name>-predictor` that AIM Engine needs to create, for example after deleting the one KServe created, has been terminating for more than two minutes, because the OpenTelemetry Operator has not removed its finalizer. Running pods keep their sidecar, but new predictor pods get the old collector's sidecar or none. The service is `Degraded`. Check that the OpenTelemetry Operator is running. |
 
 When the collector is in order, the condition is removed.
 

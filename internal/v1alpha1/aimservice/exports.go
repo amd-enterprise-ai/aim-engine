@@ -219,19 +219,19 @@ func PlanOTelCollector(
 	collector controllerutils.FetchResult[*metav1.PartialObjectMetadata],
 	served bool,
 ) {
-	planOTelCollector(planResult, service, inferenceService, collector, served)
+	planOTelCollector(planResult, service, inferenceService, collector, served, time.Now())
 }
 
 // OTelCollectorComponentHealth reports an autoscaled service whose pod metric
 // triggers cannot receive data (ConfigValid=False when the
-// OpenTelemetryCollector API is not served). Returns a zero ComponentHealth
-// otherwise.
+// OpenTelemetryCollector API is not served, Degraded when the collector stays
+// terminating). Returns a zero ComponentHealth otherwise.
 func OTelCollectorComponentHealth(
 	service *aimv1alpha2.AIMService,
 	served bool,
 	collector controllerutils.FetchResult[*metav1.PartialObjectMetadata],
 ) controllerutils.ComponentHealth {
-	return otelCollectorComponentHealth(service, served, collector)
+	return otelCollectorComponentHealth(service, served, collector, time.Now())
 }
 
 // ClearRecoveredOTelCollectorCondition removes the OpenTelemetryCollectorReady
@@ -243,7 +243,43 @@ func ClearRecoveredOTelCollectorCondition(
 	served bool,
 	collector controllerutils.FetchResult[*metav1.PartialObjectMetadata],
 ) {
-	clearRecoveredOTelCollectorCondition(cm, service, served, collector)
+	clearRecoveredOTelCollectorCondition(cm, service, served, collector, time.Now())
+}
+
+// ScaledObjectGVK returns the KEDA ScaledObject kind that AIM Engine creates
+// for autoscaled predictors.
+func ScaledObjectGVK() schema.GroupVersionKind {
+	return kedaScaledObjectGVK
+}
+
+// DetectScaledObjectAPI reports whether the API server serves the
+// keda.sh/v1alpha1 ScaledObject kind. A missing group version is a confident
+// "not installed" (false, nil); any other discovery failure is returned.
+func DetectScaledObjectAPI(client discovery.DiscoveryInterface) (bool, error) {
+	return detectScaledObjectAPI(client)
+}
+
+// FetchScaledObject fetches the metadata of the ScaledObject named after the
+// predictor Deployment, or returns an empty result when the cluster does not
+// serve the ScaledObject API.
+func FetchScaledObject(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha2.AIMService,
+	served bool,
+) controllerutils.FetchResult[*metav1.PartialObjectMetadata] {
+	return fetchScaledObject(ctx, c, service, served)
+}
+
+// PlanScaledObjectRemoval deletes the ScaledObject that the service controls
+// once the service no longer asks for one. Call it when PlanScaledObject
+// returns nil.
+func PlanScaledObjectRemoval(
+	planResult *controllerutils.PlanResult,
+	service *aimv1alpha2.AIMService,
+	scaledObject controllerutils.FetchResult[*metav1.PartialObjectMetadata],
+) {
+	planScaledObjectRemoval(planResult, service, scaledObject)
 }
 
 // ComputeRuntimeStatus derives replica counts and the formatted Replicas

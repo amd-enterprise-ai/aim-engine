@@ -832,6 +832,12 @@ const (
 	// opentelemetry.io/v1beta1 OpenTelemetryCollector API, so no metrics
 	// collector sidecar can feed the scaler. Drives ConfigValid=False.
 	AIMServiceReasonOpenTelemetryCollectorUnavailable = "OpenTelemetryCollectorUnavailable"
+	// AIMServiceReasonOpenTelemetryCollectorHandoverStuck indicates the
+	// predictor's OpenTelemetryCollector has stayed terminating for longer than
+	// the OpenTelemetry Operator normally takes to finalize it, so AIM Engine
+	// cannot create the collector that injects the metrics sidecar into new
+	// predictor pods.
+	AIMServiceReasonOpenTelemetryCollectorHandoverStuck = "OpenTelemetryCollectorHandoverStuck"
 
 	// Scale-from-zero activation signal (ActivationMetricAvailable).
 	// AIMServiceReasonActivationMetricAvailable indicates the HPA reports the

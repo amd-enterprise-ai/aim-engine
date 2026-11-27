@@ -3543,6 +3543,60 @@ func TestPlanResources_PodMetricsEmitOTelCollector(t *testing.T) {
 	}
 }
 
+func TestPlanResources_RemovingAutoscalingDeletesScaledObject(t *testing.T) {
+	service := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+		},
+	}
+	soGVK := v1alpha1service.ScaledObjectGVK()
+	scaledObject := &metav1.PartialObjectMetadata{}
+	scaledObject.SetGroupVersionKind(soGVK)
+	scaledObject.Name = "isvc-predictor"
+	scaledObject.Namespace = "ns"
+	scaledObject.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: "aim.eai.amd.com/v1alpha2",
+		Kind:       "AIMService",
+		Name:       testServiceName,
+		UID:        service.UID,
+		Controller: ptr.To(true),
+	}}
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service:      service,
+			scaledObject: controllerutils.FetchResult[*metav1.PartialObjectMetadata]{Value: scaledObject},
+		},
+		resolvedProfileSpec: sampleProfileSpec(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{
+			Status:     constants.AIMStatusReady,
+			Deployable: true,
+		},
+		profileName:      testProfileA,
+		profileScope:     aimv1alpha1.AIMResolutionScopeNamespace,
+		profileAssembled: true,
+	}
+
+	r := &ProfileServiceReconciler{}
+	r.composeDerivedNames(context.Background(), &obs)
+	if obs.configErr != nil {
+		t.Fatalf("composeDerivedNames: %v", obs.configErr)
+	}
+	pr := r.PlanResources(context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
+		obs,
+	)
+	deleted := 0
+	for _, obj := range pr.GetToDelete() {
+		if obj.GetObjectKind().GroupVersionKind() == soGVK {
+			deleted++
+		}
+	}
+	if deleted != 1 {
+		t.Errorf("deleted ScaledObjects = %d, want 1", deleted)
+	}
+}
+
 func TestPlanResourcesSchedulesActivationMetricGraceDeadline(t *testing.T) {
 	t.Setenv(constants.EnvAIMGatewayActivationScope, constants.GatewayActivationScopeHTTPRoute)
 	service := &aimv1alpha2.AIMService{
