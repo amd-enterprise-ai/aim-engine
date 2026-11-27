@@ -1,0 +1,174 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: paused Shared profile cache (v1alpha2)
+#
+# A service names why its Shared AIMProfileCache blocks it, and says when the
+# cache's reconciliation is paused (its status is then frozen):
+# 1. A paused cache that stays Ready but gains a failing DependenciesReachable
+#    condition (as during the framework's infrastructure-error grace period):
+#    the service's ProfileRuntimeReady names the condition, its reason and
+#    message, and the pause. Only the condition changes, so this also checks
+#    that the service is woken by a cache error-condition change.
+# 2. A paused cache that is not Ready: ProfileCacheReady carries the cache's
+#    Ready message and names the pause.
+# 3. A spec change on the paused cache: its status cannot catch up, so
+#    ProfileCacheReady reports the unprocessed spec change and the pause
+#    instead of "not yet created".
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterProfile (Ready), AIMProfileCache (paused, status patched)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cache-paused
+  labels:
+    hf-access: live
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - use:
+        template: ../../../_shared/hf-token-step.yaml
+
+    - name: Create the frozen cluster profile and the service
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+        - apply:
+            file: service.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/profile.name: test-paused-cache-profile
+
+    - name: Pause the profile cache and freeze it Ready
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+              - name: STATUS
+                value: Ready
+              - name: EXTRA_CONDITIONS
+                value: ""
+            content: &freeze-cache |
+              set -eu
+              PC=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=paused-cache-service -o jsonpath='{.items[0].metadata.name}')
+              ART=$(kubectl get aimartifact -n "$NAMESPACE" \
+                -l aim.eai.amd.com/profile.name=test-paused-cache-profile -o jsonpath='{.items[0].metadata.name}')
+              ART_UID=$(kubectl get aimartifact -n "$NAMESPACE" "$ART" -o jsonpath='{.metadata.uid}')
+              kubectl annotate aimprofilecache "$PC" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl patch aimprofilecache "$PC" -n "$NAMESPACE" --type=merge --subresource=status -p "{
+                \"status\": {
+                  \"status\": \"$STATUS\",
+                  \"conditions\": [
+                    $EXTRA_CONDITIONS
+                    {\"type\": \"ProfileFound\", \"status\": \"True\", \"reason\": \"ProfileResolved\", \"message\": \"resolved\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"}
+                  ],
+                  \"artifacts\": {
+                    \"$ART\": {
+                      \"name\": \"$ART\",
+                      \"uid\": \"$ART_UID\",
+                      \"model\": \"test-org/paused-cache-weights\",
+                      \"status\": \"Ready\",
+                      \"persistentVolumeClaim\": \"$ART-pvc\",
+                      \"mountPoint\": \"/workspace/cache/test-org/paused-cache-weights\"
+                    }
+                  }
+                }
+              }"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: paused-cache-service
+              status:
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+                    reason: ProfileCacheReady
+
+    - name: A failing error condition on the paused cache is named on the service
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+              - name: STATUS
+                value: Ready
+              - name: EXTRA_CONDITIONS
+                value: >-
+                  {"type": "DependenciesReachable", "status": "False", "reason": "InfrastructureError",
+                  "message": "Failed to apply resources: e2e quota exceeded", "lastTransitionTime": "2025-01-01T00:00:00Z"},
+            content: *freeze-cache
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: paused-cache-service
+              status:
+                (conditions[?type == 'ProfileRuntimeReady']):
+                  - status: "False"
+                    "(contains(message || '', 'DependenciesReachable condition is False (InfrastructureError: Failed to apply resources: e2e quota exceeded)'))": true
+                    "(contains(message || '', 'AIMProfileCache reconciliation is paused by the aim.eai.amd.com/reconciliation-paused annotation, so its status will not change until the annotation is removed'))": true
+
+    - name: A paused cache that is not Ready is named as paused on the service
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+              - name: STATUS
+                value: Progressing
+              - name: EXTRA_CONDITIONS
+                value: >-
+                  {"type": "Ready", "status": "False", "reason": "Progressing",
+                  "message": "e2e artifacts downloading", "lastTransitionTime": "2025-01-01T00:00:00Z"},
+            content: *freeze-cache
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: paused-cache-service
+              status:
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "False"
+                    reason: ProfileCacheNotReady
+                    "(contains(message || '', 'is Progressing: e2e artifacts downloading; AIMProfileCache reconciliation is paused by the aim.eai.amd.com/reconciliation-paused annotation, so its status will not change until the annotation is removed'))": true
+
+    - name: A spec change on the paused cache is reported as stale, not missing
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PC=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=paused-cache-service -o jsonpath='{.items[0].metadata.name}')
+              kubectl patch aimprofilecache "$PC" -n "$NAMESPACE" --type=json \
+                -p '[{"op":"add","path":"/spec/env/-","value":{"name":"E2E_GENERATION_BUMP","value":"1"}}]'
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: paused-cache-service
+              status:
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "False"
+                    reason: ProfileCacheNotReady
+                    "(contains(message || '', 'has not yet processed its latest spec change'))": true
+                    "(contains(message || '', 'AIMProfileCache reconciliation is paused by the aim.eai.amd.com/reconciliation-paused annotation, so its status will not change until the annotation is removed'))": true

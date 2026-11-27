@@ -1,6 +1,6 @@
-# The cache an adapter-serving AIMService creates for filter-change-lora. Declared
-# directly so the test does not depend on a deployable service: requiresAdapterDisk
-# is the only part of that service the shared artifact reacts to.
+# The Shared cache an adapter-enabled AIMService on filter-change-lora creates.
+# Declared directly so the test does not depend on a deployable service; the
+# adapter disk those services add to its artifact is patched on by the test.
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMProfileCache
 metadata:
@@ -9,4 +9,3 @@ spec:
   profileName: filter-change-lora
   profileScope: Namespace
   mode: Shared
-  requiresAdapterDisk: true

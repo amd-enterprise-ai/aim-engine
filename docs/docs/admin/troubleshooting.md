@@ -152,6 +152,10 @@ kubectl delete aimartifact <artifact-name> -n <namespace>
 
 Deleting a cache also deletes the artifacts it created that aren't `Ready`; an artifact it reused from another cache stays until you delete it. An artifact has no finalizer, and deleting it removes its PVC and Jobs. The AIMService then creates a new cache with its current `spec.caching.env`, and the cache creates a new artifact. A cache that an AIMProfile owns (`spec.caching.enabled`) is recreated by the AIMProfile with its current `spec.caching.env`. Don't delete a `Ready` artifact this way: services may be serving from it.
 
+### LoRA Service Waits for an Adapter Disk
+
+A service that serves LoRA adapters (`adapterMode: dynamic`, or any declared `spec.adapters`) reports `AdaptersReady=False` with reason `ParentLacksAdapterDisk` until its base model `AIMArtifact` has an adapter disk PVC, and `AdapterSubtreeProvisioning` while that PVC is `Pending`. A service that already has a previous adapter disk keeps it mounted and stays `AdaptersReady=True` with `AdaptersStaging`, naming that PVC. See [LoRA adapters — Service stays at `AdaptersReady=False`](../guides/lora-adapters.md#service-stays-at-adaptersreadyfalse).
+
 ### Routing Not Working
 
 ```bash

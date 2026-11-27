@@ -1,0 +1,16 @@
+# v1alpha2 AIMService on a profile with modelSources (Shared caching).
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: paused-cache-service
+spec:
+  profile:
+    name: test-paused-cache-profile
+  caching:
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-creds
+            key: token
+  replicas: 1

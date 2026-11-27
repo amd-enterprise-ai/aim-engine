@@ -45,7 +45,9 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profilecache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
 
@@ -400,10 +402,12 @@ func profileRelevantChangePredicate() predicate.Predicate {
 // profileCacheRelevantChangePredicate fires when any field the AIMService
 // consumes from the cache changes: high-level Status (Ready / Progressing /
 // Failed), ObservedGeneration (the cache controller has reprocessed a spec
-// change), or the resolved Artifacts list (PVC names or mount points that
-// feed the InferenceService volume mounts). Cosmetic status writes that
-// don't move any of these fields are filtered out to avoid reconcile
-// hot-loops.
+// change), the resolved Artifacts list (PVC names or mount points that feed
+// the InferenceService volume mounts), and the Ready and error conditions and
+// reconciliation-paused annotation that the service reports. A
+// metadata.generation change fires only on a paused cache, whose status will
+// not catch up to it. Cosmetic status writes that don't move any of these
+// fields are filtered out to avoid reconcile hot-loops.
 func profileCacheRelevantChangePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc:  func(_ event.CreateEvent) bool { return true },
@@ -421,9 +425,31 @@ func profileCacheRelevantChangePredicate() predicate.Predicate {
 			if oldCache.Status.ObservedGeneration != newCache.Status.ObservedGeneration {
 				return true
 			}
+			paused := controllerutils.IsReconciliationPaused(newCache)
+			if paused != controllerutils.IsReconciliationPaused(oldCache) ||
+				(paused && oldCache.Generation != newCache.Generation) {
+				return true
+			}
+			for _, conditionType := range append(profilecache.ErrorConditionTypes(), controllerutils.ConditionTypeReady) {
+				if conditionChanged(oldCache.Status.Conditions, newCache.Status.Conditions, conditionType) {
+					return true
+				}
+			}
 			return !equality.Semantic.DeepEqual(oldCache.Status.Artifacts, newCache.Status.Artifacts)
 		},
 	}
+}
+
+// conditionChanged reports whether the condition's presence, status, reason or
+// message differs. lastTransitionTime is ignored: services don't report it, and
+// the framework rewrites it on every failed apply retry, which would hot-loop.
+func conditionChanged(oldConds, newConds []metav1.Condition, conditionType string) bool {
+	oldCond := meta.FindStatusCondition(oldConds, conditionType)
+	newCond := meta.FindStatusCondition(newConds, conditionType)
+	if oldCond == nil || newCond == nil {
+		return (oldCond == nil) != (newCond == nil)
+	}
+	return oldCond.Status != newCond.Status || oldCond.Reason != newCond.Reason || oldCond.Message != newCond.Message
 }
 
 // modelRelevantChangePredicate fires when an AIMModel / AIMClusterModel's
@@ -663,8 +689,10 @@ func collectServicesForRuntimeConfig(
 
 // adapterArtifactRelevantChangePredicate fires on adapter/model artifact events
 // that can change a service's adapter staging or gating: type, overall status,
-// adapterPath, canonical modelId, rank, and the model's
-// adapterPersistentVolumeClaim.
+// adapterPath, canonical modelId, rank, the model's adapterDisk and
+// adapterPersistentVolumeClaim, and the DependenciesReachable condition that
+// service messages report. An adapter-enabled service adds a removed
+// spec.adapterDisk back, so that removal must enqueue it too.
 //
 // spec.rank is mutable and feeds the resolved AIM_ADAPTER_MAX_RANK for static
 // services, so a rank edit must enqueue consumers or the workload keeps serving
@@ -688,7 +716,9 @@ func adapterArtifactRelevantChangePredicate() predicate.Predicate {
 				oldA.Spec.ModelID != newA.Spec.ModelID ||
 				!ptr.Equal(oldA.Spec.Rank, newA.Spec.Rank) ||
 				oldA.Status.AdapterPath != newA.Status.AdapterPath ||
-				oldA.Status.AdapterPersistentVolumeClaim != newA.Status.AdapterPersistentVolumeClaim
+				(oldA.Spec.AdapterDisk == nil) != (newA.Spec.AdapterDisk == nil) ||
+				oldA.Status.AdapterPersistentVolumeClaim != newA.Status.AdapterPersistentVolumeClaim ||
+				conditionChanged(oldA.Status.Conditions, newA.Status.Conditions, controllerutils.ConditionTypeDependenciesReachable)
 		},
 	}
 }
@@ -698,7 +728,8 @@ func adapterArtifactRelevantChangePredicate() predicate.Predicate {
 // name are enqueued directly. For model artifacts, the change is hopped through
 // both the exact parent-name index and logical compatible-model-ID index, then
 // to services, so a model gaining or replacing its adapter disk re-triggers
-// staging in either compatibility mode.
+// staging in either compatibility mode. A model artifact also reaches the
+// adapter-enabled services of the profile caches that resolved it.
 func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		artifact, ok := obj.(*aimv1alpha1.AIMArtifact)
@@ -711,6 +742,11 @@ func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 		case aimv1alpha1.ArtifactTypeAdapter:
 			collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, artifact.Name, artifact.Namespace)
 		default:
+			// A dynamic service with no declared adapters references no adapter
+			// artifact, so it is reached through the profile caches that resolved
+			// this model artifact.
+			collectServicesForResolvedArtifact(ctx, c, requests, artifact)
+
 			// Exact-binding adapters whose parent is this concrete artifact.
 			var adapters aimv1alpha1.AIMArtifactList
 			if err := c.List(ctx, &adapters,
@@ -744,6 +780,47 @@ func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 		}
 
 		return requestsFromSet(requests)
+	}
+}
+
+// collectServicesForResolvedArtifact adds the adapter-enabled services of every
+// profile cache whose status.artifacts lists the given model artifact. The field
+// index it queries is registered by the AIMProfileCache controller
+// (aimprofilecache_controller.go), which shares this manager's cache.
+func collectServicesForResolvedArtifact(
+	ctx context.Context,
+	c client.Client,
+	requests map[types.NamespacedName]struct{},
+	artifact *aimv1alpha1.AIMArtifact,
+) {
+	logger := log.FromContext(ctx)
+	var caches aimv1alpha2.AIMProfileCacheList
+	if err := c.List(ctx, &caches,
+		client.InNamespace(artifact.Namespace),
+		client.MatchingFields{aimv1alpha2.ProfileCacheArtifactNameIndexKey: artifact.Name},
+	); err != nil {
+		logger.Error(err, "failed to list profile caches for model artifact",
+			"artifact", artifact.Name, "namespace", artifact.Namespace)
+		return
+	}
+	servicesForCache := findServicesForProfileCache(c)
+	for i := range caches.Items {
+		for _, request := range servicesForCache(ctx, &caches.Items[i]) {
+			if _, seen := requests[request.NamespacedName]; seen {
+				continue
+			}
+			var service aimv1alpha2.AIMService
+			if err := c.Get(ctx, request.NamespacedName, &service); err != nil {
+				if !isNotFoundLike(err) {
+					logger.Error(err, "failed to get service for model artifact fan-out",
+						"service", request.NamespacedName, "artifact", artifact.Name)
+				}
+				continue
+			}
+			if service.Spec.AdaptersEnabled() {
+				requests[request.NamespacedName] = struct{}{}
+			}
+		}
 	}
 }
 

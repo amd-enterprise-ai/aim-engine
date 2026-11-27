@@ -242,9 +242,9 @@ spec:
                 type: string
               requiresAdapterDisk:
                 description: |-
-                  RequiresAdapterDisk requests that the backing model artifact carry a shared
-                  ReadWriteMany adapter disk for LoRA serving. Set by the AIMService planner
-                  when the service serves adapters.
+                  RequiresAdapterDisk is DEPRECATED and has no effect. It is kept so that
+                  existing caches and manifests that set it remain valid, and will be removed in
+                  a future API version.
                 type: boolean
               runtimeConfigName:
                 description: Name is the name of the runtime config to use for this

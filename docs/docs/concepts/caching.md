@@ -53,10 +53,10 @@ The deduplication boundary is per-namespace:
     - its `sourceUri` is the model source's;
     - its `downloadFilter` selects the same files as the model source's: an artifact with no filter serves a source with no filter, and equal filters match regardless of glob order. An artifact with `downloadFilter: {}` holds the whole repository and serves any source with the same `sourceUri`;
     - it has the cache's storage class, when the cache sets one;
-    - it has an adapter disk, when the service uses adapters;
     - for an `s3://` source, it uses the same runtime config as the cache.
 
-  Env doesn't affect reuse: an artifact downloaded with other credentials or downloader settings is reused as it is. The env only goes into the name of an artifact the cache creates. Among the matching artifacts the cache uses the one with the best status, even a `Failed` one (see [A download keeps failing after you add a credential](../admin/troubleshooting.md#a-download-keeps-failing-after-you-add-a-credential)).
+  Env doesn't affect reuse: an artifact downloaded with other credentials or downloader settings is reused as it is. The env only goes into the name of an artifact the cache creates. An adapter disk doesn't affect reuse either: an adapter-enabled `AIMService` adds one to whichever `AIMArtifact` the `AIMProfileCache` uses.
+- When more than one artifact matches a model source, the cache uses the one with the best status, even a `Failed` one (see [A download keeps failing after you add a credential](../admin/troubleshooting.md#a-download-keeps-failing-after-you-add-a-credential)). On a tie, the `AIMProfileCache` keeps the `AIMArtifact` it already lists in `status.artifacts`, so its services keep mounting the same PVC; if none is listed, the alphabetically first name wins.
 
 Result: multiple services that share a profile fan in onto a single set of `AIMArtifact`s, one download per artifact per namespace.
 
@@ -132,7 +132,7 @@ Cluster-scoped `AIMClusterProfile` resources cannot enable caching directly (clu
 
 When a model source's `downloadFilter` changes so the artifact a cache serves no longer selects the right files, the cache keeps serving that artifact while it creates and downloads one that matches. `status.artifacts` and `ArtifactsReady` follow the served artifact, so the cache and its services stay `Ready` during the download. `ArtifactsReplacing` is `True` and names both artifacts: `ReplacingArtifacts` with the replacement's status while it is created or downloads, and `ReplacementFailed` with the download error if the replacement fails or its download stalls (`Degraded`). In both cases the served artifact stays in use.
 
-Once the replacement is `Ready`, the cache switches `status.artifacts` to it, sets `ArtifactsReplacing` to `False` with reason `ArtifactsReplaced`, and emits an event naming the old and new artifacts. Services then mount the new artifact's PVC.
+Once the replacement is `Ready`, the cache switches `status.artifacts` to it, sets `ArtifactsReplacing` to `False` with reason `ArtifactsReplaced`, and emits an event naming the old and new artifacts. Services then mount the new artifact's PVC. A replacement inherits the served artifact's adapter disk, so LoRA services find a disk on the new artifact; they stage their adapters onto it after the switch and keep mounting the old artifact's adapter disk until they are staged.
 
 The served artifact is kept only while it is still `Ready`, not being deleted, has the same `sourceUri`, could still be adopted by the cache, and, for `s3://` sources, uses the cache's runtime config. Otherwise the cache moves to the replacement and is not ready until it finishes. A served artifact that drops out of `Ready` even briefly is not picked up again, because the cache no longer lists it. The switch does not delete the old artifact; see [Upgrading](../admin/upgrading.md#download-filters-declared-by-aim-images) for reclaiming it.
 

@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -40,6 +41,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
 
@@ -303,6 +305,17 @@ func newWatchTestClient(t *testing.T, scheme *runtime.Scheme, objs ...client.Obj
 				return nil
 			}
 			return artifact.Spec.CompatibleWith
+		}).
+		WithIndex(&aimv1alpha2.AIMProfileCache{}, aimv1alpha2.ProfileCacheArtifactNameIndexKey, func(obj client.Object) []string {
+			cache, ok := obj.(*aimv1alpha2.AIMProfileCache)
+			if !ok {
+				return nil
+			}
+			names := make([]string, 0, len(cache.Status.Artifacts))
+			for _, artifact := range cache.Status.Artifacts {
+				names = append(names, artifact.Name)
+			}
+			return names
 		}).
 		Build()
 }
@@ -702,6 +715,126 @@ func TestAdapterArtifactRelevantChangePredicate_RankChange(t *testing.T) {
 	})
 }
 
+// TestAdapterArtifactRelevantChangePredicate_AdapterDiskChange verifies that
+// adding or removing spec.adapterDisk wakes services: an adapter-enabled service
+// adds a removed disk back.
+func TestAdapterArtifactRelevantChangePredicate_AdapterDiskChange(t *testing.T) {
+	pred := adapterArtifactRelevantChangePredicate()
+	diskless := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "base", Namespace: "ns"},
+		Spec:       aimv1alpha1.AIMArtifactSpec{Type: aimv1alpha1.ArtifactTypeModel},
+	}
+	withDisk := diskless.DeepCopy()
+	withDisk.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+	resized := withDisk.DeepCopy()
+	resized.Spec.AdapterDisk.Size = resource.MustParse("100Gi")
+
+	for _, tc := range []struct {
+		name     string
+		old, new *aimv1alpha1.AIMArtifact
+		want     bool
+	}{
+		{name: "added", old: diskless, new: withDisk, want: true},
+		{name: "removed", old: withDisk, new: diskless, want: true},
+		{name: "resized", old: withDisk, new: resized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pred.Update(event.UpdateEvent{ObjectOld: tc.old, ObjectNew: tc.new}); got != tc.want {
+				t.Errorf("Update() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAdapterArtifactRelevantChangePredicate_DependenciesReachableChange verifies
+// that a change to what keeps a model artifact from applying its resources (such as
+// a quota rejecting the adapter disk PVC) wakes services, which report it, while a
+// condition rewrite with only a new lastTransitionTime does not.
+func TestAdapterArtifactRelevantChangePredicate_DependenciesReachableChange(t *testing.T) {
+	pred := adapterArtifactRelevantChangePredicate()
+	withCondition := func(status metav1.ConditionStatus, message string, at time.Time) *aimv1alpha1.AIMArtifact {
+		return &aimv1alpha1.AIMArtifact{
+			ObjectMeta: metav1.ObjectMeta{Name: "base", Namespace: "ns"},
+			Spec:       aimv1alpha1.AIMArtifactSpec{Type: aimv1alpha1.ArtifactTypeModel},
+			Status: aimv1alpha1.AIMArtifactStatus{Conditions: []metav1.Condition{{
+				Type:               controllerutils.ConditionTypeDependenciesReachable,
+				Status:             status,
+				Message:            message,
+				LastTransitionTime: metav1.NewTime(at),
+			}}},
+		}
+	}
+	now := time.Now()
+	reachable := withCondition(metav1.ConditionTrue, "", now)
+	quota := withCondition(metav1.ConditionFalse, "exceeded quota: storage", now)
+
+	for _, tc := range []struct {
+		name     string
+		old, new *aimv1alpha1.AIMArtifact
+		want     bool
+	}{
+		{name: "becomes unreachable", old: reachable, new: quota, want: true},
+		{name: "message changes", old: quota, new: withCondition(metav1.ConditionFalse, "exceeded quota: count", now), want: true},
+		{name: "recovers", old: quota, new: reachable, want: true},
+		{name: "only the transition time changes", old: quota, new: withCondition(metav1.ConditionFalse, "exceeded quota: storage", now.Add(time.Minute))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pred.Update(event.UpdateEvent{ObjectOld: tc.old, ObjectNew: tc.new}); got != tc.want {
+				t.Errorf("Update() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFindServicesForAdapterArtifact_ReachesDynamicServiceViaProfileCache covers
+// a dynamic service with no declared adapters: it references no adapter
+// artifact, so its base model artifact gaining or losing the adapter disk must
+// reach it through the profile cache that resolved the artifact.
+func TestFindServicesForAdapterArtifact_ReachesDynamicServiceViaProfileCache(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+
+	cacheFor := func(name, profile, artifactName string) *aimv1alpha2.AIMProfileCache {
+		return &aimv1alpha2.AIMProfileCache{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
+			Spec: aimv1alpha2.AIMProfileCacheSpec{
+				ProfileName:  profile,
+				ProfileScope: aimv1alpha1.AIMResolutionScopeNamespace,
+				Mode:         aimv1alpha2.ProfileCacheModeShared,
+			},
+			Status: aimv1alpha2.AIMProfileCacheStatus{
+				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+					artifactName: {Name: artifactName, Model: "org/base"},
+				},
+			},
+		}
+	}
+	dynamicService := imageShapeService("svc-dynamic", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace)
+	dynamicService.Spec.AdapterMode = aimv1alpha1.AdapterModeDynamic
+
+	c := newWatchTestClient(t, scheme,
+		cacheFor("p-cache", "p", "base-artifact"),
+		cacheFor("other-cache", "other", "other-artifact"),
+		dynamicService,
+		// Shares the cache but serves no adapters, so the adapter disk is not its concern.
+		imageShapeService("svc-plain", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace),
+		imageShapeService("svc-other", "ns", "other", aimv1alpha1.AIMResolutionScopeNamespace),
+	)
+
+	model := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "base-artifact", Namespace: "ns"},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			Type:        aimv1alpha1.ArtifactTypeModel,
+			ModelID:     "org/base",
+			AdapterDisk: &aimv1alpha1.AIMAdapterDisk{},
+		},
+	}
+	diskless := model.DeepCopy()
+	diskless.Spec.AdapterDisk = nil
+
+	assertRequests(t, findServicesForAdapterArtifact(c)(context.Background(), model), "ns/svc-dynamic")
+	assertRequests(t, findServicesForAdapterArtifact(c)(context.Background(), diskless), "ns/svc-dynamic")
+}
+
 // imageShapeService builds a service that resolves its model by image:
 // spec.model.image plus a selector without modelRef or aimId. None of the
 // spec-based indexes match it, so only the resolved-profile index can route
@@ -849,4 +982,97 @@ func TestFindServicesForRuntimeConfig_BothScopes(t *testing.T) {
 		assertRequests(t, findServicesForClusterRuntimeConfig(c)(context.Background(), config),
 			"alpha/names-it", "alpha/names-none", "beta/other-namespace")
 	})
+}
+
+func TestProfileCacheRelevantChangePredicate(t *testing.T) {
+	failing := metav1.Condition{
+		Type:               controllerutils.ConditionTypeDependenciesReachable,
+		Status:             metav1.ConditionFalse,
+		Reason:             controllerutils.ReasonDependenciesNotReachable,
+		Message:            "forbidden",
+		LastTransitionTime: metav1.Unix(100, 0),
+	}
+	notReady := metav1.Condition{
+		Type:    controllerutils.ConditionTypeReady,
+		Status:  metav1.ConditionFalse,
+		Reason:  "NotReady",
+		Message: "Downloading",
+	}
+	base := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "ns", Generation: 1},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			Status:             constants.AIMStatusDegraded,
+			ObservedGeneration: 1,
+			Conditions:         []metav1.Condition{failing, notReady},
+		},
+	}
+	pause := func(c *aimv1alpha2.AIMProfileCache) {
+		c.Annotations = map[string]string{constants.AnnotationReconciliationPaused: "true"}
+	}
+	pausedBase := base.DeepCopy()
+	pause(pausedBase)
+	for _, tt := range []struct {
+		name   string
+		old    *aimv1alpha2.AIMProfileCache
+		mutate func(*aimv1alpha2.AIMProfileCache)
+		want   bool
+	}{
+		{
+			name: "error condition message changes", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].Message = "quota exceeded" },
+		},
+		{
+			name: "error condition reason changes", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].Reason = controllerutils.ReasonAuthError },
+		},
+		{
+			name: "error condition recovers", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].Status = metav1.ConditionTrue },
+		},
+		{
+			name: "error condition appears", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) {
+				c.Status.Conditions = append(c.Status.Conditions, metav1.Condition{
+					Type: controllerutils.ConditionTypeConfigValid, Status: metav1.ConditionFalse,
+				})
+			},
+		},
+		{
+			name: "Ready condition message changes", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[1].Message = "Waiting for PVC" },
+		},
+		{
+			name: "reconciliation paused", want: true,
+			mutate: pause,
+		},
+		{
+			name: "spec generation bumped on paused cache", want: true,
+			old:    pausedBase,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Generation = 2 },
+		},
+		{
+			name:   "spec generation bumped on unpaused cache",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Generation = 2 },
+		},
+		{
+			name:   "only lastTransitionTime changes",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].LastTransitionTime = metav1.Unix(200, 0) },
+		},
+		{
+			name:   "unrelated annotation changes",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Annotations = map[string]string{"example.com/note": "x"} },
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			old := base
+			if tt.old != nil {
+				old = tt.old
+			}
+			updated := old.DeepCopy()
+			tt.mutate(updated)
+			if got := profileCacheRelevantChangePredicate().Update(event.UpdateEvent{ObjectOld: old, ObjectNew: updated}); got != tt.want {
+				t.Errorf("predicate fired = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

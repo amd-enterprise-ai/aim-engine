@@ -24,8 +24,10 @@ package aimservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -390,6 +392,17 @@ func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentH
 	}
 
 	if !obs.profileCache.OK() {
+		// SelectBestShared skips Shared caches whose status lags their spec, so
+		// profileCache is NotFound when FindReadyShared reports that every
+		// matching cache is stale: the cache exists but is not usable yet.
+		var stale *profilecache.StatusStaleError
+		if obs.profileCache.IsNotFound() && errors.As(obs.runtimeProfileCache.Error, &stale) &&
+			obs.service.Spec.GetCachingMode() != aimv1alpha1.CachingModeDedicated {
+			health.State = constants.AIMStatusProgressing
+			health.Reason = "ProfileCacheNotReady"
+			health.Message = "Shared " + stale.Error()
+			return health
+		}
 		if obs.profileCache.IsNotFound() {
 			health.State = constants.AIMStatusProgressing
 			health.Reason = "ProfileCacheNotFound"
@@ -422,6 +435,7 @@ func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentH
 			break
 		}
 	}
+	health.Message += profilecache.PausedNote(pc)
 	return health
 }
 
@@ -439,7 +453,8 @@ func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.Componen
 		Component:      "ProfileRuntime",
 		DependencyType: controllerutils.DependencyTypeDownstream,
 	}
-	if hasUnexpectedFetchError(obs.runtimeProfileCache.Error) {
+	var staleCache *profilecache.StatusStaleError
+	if !errors.As(obs.runtimeProfileCache.Error, &staleCache) && hasUnexpectedFetchError(obs.runtimeProfileCache.Error) {
 		health.Errors = append(
 			health.Errors,
 			fmt.Errorf("resolve Shared AIMProfileCache for projected runtime: %w", obs.runtimeProfileCache.Error),
@@ -463,9 +478,19 @@ func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.Componen
 		}
 	}
 	if len(health.Errors) > 0 {
+		causes := make([]string, len(health.Errors))
+		for i, err := range health.Errors {
+			causes[i] = err.Error()
+		}
 		health.State = constants.AIMStatusFailed
 		health.Reason = reasonFetchError
-		health.Message = "Failed to resolve projected profile runtime dependencies"
+		health.Message = "Failed to resolve projected profile runtime dependencies: " + strings.Join(causes, "; ")
+		return health
+	}
+	if staleCache != nil {
+		health.State = constants.AIMStatusProgressing
+		health.Reason = reasonProfileRuntimeConverging
+		health.Message = "Shared " + staleCache.Error()
 		return health
 	}
 
@@ -740,8 +765,8 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// the profile's modelId), so it is only available once the cache exists. The
 	// remaining staging mechanics are shared via internal/aimadapter.
 	if aimadapter.IsActive(service) {
-		parentName, parentErr := resolveAdapterParentName(&seedObs, &result)
-		result.adapterDeps = aimadapter.Fetch(ctx, c, service, parentName)
+		parent, parentErr := resolveAdapterParent(&seedObs, &result)
+		result.adapterDeps = aimadapter.Fetch(ctx, c, service, parent)
 		result.adapterDeps.ParentResolutionErr = parentErr
 	}
 
@@ -1099,8 +1124,11 @@ func planProfileRuntimeMaterialization(
 		hasUnexpectedFetchError(obs.profileRuntimeConfigMap.Error) ||
 		hasUnexpectedFetchError(obs.runtimeProfileCache.Error) {
 		// The component health reports the fetch failure and lets the pipeline
-		// choose auth handling or exponential backoff. Keep the existing ISVC
-		// untouched, but do not add a fixed one-second retry here.
+		// choose auth handling or exponential backoff; a stale Shared
+		// AIMProfileCache is reported as converging and the AIMProfileCache watch
+		// re-enqueues the service once its status catches up or its pause is
+		// lifted. Keep the existing ISVC untouched, but do not add a fixed
+		// one-second retry here.
 		return true
 	}
 
@@ -1228,6 +1256,10 @@ func (r *ProfileServiceReconciler) PlanResources(
 			}
 		}
 
+		// The base model artifact may have been cached for services without
+		// adapters, so it can lack the adapter disk this service mounts.
+		aimadapter.PlanParentAdapterDisk(&planResult, service, obs.adapterDeps, obs.adapterState)
+
 		if !obs.profileCacheReady {
 			logger.V(1).Info("Profile cache not ready, deferring ISVC creation", "profile", obs.profileName)
 			return planResult
@@ -1308,7 +1340,7 @@ func (r *ProfileServiceReconciler) PlanResources(
 					aimadapter.AddVolumeMount(
 						isvc,
 						service,
-						obs.adapterState.AdapterDiskPVC,
+						obs.adapterState.MountedAdapterDiskPVC(),
 						obs.adapterState.MaxRank,
 					)
 				}
@@ -1671,6 +1703,13 @@ func planProfileCache(
 	}
 
 	cachingMode := service.Spec.GetCachingMode()
+	// A stale Shared cache already exists; applying the service's spec onto it
+	// would overwrite the edit it has yet to process, and Shared services with
+	// differing caching env or storage class would keep rewriting each other.
+	var stale *profilecache.StatusStaleError
+	if cachingMode != aimv1alpha1.CachingModeDedicated && errors.As(obs.runtimeProfileCache.Error, &stale) {
+		return nil
+	}
 	cacheName, err := GenerateProfileCacheName(
 		obs.profileName,
 		service.Namespace,
@@ -1726,8 +1765,6 @@ func planProfileCache(
 			Mode:             profileCacheModeFor(cachingMode),
 			Env:              cacheEnv,
 			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
-			// Adapters need the base artifact to carry a shared RWX adapter disk.
-			RequiresAdapterDisk: service.Spec.AdaptersEnabled(),
 		},
 	}
 }

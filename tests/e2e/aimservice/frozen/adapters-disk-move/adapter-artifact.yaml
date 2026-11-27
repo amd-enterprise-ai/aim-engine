@@ -1,0 +1,19 @@
+# Logical adapter compatible with the base model's modelId. Staging writes dummy
+# bytes (AIM_DEBUG_SIMULATE_PROMOTE) and takes long enough that the test can
+# observe the service still mounting the first disk while the second is staged.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapters-move-lora
+spec:
+  type: adapter
+  compatibleWith:
+    - test-org/move-weights
+  modelId: test-org/move-lora
+  sourceUri: hf://test-org/move-lora
+  rank: 16
+  env:
+    - name: AIM_DEBUG_SIMULATE_PROMOTE
+      value: "true"
+    - name: AIM_DEBUG_DOWNLOAD_DURATION
+      value: "30"

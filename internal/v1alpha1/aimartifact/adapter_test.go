@@ -25,8 +25,10 @@ package aimartifact
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -280,6 +282,39 @@ func TestGenerateAdapterPvcNameDeterministic(t *testing.T) {
 	}
 }
 
+// TestObservedAdapterPvcName verifies that status.adapterPersistentVolumeClaim
+// follows the adapter disk PVC, so deleting and recreating it under the same name
+// changes the status twice instead of leaving it untouched.
+func TestObservedAdapterPvcName(t *testing.T) {
+	withDisk := &aimv1alpha1.AIMArtifact{Spec: aimv1alpha1.AIMArtifactSpec{AdapterDisk: &aimv1alpha1.AIMAdapterDisk{}}}
+	withoutDisk := &aimv1alpha1.AIMArtifact{}
+	pvcGR := schema.GroupResource{Resource: "persistentvolumeclaims"}
+	existing := &controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{
+		Value: &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "adapters-pvc"}},
+	}
+	missing := &controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{Error: apierrors.NewNotFound(pvcGR, "adapters-pvc")}
+	unreadable := &controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{Error: fmt.Errorf("connection refused")}
+
+	tests := []struct {
+		name     string
+		artifact *aimv1alpha1.AIMArtifact
+		pvc      *controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
+		want     string
+	}{
+		{name: "PVC exists", artifact: withDisk, pvc: existing, want: "adapters-pvc"},
+		{name: "PVC deleted", artifact: withDisk, pvc: missing, want: ""},
+		{name: "adapter disk removed", artifact: withoutDisk, pvc: nil, want: ""},
+		{name: "PVC unreadable keeps the last name", artifact: withDisk, pvc: unreadable, want: "old-pvc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := observedAdapterPvcName(tt.artifact, tt.pvc, "old-pvc"); got != tt.want {
+				t.Errorf("observedAdapterPvcName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildAdapterPvcDefaults(t *testing.T) {
 	mc := &aimv1alpha1.AIMArtifact{
 		ObjectMeta: metav1.ObjectMeta{Name: "base-model", Namespace: "default"},
@@ -443,5 +478,17 @@ func TestBuildAdapterReaperJobMountsPVCAndKeepList(t *testing.T) {
 	if len(job.Spec.Template.Spec.Volumes) != 1 ||
 		job.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "adapter-pvc" {
 		t.Errorf("reaper must mount the adapter PVC, got %v", job.Spec.Template.Spec.Volumes)
+	}
+	// A run may start up to the deadline after its keep-list snapshot; the grace
+	// guard must outlast that, with a margin for clock skew, so a subtree created
+	// after the snapshot is never old enough to reap.
+	const clockSkewMargin = 10 * 60
+	minAge, err := strconv.ParseInt(env["MIN_AGE_SECONDS"], 10, 64)
+	if err != nil {
+		t.Fatalf("MIN_AGE_SECONDS = %q: %v", env["MIN_AGE_SECONDS"], err)
+	}
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds+clockSkewMargin > minAge {
+		t.Errorf("ActiveDeadlineSeconds = %v, want set (so a stuck reaper is replaced) and at most MIN_AGE_SECONDS %d - %d",
+			job.Spec.ActiveDeadlineSeconds, minAge, clockSkewMargin)
 	}
 }

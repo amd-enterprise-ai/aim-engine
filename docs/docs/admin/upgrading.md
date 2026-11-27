@@ -495,7 +495,17 @@ The old artifact and its PVC stay behind after the switch. A shared artifact has
        | (.status.artifacts // {})[] | select(.name == "<old-artifact-name>") | $cache'
    ```
 
-3. Delete the old artifact:
+3. If the old artifact has an adapter disk, confirm that no LoRA `AIMService` still mounts it. A service moves to the new artifact's adapter disk only once its adapters are staged there. This should print nothing:
+
+   ```bash
+   OLD_PVC=$(kubectl get aimartifact -n <namespace> <old-artifact-name> \
+     -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+   kubectl get aimservices -n <namespace> -o json | \
+     jq -r --arg pvc "$OLD_PVC" '.items[]
+       | select($pvc != "" and .status.adapterDiskPersistentVolumeClaim == $pvc) | .metadata.name'
+   ```
+
+4. Delete the old artifact:
 
    ```bash
    kubectl delete aimartifact -n <namespace> <old-artifact-name>
@@ -534,6 +544,16 @@ kubectl get resourcequota -A
 ```
 
 If a namespace is affected, set `spec.artifact.downloadJobResources` to values that the namespace admits, in the `AIMRuntimeConfig` of that namespace or in the `AIMClusterRuntimeConfig`. With the Helm chart, set `clusterRuntimeConfig.spec.artifact.downloadJobResources`. To keep the earlier behavior, where the `LimitRange` decides, set `downloadJobResources: {}`. For the CPU case, you can also raise the default CPU limit of the `LimitRange` to `500m` or more.
+
+### Deprecated `AIMProfileCache.spec.requiresAdapterDisk`
+
+`AIMProfileCache.spec.requiresAdapterDisk` has no effect. Existing caches and
+manifests that set it remain valid, and no action is needed. An adapter-enabled
+v1alpha2 `AIMService` now adds `spec.adapterDisk` to the base model `AIMArtifact`
+its `AIMProfileCache` resolves, including an `AIMArtifact` that was first cached
+without one. Setting the field on a cache no longer adds an adapter disk to its
+artifacts ahead of an adapter-enabled service. See
+[LoRA adapters](../guides/lora-adapters.md).
 
 ## Migration window
 

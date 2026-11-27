@@ -40,7 +40,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#quantity-resource-api)_ | Size is the requested size of the adapter disk PVC. Defaults to 50Gi when unset (a cascade default may override it). |  | Optional: \{\} |
-| `storageClassName` _string_ | StorageClassName specifies the storage class for the adapter disk. When empty, the cluster default storage class is used. The access mode is fixed at ReadWriteMany by the controller. |  | Optional: \{\} |
+| `storageClassName` _string_ | StorageClassName specifies the storage class for the adapter disk. When empty, the runtime config's storage.adapterDiskStorageClassName is used, then storage.defaultStorageClassName, then the cluster default. The access mode is fixed at ReadWriteMany by the controller. |  | Optional: \{\} |
 
 
 #### AIMAdapterMode
