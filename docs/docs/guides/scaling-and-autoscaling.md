@@ -84,7 +84,7 @@ AIM Engine automatically:
 2. Creates a controller-owned `OpenTelemetryCollector` (`{isvc-name}-predictor`) that the OpenTelemetry Operator injects as a sidecar, `otc-container`, into the predictor pods. The sidecar scrapes the vLLM metrics of its pod every `5s` and sends the metrics named in `metricNames`, and the metric that each `query` reads, to keda-otel-add-on. It requests `200m` CPU and `512Mi` memory and is limited to `1` CPU and `2Gi` memory. The sidecar runs without privilege escalation and drops all capabilities; for namespaces that enforce the Pod Security Standard `restricted`, see [Restricted Pod Security](restricted-pod-security.md#autoscaling-sidecar)
 3. Creates a controller-owned KEDA `ScaledObject` targeting the predictor `Deployment`; KEDA in turn manages the HPA (`keda-hpa-{isvc-name}-predictor`, based on the derived InferenceService name)
 
-When you remove `minReplicas`, `maxReplicas` and `autoScaling` from the service, AIM Engine deletes the collector and the `ScaledObject`, and the predictor runs `replicas` pods (default 1).
+When you remove `minReplicas`, `maxReplicas` and `autoScaling` from the service, AIM Engine deletes the collector and the `ScaledObject`, removes the `HPAReady` condition, and the predictor runs `replicas` pods (default 1).
 
 ### Scale to Zero
 

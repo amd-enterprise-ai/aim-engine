@@ -1071,6 +1071,32 @@ func TestInferenceServicePodsHealth_DeletedFailedPod(t *testing.T) {
 	}
 }
 
+func TestClearHPACondition(t *testing.T) {
+	const condType = "HPA" + controllerutils.ComponentConditionSuffix
+	autoscaled := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: testNamespace},
+		Spec:       aimv1alpha1.AIMServiceSpec{MinReplicas: ptr.To(int32(1)), MaxReplicas: ptr.To(int32(3))},
+	}
+	fixed := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: testNamespace},
+		Spec:       aimv1alpha1.AIMServiceSpec{Replicas: ptr.To(int32(2))},
+	}
+
+	clearHPACondition(nil, fixed)
+
+	cm := controllerutils.NewConditionManager(nil)
+	cm.MarkTrue(condType, "HPAOperational", "HorizontalPodAutoscaler is actively scaling")
+	clearHPACondition(cm, autoscaled)
+	if cm.Get(condType) == nil {
+		t.Fatal("condition must stay while the service configures autoscaling")
+	}
+
+	clearHPACondition(cm, fixed)
+	if cm.Get(condType) != nil {
+		t.Error("condition must be removed once the service no longer configures autoscaling")
+	}
+}
+
 // podsWithReady returns a Pod list of length `total`, of which `ready`
 // pods carry PodReady=True.
 func podsWithReady(total, ready int) *corev1.PodList {

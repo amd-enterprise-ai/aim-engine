@@ -1589,6 +1589,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 		podItemCount(obs.inferenceServicePods),
 	)
 	v1alpha1service.ClearRecoveredOTelCollectorCondition(cm, obs.service, obs.otelCollectorServed, obs.otelCollector)
+	v1alpha1service.ClearHPACondition(cm, obs.service)
 
 	if obs.profileName != "" && obs.profileReadyForService() {
 		status.ResolvedProfile = &aimv1alpha1.AIMResolvedReference{

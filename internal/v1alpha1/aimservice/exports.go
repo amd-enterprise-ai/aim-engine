@@ -84,6 +84,12 @@ func HPAComponentHealth(
 	return hpaComponentHealth(service, hpa, podCount, isvcReady)
 }
 
+// ClearHPACondition removes the HPAReady condition once the service no longer
+// configures autoscaling. Call it from DecorateStatus.
+func ClearHPACondition(cm *controllerutils.ConditionManager, service *aimv1alpha2.AIMService) {
+	clearHPACondition(cm, service)
+}
+
 // SetActivationMetricCondition publishes the informational
 // ActivationMetricAvailable condition for a valid scale-from-zero service by
 // matching KEDA's exact s0 zero-to-one metric between the expected HPA shape,

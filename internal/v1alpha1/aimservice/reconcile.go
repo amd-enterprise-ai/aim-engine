@@ -397,6 +397,19 @@ func hpaComponentHealth(
 	return health
 }
 
+// clearHPACondition removes the HPAReady condition from a service without
+// autoscaling. hpaComponentHealth reports nothing for such a service, so the
+// condition would otherwise keep its last verdict after AIM Engine deletes the
+// ScaledObject and KEDA removes the HPA.
+func clearHPACondition(cm *controllerutils.ConditionManager, service *aimv1alpha2.AIMService) {
+	if cm == nil {
+		return
+	}
+	if service.Spec.AutoScaling == nil && service.Spec.MinReplicas == nil && service.Spec.MaxReplicas == nil {
+		cm.Delete("HPA" + controllerutils.ComponentConditionSuffix)
+	}
+}
+
 // inferenceServicePodsHealth reports the InferenceServicePods component health.
 // Under scale-to-zero an empty pod list is the desired state, so it reports
 // Ready (ScaledToZero) instead of the default "no pods is a failure" verdict;
