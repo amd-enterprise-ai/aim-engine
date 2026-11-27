@@ -178,8 +178,29 @@ declared set and resolved adapter-disk PVC, and
 `status.adapterSubtreeSyncKey` records the last synced binding. Editing
 `spec.adapters` re-runs the sync to prune removed adapters; replacing a base
 artifact with a new UID-derived adapter PVC re-runs the sync and staging on the
-new disk. Staging Jobs run asynchronously and the runtime hot-loads each
-adapter as it lands. The controller sets `AIM_ADAPTER_SOURCE` to the mount path
+new disk. The InferenceService keeps mounting the previous disk until every
+adapter staged there is also staged on the new one, unless the previous PVC is
+gone. Until then:
+
+- `status.adapters` describes the previous disk, which the service still
+  serves from.
+- The `AdaptersReady` message names both PVCs, counts the adapters staged on
+  the new disk, and names any adapter whose staging failed there. An adapter
+  that fails on the new disk keeps the service on the previous one. To move
+  without it, remove it from `spec.adapters` or delete the previous base model
+  `AIMArtifact`.
+- An adapter added to `spec.adapters` is staged on both disks.
+- An adapter removed from `spec.adapters` stays on the previous disk, and the
+  runtime can still load it, until the move completes.
+
+While the new base model `AIMArtifact`
+has no adapter disk PVC yet, the service keeps the previous disk mounted, and
+the `AdaptersReady` message says what that `AIMArtifact` is waiting for,
+including its `DependenciesReachable` message, such as a `ResourceQuota`
+rejecting the PVC. Staging Jobs run asynchronously and
+the runtime hot-loads each adapter as it lands. A staged adapter stays
+`Downloaded` after its finished staging Job is cleaned up, so it is not staged
+again. The controller sets `AIM_ADAPTER_SOURCE` to the mount path
 so the image finds the subtree.
 
 ## Storage and compatibility contract
@@ -206,7 +227,9 @@ Before a service can serve adapters:
    support `ReadWriteMany`, so set `adapterDiskStorageClassName` on the
    `AIMClusterRuntimeConfig` when the default class does not. The PVC is 50Gi by
    default, including for a `dynamic` service with no adapters, so budget for it
-   on any `AIMArtifact` an adapter-enabled service may share. While the disk
+   on any `AIMArtifact` an adapter-enabled service may share. AIM's
+   [artifact storage quotas](../admin/storage-configuration.md#storage-quotas) do
+   not count it; a Kubernetes `ResourceQuota` on storage does. While the disk
    exists, the `AIMArtifact` runs a short [reaper Job](#reclaim) every 15
    minutes.
 
@@ -315,7 +338,7 @@ status:
 | `ParentLacksAdapterDisk` | The base model `AIMArtifact` has not resolved yet, has no `spec.adapterDisk` yet, or has not created its adapter disk PVC yet. Once the `AIMArtifact` resolves, the message names it and includes its `DependenciesReachable` message when that is `False` (`Progressing`). |
 | `AdapterSubtreeProvisioning` | The per-service subtree is being created; the ISVC is gated on this. The message says when the adapter disk PVC is still `Pending` (`Progressing`). |
 | `AdapterConfigInvalid` | Multiple model sources, an incompatible model ID, an exact-parent mismatch, a duplicate adapter path, or a non-adapter artifact was referenced (`Failed`, blocks the ISVC). |
-| `AdaptersStaging` | The subtree is ready but one or more adapters are not `Downloaded` (`Ready` aggregate condition). Dynamic serving continues; static ISVC creation remains gated. |
+| `AdaptersStaging` | The subtree is ready but one or more adapters are not `Downloaded` (`Ready` aggregate condition). Dynamic serving continues; static ISVC creation remains gated. Also reported while the service moves to a new adapter disk PVC and keeps the previous one mounted; the message names the PVC still mounted. |
 | `AdaptersStaged` | All declared adapters are staged (`Ready`). |
 
 ### Service stays at `AdaptersReady=False`
@@ -348,6 +371,11 @@ kubectl get pvc <adapter-pvc-name> -n <namespace>
   that supports `ReadWriteMany` on the runtime config the `AIMArtifact` uses,
   then delete the `Pending` PVC. The `AIMArtifact` recreates it with the new
   class; the base model is not downloaded again.
+
+A service moving from a previous adapter disk stays at `AdaptersReady=True`
+with `AdaptersStaging` in these cases instead: its message names the PVC it
+keeps mounted, then the same causes, including a new PVC that is still
+`Pending`.
 
 ## Reclaim
 

@@ -108,6 +108,19 @@ type Dependencies struct {
 	AdapterDiskPVC        string
 	AdapterDiskPVCUID     string
 	AdapterDiskPVCPending bool
+	// RecordedAdapterDiskGone reports whether the adapter disk PVC recorded on
+	// the service status is deleted, being deleted, or recreated under another
+	// UID. Only checked while the resolved PVC differs from the recorded one.
+	RecordedAdapterDiskGone bool
+	// RecordedStagingJobs are the staging Jobs on the recorded adapter disk PVC,
+	// fetched only while the resolved PVC replaces a recorded one that still
+	// exists, so a held move keeps staging onto the disk the service mounts.
+	RecordedStagingJobs map[string]controllerutils.FetchResult[*batchv1.Job]
+	// RemovedStagingJobs are the staging Jobs, on the resolved and the recorded
+	// adapter disk PVC, of adapters status still records but spec no longer
+	// declares. Plan deletes them: the subtree sync prunes a removed adapter's
+	// files, so a Job left behind would report a re-added adapter Downloaded.
+	RemovedStagingJobs []controllerutils.FetchResult[*batchv1.Job]
 
 	// ProfileSupportsAdapters reports whether the resolved profile advertises the
 	// LoRA feature. nil means unknown / not gated; Compose only rejects when
@@ -144,6 +157,10 @@ type State struct {
 	ParentBlocker string
 	// AdapterDiskPVCPending reports whether the adapter disk PVC is unbound.
 	AdapterDiskPVCPending bool
+	// AwaitingParentAdapterDisk reports whether the resolved parent has no adapter
+	// disk PVC yet while the service keeps using a recorded PVC this parent did
+	// not create, such as a previous base model AIMArtifact's.
+	AwaitingParentAdapterDisk bool
 	// MaxRank is the AIM_ADAPTER_MAX_RANK value resolved for the serving
 	// workload. Dynamic mode uses service/runtime configuration; static mode
 	// infers the value from the declared adapter artifacts.
@@ -161,6 +178,19 @@ type State struct {
 	// has completed successfully this cycle (drives both SubtreeReady and the
 	// status write).
 	CurrentSyncSucceeded bool
+	// BindingSwitchable reports whether the resolved PVC may be recorded on
+	// status and mounted. When it replaces a recorded disk that still exists,
+	// every adapter Downloaded on the recorded disk must be Downloaded on it
+	// first, so the InferenceService never stops serving an adapter it loads.
+	BindingSwitchable bool
+	// RecordedAdapters observes the declared adapters on the recorded adapter
+	// disk PVC while the resolved PVC replaces it; nil otherwise.
+	RecordedAdapters []Observation
+	// HeldAdapterDiskPVC and HeldAdapterDiskPVCUID identify the recorded PVC the
+	// InferenceService keeps mounting while the move to AdapterDiskPVC is not yet
+	// switchable; empty otherwise.
+	HeldAdapterDiskPVC    string
+	HeldAdapterDiskPVCUID string
 
 	// SubtreeReady is true once the per-service subtree directory exists on the
 	// adapter disk (a subtree-sync Job has succeeded). Sticky once recorded on
@@ -280,6 +310,12 @@ func Fetch(
 	}
 	deps.AdapterDiskPVC = adapterDiskPVC
 	deps.AdapterDiskPVCUID = adapterDiskPVCUID
+	deps.RecordedAdapterDiskGone = recordedAdapterDiskGone(ctx, c, service, adapterDiskPVC)
+	recordedPVC := service.Status.AdapterDiskPersistentVolumeClaim
+	recordedPVCUID := service.Status.AdapterDiskPersistentVolumeClaimUID
+	if moveCanHold(service, adapterDiskPVC, deps.RecordedAdapterDiskGone) {
+		deps.RecordedStagingJobs = make(map[string]controllerutils.FetchResult[*batchv1.Job], len(service.Spec.Adapters))
+	}
 
 	for i := range service.Spec.Adapters {
 		ref := service.Spec.Adapters[i]
@@ -303,13 +339,71 @@ func Fetch(
 			client.ObjectKey{Namespace: service.Namespace, Name: jobName},
 			&batchv1.Job{})
 		deps.StagingJobs[ref.Name] = jf
+		if deps.RecordedStagingJobs != nil {
+			deps.RecordedStagingJobs[ref.Name] = controllerutils.Fetch(ctx, c,
+				client.ObjectKey{
+					Namespace: service.Namespace,
+					Name:      StagingJobName(service, ref.Name, recordedPVC, recordedPVCUID),
+				},
+				&batchv1.Job{})
+		}
 	}
+	deps.RemovedStagingJobs = fetchRemovedStagingJobs(ctx, c, service,
+		adapterDiskPVC, adapterDiskPVCUID, recordedPVC, recordedPVCUID)
 
 	deps.SubtreeSyncJob = controllerutils.Fetch(ctx, c,
 		client.ObjectKey{Namespace: service.Namespace, Name: SubtreeSyncJobName(service, adapterDiskPVC, adapterDiskPVCUID)},
 		&batchv1.Job{})
 
 	return deps
+}
+
+func fetchRemovedStagingJobs(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha2.AIMService,
+	adapterDiskPVC, adapterDiskPVCUID, recordedPVC, recordedPVCUID string,
+) []controllerutils.FetchResult[*batchv1.Job] {
+	declared := make(map[string]struct{}, len(service.Spec.Adapters))
+	for i := range service.Spec.Adapters {
+		declared[service.Spec.Adapters[i].Name] = struct{}{}
+	}
+	type binding struct{ pvc, uid string }
+	bindings := []binding{{adapterDiskPVC, adapterDiskPVCUID}}
+	if recordedPVC != adapterDiskPVC || recordedPVCUID != adapterDiskPVCUID {
+		bindings = append(bindings, binding{recordedPVC, recordedPVCUID})
+	}
+	var jobs []controllerutils.FetchResult[*batchv1.Job]
+	for i := range service.Status.Adapters {
+		name := service.Status.Adapters[i].Name
+		if _, ok := declared[name]; ok {
+			continue
+		}
+		for _, b := range bindings {
+			if b.pvc == "" || b.uid == "" {
+				continue
+			}
+			jobs = append(jobs, controllerutils.Fetch(ctx, c,
+				client.ObjectKey{Namespace: service.Namespace, Name: StagingJobName(service, name, b.pvc, b.uid)},
+				&batchv1.Job{}))
+		}
+	}
+	return jobs
+}
+
+func recordedAdapterDiskGone(ctx context.Context, c client.Client, service *aimv1alpha2.AIMService, resolvedPVC string) bool {
+	recorded := service.Status.AdapterDiskPersistentVolumeClaim
+	if recorded == "" || recorded == resolvedPVC {
+		return false
+	}
+	f := controllerutils.Fetch(ctx, c,
+		client.ObjectKey{Namespace: service.Namespace, Name: recorded},
+		&corev1.PersistentVolumeClaim{})
+	if f.IsNotFound() {
+		return true
+	}
+	return f.OK() && f.Value != nil &&
+		(f.Value.DeletionTimestamp != nil || string(f.Value.UID) != service.Status.AdapterDiskPersistentVolumeClaimUID)
 }
 
 // Compose validates the declared adapters against the resolved parent and
@@ -358,6 +452,7 @@ func ComposeWithRuntimeConfig(
 		st.AdapterDiskPVCUID = service.Status.AdapterDiskPersistentVolumeClaimUID
 	}
 	st.AdapterDiskPVCPending = deps.AdapterDiskPVCPending
+	st.AwaitingParentAdapterDisk = awaitingParentAdapterDisk(parent, st.AdapterDiskPVC)
 	st.StorageBindingChanged = st.AdapterDiskPVC != service.Status.AdapterDiskPersistentVolumeClaim ||
 		st.AdapterDiskPVCUID != service.Status.AdapterDiskPersistentVolumeClaimUID
 
@@ -399,7 +494,7 @@ func ComposeWithRuntimeConfig(
 		ref := service.Spec.Adapters[i]
 		specNames[ref.Name] = struct{}{}
 
-		ad, cfgErr := evalAdapter(ref, deps, parent)
+		ad, cfgErr := evalAdapter(ref, deps, parent, stagedOnCurrentBinding(service, st, ref.Name))
 		if cfgErr != nil {
 			st.ConfigErr = cfgErr
 		}
@@ -429,6 +524,8 @@ func ComposeWithRuntimeConfig(
 	// entries are ignored so a removal in progress doesn't flip it false.
 	downloaded, active := specStagingProgress(st.Adapters)
 	st.AllStaged = st.ConfigErr == nil && active > 0 && downloaded == active
+
+	resolveMoveHold(&st, service, deps, parent, specNames)
 
 	// MountReady ("mountable"): config valid + disk PVC resolved + subtree present.
 	st.MountReady = st.ConfigErr == nil && st.AdapterDiskPVC != "" &&
@@ -569,7 +666,14 @@ func hasUnresolvedRank(adapters []Observation) bool {
 
 // evalAdapter resolves a single declared adapter against its artifact and the
 // resolved parent, returning the observation and any terminal config error.
-func evalAdapter(ref aimv1alpha1.AIMServiceAdapterReference, deps Dependencies, parent *aimv1alpha1.AIMArtifact) (Observation, error) {
+// staged reports that status records the adapter as Downloaded on the current
+// binding.
+func evalAdapter(
+	ref aimv1alpha1.AIMServiceAdapterReference,
+	deps Dependencies,
+	parent *aimv1alpha1.AIMArtifact,
+	staged bool,
+) (Observation, error) {
 	ad := Observation{
 		Name:  ref.Name,
 		Kind:  string(ref.Kind),
@@ -615,24 +719,32 @@ func evalAdapter(ref aimv1alpha1.AIMServiceAdapterReference, deps Dependencies, 
 	if ad.AdapterPath == "" {
 		ad.AdapterPath = artifact.Name
 	}
-	ad.State, ad.LastError = adapterDiskState(ref.Name, artifact, deps)
+	ad.State, ad.LastError = adapterDiskState(ref.Name, artifact, deps, staged)
 	return ad, cfgErr
 }
 
 // adapterDiskState derives an adapter's disk-side state: the artifact must be
 // Ready (lineage validated) before staging, then the staging Job drives
-// Downloading/Downloaded/Failed. Terminal Job failure details are returned for
-// status.adapters[].lastError.
+// Downloading/Downloaded/Failed. Once the finished Job is garbage-collected,
+// staged keeps a recorded Downloaded so the adapter is not staged again.
+// Terminal Job failure details are returned for status.adapters[].lastError.
 func adapterDiskState(
 	name string,
 	artifact *aimv1alpha1.AIMArtifact,
 	deps Dependencies,
+	staged bool,
 ) (aimv1alpha1.AIMAdapterState, string) {
 	if artifact.Status.Status != constants.AIMStatusReady {
 		return aimv1alpha1.AdapterStatePending, ""
 	}
 	jf, jok := deps.StagingJobs[name]
-	if !jok || !jf.OK() || jf.Value == nil {
+	deleting := jok && jf.OK() && jf.Value != nil && jf.Value.DeletionTimestamp != nil
+	if staged && (!jok || jf.IsNotFound() || deleting) {
+		return aimv1alpha1.AdapterStateDownloaded, ""
+	}
+	// A Job being deleted, by its TTL or because its adapter was removed, no
+	// longer describes the adapter's files.
+	if !jok || !jf.OK() || jf.Value == nil || deleting {
 		return aimv1alpha1.AdapterStatePending, ""
 	}
 	if utils.IsJobSucceeded(jf.Value) {
@@ -696,6 +808,107 @@ func subtreeSyncSucceeded(deps Dependencies) bool {
 	return j.OK() && j.Value != nil && utils.IsJobSucceeded(j.Value)
 }
 
+// awaitingParentAdapterDisk reports whether the parent publishes no adapter disk
+// PVC while the service uses pvc, whose name differs from the adapter disk PVC
+// the parent would create.
+func awaitingParentAdapterDisk(parent *aimv1alpha1.AIMArtifact, pvc string) bool {
+	return parent != nil && parent.Status.AdapterPersistentVolumeClaim == "" &&
+		pvc != "" && pvc != aimartifact.GenerateAdapterPvcName(parent)
+}
+
+// stagedOnCurrentBinding reports whether status records the adapter as
+// Downloaded on the binding resolved this cycle.
+func stagedOnCurrentBinding(service *aimv1alpha2.AIMService, st State, name string) bool {
+	return !st.StorageBindingChanged && statusRecordsDownloaded(service, name)
+}
+
+// statusRecordsDownloaded reports whether status.adapters records the adapter as
+// Downloaded. Status describes the recorded adapter disk PVC, including while a
+// move away from it is held.
+func statusRecordsDownloaded(service *aimv1alpha2.AIMService, name string) bool {
+	for i := range service.Status.Adapters {
+		if service.Status.Adapters[i].Name == name {
+			return service.Status.Adapters[i].State == aimv1alpha1.AdapterStateDownloaded
+		}
+	}
+	return false
+}
+
+// moveCanHold reports whether resolvedPVC replaces a recorded adapter disk PVC
+// that still exists, so the service may keep mounting the recorded one.
+func moveCanHold(service *aimv1alpha2.AIMService, resolvedPVC string, recordedGone bool) bool {
+	recorded := service.Status.AdapterDiskPersistentVolumeClaim
+	return recorded != "" && recorded != resolvedPVC && !recordedGone
+}
+
+// recordedDiskAdapters observes the declared adapters on the recorded adapter
+// disk PVC. Adapters removed from spec stay Deleting there: the recorded disk is
+// not pruned, so they remain loadable until the move completes.
+func recordedDiskAdapters(
+	service *aimv1alpha2.AIMService,
+	deps Dependencies,
+	parent *aimv1alpha1.AIMArtifact,
+	specNames map[string]struct{},
+) []Observation {
+	recordedDeps := deps
+	recordedDeps.StagingJobs = deps.RecordedStagingJobs
+	adapters := make([]Observation, 0, len(service.Spec.Adapters))
+	for i := range service.Spec.Adapters {
+		ref := service.Spec.Adapters[i]
+		ad, _ := evalAdapter(ref, recordedDeps, parent, statusRecordsDownloaded(service, ref.Name))
+		adapters = append(adapters, ad)
+	}
+	return append(adapters, deletingAdapters(service, specNames, false)...)
+}
+
+// resolveMoveHold decides whether the resolved binding is switchable or the
+// recorded PVC stays mounted, observing the recorded disk while a move can hold.
+func resolveMoveHold(
+	st *State,
+	service *aimv1alpha2.AIMService,
+	deps Dependencies,
+	parent *aimv1alpha1.AIMArtifact,
+	specNames map[string]struct{},
+) {
+	if st.StorageBindingChanged && moveCanHold(service, st.AdapterDiskPVC, deps.RecordedAdapterDiskGone) {
+		st.RecordedAdapters = recordedDiskAdapters(service, deps, parent, specNames)
+	}
+	st.BindingSwitchable, st.HeldAdapterDiskPVC = switchableBinding(service, deps, *st)
+	if st.HeldAdapterDiskPVC != "" {
+		st.HeldAdapterDiskPVCUID = service.Status.AdapterDiskPersistentVolumeClaimUID
+	}
+}
+
+// switchableBinding reports whether the resolved binding may be recorded and
+// mounted, and otherwise the recorded PVC to keep mounting while a move to a
+// disk that still lacks adapters is held.
+func switchableBinding(service *aimv1alpha2.AIMService, deps Dependencies, st State) (bool, string) {
+	if !st.StorageBindingChanged || !moveCanHold(service, st.AdapterDiskPVC, deps.RecordedAdapterDiskGone) {
+		return st.CurrentSyncSucceeded, ""
+	}
+	if st.CurrentSyncSucceeded && servedAdaptersDownloaded(st.RecordedAdapters, st.Adapters) {
+		return true, ""
+	}
+	return false, service.Status.AdapterDiskPersistentVolumeClaim
+}
+
+// servedAdaptersDownloaded reports whether every declared adapter Downloaded on
+// the recorded disk is also Downloaded on the new one. Adapters the service
+// cannot load from the recorded disk don't hold a move, so a move only waits for
+// what it would otherwise stop serving.
+func servedAdaptersDownloaded(recorded, current []Observation) bool {
+	downloaded := make(map[string]bool, len(current))
+	for _, ad := range current {
+		downloaded[ad.Name] = ad.State == aimv1alpha1.AdapterStateDownloaded
+	}
+	for _, ad := range recorded {
+		if ad.State == aimv1alpha1.AdapterStateDownloaded && !downloaded[ad.Name] {
+			return false
+		}
+	}
+	return true
+}
+
 // specStagingProgress counts Downloaded vs. total active (non-Deleting) adapters.
 // Deleting entries are excluded so an in-flight removal never affects staging
 // progress accounting.
@@ -748,13 +961,31 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 		return health
 	}
 
+	// The held disk keeps serving while the new one is provisioned and staged.
+	if st.HeldAdapterDiskPVC != "" {
+		health.State = constants.AIMStatusReady
+		health.Reason = ReasonStaging
+		health.Message = fmt.Sprintf("Moving to adapter disk PVC %s once its adapters are staged (%d/%d); "+
+			"serving adapters from PVC %s until then", st.AdapterDiskPVC, countDownloaded(st.Adapters), numAdapters,
+			st.HeldAdapterDiskPVC)
+		if failed := failedAdapterNames(st.Adapters); len(failed) > 0 {
+			health.Message += fmt.Sprintf("; staging failed on PVC %s for %s", st.AdapterDiskPVC, strings.Join(failed, ", "))
+		}
+		if st.AdapterDiskPVCPending {
+			health.Message += fmt.Sprintf("; waiting for PVC %s to bind; %s", st.AdapterDiskPVC, pendingAdapterDiskHint)
+			if st.ParentBlocker != "" {
+				health.Message += fmt.Sprintf("; AIMArtifact %s: %s", st.ParentName, st.ParentBlocker)
+			}
+		}
+		return health
+	}
+
 	if !st.SubtreeReady {
 		health.State = constants.AIMStatusProgressing
 		health.Reason = ReasonSubtreeProvisioning
 		health.Message = "Provisioning the service adapter subtree"
 		if st.AdapterDiskPVCPending {
-			health.Message = fmt.Sprintf("Waiting for adapter disk PVC %s to bind; if it stays Pending, "+
-				"check that its storage class supports ReadWriteMany (see the PVC's events)", st.AdapterDiskPVC)
+			health.Message = fmt.Sprintf("Waiting for adapter disk PVC %s to bind; %s", st.AdapterDiskPVC, pendingAdapterDiskHint)
 		}
 		return health
 	}
@@ -762,7 +993,15 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 	// Subtree is mountable. Report Ready regardless of download progress so the
 	// base model can serve; surface staging progress in the message only.
 	health.State = constants.AIMStatusReady
-	if numAdapters == 0 {
+	if st.AwaitingParentAdapterDisk {
+		health.Reason = ReasonStaging
+		progress := "no adapters declared"
+		if numAdapters > 0 {
+			progress = fmt.Sprintf("%d/%d adapter(s) staged", countDownloaded(st.Adapters), numAdapters)
+		}
+		health.Message = fmt.Sprintf("Keeping previous adapter disk PVC %s mounted (%s). %s",
+			st.AdapterDiskPVC, progress, parentLacksDiskMessage(st))
+	} else if numAdapters == 0 {
 		health.Reason = ReasonStaged
 		health.Message = "Adapter subtree ready; no adapters declared"
 	} else if st.AllStaged {
@@ -775,6 +1014,9 @@ func Health(st State, numAdapters int) controllerutils.ComponentHealth {
 	}
 	return health
 }
+
+const pendingAdapterDiskHint = "if it stays Pending, check that its storage class supports ReadWriteMany " +
+	"(see the PVC's events)"
 
 func parentLacksDiskMessage(st State) string {
 	var msg string
@@ -792,6 +1034,16 @@ func parentLacksDiskMessage(st State) string {
 	return msg
 }
 
+func failedAdapterNames(adapters []Observation) []string {
+	var names []string
+	for _, ad := range adapters {
+		if ad.State == aimv1alpha1.AdapterStateFailed {
+			names = append(names, ad.Name)
+		}
+	}
+	return names
+}
+
 func countDownloaded(adapters []Observation) int {
 	n := 0
 	for _, ad := range adapters {
@@ -806,7 +1058,8 @@ func countDownloaded(adapters []Observation) int {
 // subtree exists (a fast mkdir Job, so the ISVC can mount it before downloads
 // finish) and applies a staging Job for each ready-but-not-yet-Downloaded
 // adapter. Staging runs asynchronously; the aim-runtime hot-loads each adapter
-// as it lands. ISVC gating is the caller's concern (gate on State.Ready).
+// as it lands. It also deletes the staging Jobs of removed adapters. ISVC gating
+// is the caller's concern (gate on State.Ready).
 func Plan(
 	planResult *controllerutils.PlanResult,
 	service *aimv1alpha2.AIMService,
@@ -815,6 +1068,12 @@ func Plan(
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	additionalCABundleAvailable ...bool,
 ) {
+	for _, jf := range deps.RemovedStagingJobs {
+		if jobPresent(jf) && jf.Value.DeletionTimestamp == nil {
+			planResult.Delete(jf.Value)
+		}
+	}
+
 	if st.ConfigErr != nil || st.AdapterDiskPVC == "" || st.AdapterDiskPVCUID == "" {
 		return
 	}
@@ -840,8 +1099,29 @@ func Plan(
 	includeAdditionalCABundle := len(additionalCABundleAvailable) > 0 && additionalCABundleAvailable[0]
 
 	// Stage adapters independently of the subtree gate (the staging Job creates
-	// the subtree itself if needed before promoting).
-	for _, ad := range st.Adapters {
+	// the subtree itself if needed before promoting). While a move is held, also
+	// stage onto the mounted disk, so an adapter added meanwhile is served there.
+	planStaging(planResult, service, deps, st.Adapters, deps.StagingJobs,
+		st.AdapterDiskPVC, st.AdapterDiskPVCUID, runtimeConfig, includeAdditionalCABundle)
+	if st.HeldAdapterDiskPVC != "" {
+		planStaging(planResult, service, deps, st.RecordedAdapters, deps.RecordedStagingJobs,
+			st.HeldAdapterDiskPVC, st.HeldAdapterDiskPVCUID, runtimeConfig, includeAdditionalCABundle)
+	}
+}
+
+// planStaging applies a staging Job onto adapterDiskPVC for each adapter that is
+// ready to stage there and has no Job yet.
+func planStaging(
+	planResult *controllerutils.PlanResult,
+	service *aimv1alpha2.AIMService,
+	deps Dependencies,
+	adapters []Observation,
+	stagingJobs map[string]controllerutils.FetchResult[*batchv1.Job],
+	adapterDiskPVC, adapterDiskPVCUID string,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	includeAdditionalCABundle bool,
+) {
+	for _, ad := range adapters {
 		if ad.State == aimv1alpha1.AdapterStateDownloaded ||
 			ad.State == aimv1alpha1.AdapterStateFailed ||
 			ad.State == aimv1alpha1.AdapterStateDeleting {
@@ -856,7 +1136,7 @@ func Plan(
 
 		// One active staging Job per (service, adapter). If a Job already exists
 		// (running or finished), leave it; convergence happens on the next event.
-		if jf, jok := deps.StagingJobs[ad.Name]; jok && jobPresent(jf) {
+		if jf, jok := stagingJobs[ad.Name]; jok && jobPresent(jf) {
 			continue
 		}
 
@@ -874,8 +1154,8 @@ func Plan(
 		planResult.Apply(BuildStagingJob(
 			service,
 			af.Value,
-			st.AdapterDiskPVC,
-			st.AdapterDiskPVCUID,
+			adapterDiskPVC,
+			adapterDiskPVCUID,
 			ad,
 			stagingRuntimeConfig,
 			includeAdditionalCABundle,
@@ -1265,23 +1545,38 @@ func DynamicModeAllowed(nsLabels map[string]string) bool {
 	return nsLabels[constants.LabelAdapterDynamicAllowed] != "false"
 }
 
+// MountedAdapterDiskPVC returns the adapter disk PVC to mount on the
+// InferenceService: the recorded one while a move is held, else the resolved one.
+func (st State) MountedAdapterDiskPVC() string {
+	if st.HeldAdapterDiskPVC != "" {
+		return st.HeldAdapterDiskPVC
+	}
+	return st.AdapterDiskPVC
+}
+
 // PreserveExistingMount reports whether an existing InferenceService must keep
 // its current adapter mount this cycle. This is true while the PVC identity is
-// unresolved and while a replacement storage generation has not yet completed
-// its subtree synchronization. Callers skip re-applying the ISVC so it never
-// switches to a PVC before its subPath exists.
+// unresolved and while a replacement storage generation is not switchable and
+// no recorded disk can be mounted instead. Callers skip re-applying the ISVC so
+// it never switches to a PVC before its subPath exists.
 func PreserveExistingMount(service *aimv1alpha2.AIMService, st State) bool {
 	return service.Spec.AdaptersEnabled() &&
 		(st.AdapterDiskPVC == "" ||
 			st.AdapterDiskPVCUID == "" ||
-			(st.StorageBindingChanged && !st.CurrentSyncSucceeded))
+			(st.StorageBindingChanged && !st.BindingSwitchable && st.HeldAdapterDiskPVC == ""))
 }
 
-// DecorateStatus mirrors the disk-side adapter state onto the AIMService.
+// DecorateStatus mirrors the disk-side adapter state onto the AIMService. While a
+// move is held, status.adapters describes the mounted disk; the move's progress
+// is reported by Health.
 func DecorateStatus(status *aimv1alpha1.AIMServiceStatus, st State) {
 	now := metav1.Now()
-	adapters := make([]aimv1alpha1.AIMServiceAdapterStatus, 0, len(st.Adapters))
-	for _, ad := range st.Adapters {
+	observed := st.Adapters
+	if st.HeldAdapterDiskPVC != "" {
+		observed = st.RecordedAdapters
+	}
+	adapters := make([]aimv1alpha1.AIMServiceAdapterStatus, 0, len(observed))
+	for _, ad := range observed {
 		adapters = append(adapters, aimv1alpha1.AIMServiceAdapterStatus{
 			Name:         ad.Name,
 			AdapterPath:  ad.AdapterPath,
@@ -1298,10 +1593,10 @@ func DecorateStatus(status *aimv1alpha1.AIMServiceStatus, st State) {
 		status.AdapterMaxRank = st.MaxRank
 	}
 
-	// Record the declared set and concrete PVC generation once its subtree-sync
-	// Job succeeds. Until then status continues to describe the mountable
-	// generation currently used by an existing InferenceService.
-	if st.CurrentSyncSucceeded {
+	// Record the declared set and concrete PVC generation once it is switchable.
+	// Until then status continues to describe the mountable generation currently
+	// used by an existing InferenceService.
+	if st.BindingSwitchable {
 		status.AdapterSubtreeSyncKey = st.DesiredKey
 		status.AdapterDiskPersistentVolumeClaim = st.AdapterDiskPVC
 		status.AdapterDiskPersistentVolumeClaimUID = st.AdapterDiskPVCUID

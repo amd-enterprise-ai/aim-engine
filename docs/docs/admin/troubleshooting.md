@@ -154,7 +154,7 @@ Deleting a cache also deletes the artifacts it created that aren't `Ready`; an a
 
 ### LoRA Service Waits for an Adapter Disk
 
-A service that serves LoRA adapters (`adapterMode: dynamic`, or any declared `spec.adapters`) reports `AdaptersReady=False` with reason `ParentLacksAdapterDisk` until its base model `AIMArtifact` has an adapter disk PVC, and `AdapterSubtreeProvisioning` while that PVC is `Pending`. See [LoRA adapters — Service stays at `AdaptersReady=False`](../guides/lora-adapters.md#service-stays-at-adaptersreadyfalse).
+A service that serves LoRA adapters (`adapterMode: dynamic`, or any declared `spec.adapters`) reports `AdaptersReady=False` with reason `ParentLacksAdapterDisk` until its base model `AIMArtifact` has an adapter disk PVC, and `AdapterSubtreeProvisioning` while that PVC is `Pending`. A service that already has a previous adapter disk keeps it mounted and stays `AdaptersReady=True` with `AdaptersStaging`, naming that PVC. See [LoRA adapters — Service stays at `AdaptersReady=False`](../guides/lora-adapters.md#service-stays-at-adaptersreadyfalse).
 
 ### Routing Not Working
 

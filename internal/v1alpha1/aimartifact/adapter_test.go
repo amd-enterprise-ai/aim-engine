@@ -25,6 +25,7 @@ package aimartifact
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -477,5 +478,17 @@ func TestBuildAdapterReaperJobMountsPVCAndKeepList(t *testing.T) {
 	if len(job.Spec.Template.Spec.Volumes) != 1 ||
 		job.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "adapter-pvc" {
 		t.Errorf("reaper must mount the adapter PVC, got %v", job.Spec.Template.Spec.Volumes)
+	}
+	// A run may start up to the deadline after its keep-list snapshot; the grace
+	// guard must outlast that, with a margin for clock skew, so a subtree created
+	// after the snapshot is never old enough to reap.
+	const clockSkewMargin = 10 * 60
+	minAge, err := strconv.ParseInt(env["MIN_AGE_SECONDS"], 10, 64)
+	if err != nil {
+		t.Fatalf("MIN_AGE_SECONDS = %q: %v", env["MIN_AGE_SECONDS"], err)
+	}
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds+clockSkewMargin > minAge {
+		t.Errorf("ActiveDeadlineSeconds = %v, want set (so a stuck reaper is replaced) and at most MIN_AGE_SECONDS %d - %d",
+			job.Spec.ActiveDeadlineSeconds, minAge, clockSkewMargin)
 	}
 }
